@@ -6,8 +6,9 @@ from src.core.response_builder import ResponseBuilder
 from src.core.dependencies import DBSession, RequestID, Pagination
 from src.schemas.deployment import DeploymentResponse, DeploymentCreate
 from src.services.deployment_service import DeploymentService
-router = APIRouter(prefix="/deployments", tags=["deployments"])
 
+
+router = APIRouter(prefix="/deployments", tags=["deployments"])
 
 @router.get("")
 async def list_deployments(
