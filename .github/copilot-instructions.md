@@ -86,3 +86,53 @@ Environment via `.env` (see [src/core/config.py](src/core/config.py)):
 3. **Repository**: Extend `BaseRepository` in [src/repositories/](src/repositories/)
 4. **Service**: Business logic in [src/services/](src/services/)
 5. **Route**: FastAPI router in [src/api/](src/api/), register in [src/api/__init__.py](src/api/__init__.py)
+
+## Code Style & Cleanliness Guidelines
+
+- Language consistency
+  - Match the existing file’s language (ENGLISH) and idioms; do not mix languages in a file.
+  - Respect architecture boundaries: API → Service → Repository → Model/DB; async work in Tasks.
+  - All code, comments, docstrings, logs, and error messages must be in English.
+  - Do not use emojis or decorative symbols in code or comments.
+
+- Python & FastAPI conventions
+  - Follow PEP8. Format with black; order imports with isort (stdlib → third‑party → local).
+  - Use type hints everywhere with explicit return types. Avoid `Any` unless necessary.
+  - Keep routes thin: use dependency injection (DBSession, RequestID, Pagination) and delegate to services.
+  - Always return via ResponseBuilder (`success`, `created`, `paginated`) and include `request_id`.
+  - Do not create SQLAlchemy sessions manually; accept `db` from DI and pass to services/repositories.
+
+- Services & Repositories
+  - Put business logic in services; repositories encapsulate DB access only.
+  - Extend `BaseRepository[T]`; prefer its CRUD methods over ad‑hoc session calls.
+  - Keep methods small, single‑purpose, and free of hidden side effects.
+
+- Schemas (Pydantic v2)
+  - Set `model_config = {"from_attributes": True}` for ORM compatibility.
+  - Naming: `*Create`, `*Update`, `*Response`. Use snake_case fields. Avoid exposing internal details.
+
+- Tasks (Celery)
+  - Trigger async work via `.delay()` and pass only serializable identifiers (e.g., IDs).
+  - Tasks must be idempotent; never pass DB sessions into tasks.
+
+- Errors, logging, and configuration
+  - Raise domain exceptions in services; map to HTTP in API routes. Include `request_id` in logs.
+  - Read settings via `src/core/config.py`; never hardcode secrets, URLs, or credentials.
+
+- Testing
+  - Use pytest. Prefer unit tests for services/repositories and API tests for routes.
+  - Keep tests isolated and deterministic; assert ResponseBuilder output shapes.
+
+- Performance & security
+  - Use pagination for list endpoints; validate inputs; avoid N+1 queries.
+  - Never log credentials or PII; sanitize data from external sources.
+
+- Commenting (efficient, intent-driven)
+  - Comment the “why”, intent, assumptions, constraints, and non-obvious trade-offs; avoid restating what the code does.
+  - Prefer clearer names, smaller functions, and types over explanatory comments.
+  - Use docstrings for public modules/classes/functions:
+    - Start with a one-sentence summary; add context, params, return types, and exceptions raised.
+  - Place comments above the code they describe; avoid long trailing inline comments.
+  - Maintain comments: update with code changes; remove obsolete or misleading notes.
+  - Error and log messages must be actionable, precise, consistent, include request_id, and never expose secrets or PII.
+
