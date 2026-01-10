@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     # Redis / Celery
     redis_url: str = "redis://localhost:6379/0"
     
+    # JWT Authentication
+    jwt_secret_key: str = "your-secret-key-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_issuer: str | None = None
+    jwt_audience: str | None = None
+    
     # Database
     db_user: str = "postgres"
     db_password: str = "postgres"

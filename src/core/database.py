@@ -22,6 +22,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db() -> None:
     """Initialize database tables."""
     # Import all models here so they are registered with Base.metadata
-    from src.models import deployment
+    from src.models import deployment, user
     
     Base.metadata.create_all(bind=engine)
