@@ -3,6 +3,8 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy import values
+
 
 class DeploymentCreate(BaseModel):
     """Schema for creating a deployment."""
@@ -25,7 +27,8 @@ class DeploymentCreate(BaseModel):
     @classmethod
     def validate_group_ids(cls, v, info):
         """Validate group_ids is provided for per_group mode."""
-        if info.data.get("deployment_mode") == "per_group" and not v:
+        deployment_mode = values.get("deployment_mode")
+        if deployment_mode == "per_group" and not v:
             raise ValueError("group_ids is required when deployment_mode is 'per_group'")
         return v
     
@@ -37,7 +40,8 @@ class DeploymentCreate(BaseModel):
         - Required when deployment_mode is 'per_student'
         - Optional otherwise (None means "all course members")
         """
-        if info.data.get("deployment_mode") == "per_student" and not v:
+        deployment_mode = values.get("deployment_mode")
+        if deployment_mode == "per_student" and not v:
             raise ValueError("course_member_ids is required when deployment_mode is 'per_student'")
         return v
     
@@ -48,7 +52,7 @@ class DeploymentCreate(BaseModel):
                 "course_id": "course-456",
                 "deployment_mode": "per_group",
                 "group_ids": ["group-789", "group-abc"],
-                "course_member_ids": None,  # ADD THIS to show it's optional
+                "course_member_ids": None,
                 "access_types": ["ssh", "web_url"],
                 "config_json": '{"cpu": 2, "ram": 4096}'
             }

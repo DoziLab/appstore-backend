@@ -118,7 +118,7 @@ class OpenstackCacheService:
             List of OpenStack project IDs
         """
         try:
-            keys = self.redis.keys("openstack:usage:*")
+            keys = [key for key in self.redis.scan_iter("openstack:usage:*")]
             # Extract project IDs from keys
             return [key.split(":")[-1] for key in keys]
         except redis.RedisError as e:

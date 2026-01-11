@@ -34,7 +34,7 @@ class UserUpdate(BaseModel):
         json_schema_extra={
             "example": {
                 "name": "John Updated Doe",
-                "is_active": false
+                "is_active": False
             }
         }
     )
@@ -60,7 +60,7 @@ class UserResponse(BaseModel):
                 "email": "john.doe@example.com",
                 "name": "John Doe",
                 "role": "student",
-                "is_active": true,
+                "is_active": True,
                 "created_at": "2024-11-27T10:00:00Z",
                 "updated_at": "2024-11-27T10:00:00Z"
             }
