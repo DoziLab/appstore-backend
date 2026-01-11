@@ -217,3 +217,7 @@ __marimo__/
 
 #openstack credentials
 clouds.yaml
+
+# SSL certificates and keys
+*.crt
+*.pem
