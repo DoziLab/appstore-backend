@@ -1,5 +1,140 @@
 # App Store Backend - Copilot Instructions
 
+## Project Overview
+
+This repository is part of a **student project** that implements a **Teaching App Store for OpenStack**.
+
+The goal of the project is to provide a **web-based App Store** that allows lecturers to deploy and manage teaching environments (VMs, lab setups, Kubernetes clusters, etc.) on **OpenStack** without requiring deep infrastructure knowledge.
+
+The App Store abstracts OpenStack complexity and provides:
+- reusable **application templates**
+- automated **deployment orchestration**
+- controlled **resource usage**
+- strong **governance, security, and observability**
+
+The system is designed to be **realistically operable in a university environment (DHBW)** and potentially reusable across multiple locations.
+
+---
+
+## Problem We Are Solving
+
+OpenStack is powerful but complex and not suitable for non-technical lecturers.
+
+Typical pain points today:
+- manual VM creation
+- copy-paste scripts
+- long setup times per VM
+- missing overview of running environments
+- poor error feedback
+- no clean approval or reuse of templates
+
+This project replaces that with:
+- **one-click deployments**
+- **versioned templates**
+- **course- and group-based environments**
+- **clear status feedback**
+- **admin approval workflows**
+- **central monitoring & logging**
+
+---
+
+## Target Users (Personas)
+
+The system is designed around the following user personas :contentReference[oaicite:1]{index=1}:
+
+### Lecturers (Primary Users)
+- May have **no IT knowledge** or **advanced IT knowledge**
+- Want to deploy environments quickly and reliably
+- Should not need to understand OpenStack, SSH, IPs, or networking
+- Expect clear deployment status and easy reset/redeploy options
+
+### Students (End Users)
+- Do not deploy infrastructure themselves
+- Access environments via browser, SSH, or Guacamole
+- Want stable environments with minimal setup steps
+
+### App Store Admins
+- Approve templates before they become public
+- Monitor system health, failures, and usage
+- Support lecturers when deployments fail
+- Require good logging, metrics, and traceability
+
+### OpenStack Infrastructure Admins
+- Maintain OpenStack itself
+- Define quotas and policies
+- Require secure API usage
+- Must retain OpenStack as the single source of truth
+
+---
+
+## High-Level Summary
+The App Store **does not replace OpenStack**, it **orchestrates it**.
+
+---
+
+## Core Domain Concepts
+
+When writing code, keep these concepts in mind:
+
+- **Template**
+  - Describes *what* can be deployed
+  - Has versions
+  - May reference artifacts (Heat, cloud-init, Ansible, Helm)
+  - Must be approved before public use
+
+- **Deployment**
+  - Concrete instantiation of a template
+  - Belongs to a lecturer and optionally a course
+  - Can target:
+    - per course
+    - per group
+    - per student
+
+- **Deployment Instance**
+  - A concrete VM or service created by a deployment
+  - Has access endpoints (web, SSH, Guacamole, etc.)
+
+- **Course**
+  - Logical teaching unit
+  - Used for grouping deployments, cleanup, permissions
+
+- **OpenStack Project**
+  - Typically one project per lecturer
+  - Quotas enforced at project level
+  - Courses are mapped to Heat stacks, not separate projects
+
+---
+
+## Design & Coding Principles
+
+When generating code, always follow these principles:
+
+- **Separation of Concerns**
+  - API layer: routing only
+  - Service layer: business logic
+  - Repository layer: persistence only
+  - Core layer: cross-cutting concerns (auth, logging, responses)
+
+- **Security First**
+  - Never store secrets or passwords in plain text
+  - Never log credentials, tokens, or SSH keys
+  - Use secret references instead of secret values
+
+- **Robustness**
+  - Long-running tasks must be asynchronous
+  - Failures must be traceable via logs and IDs
+  - No silent failures
+
+- **OpenStack as Source of Truth**
+  - Do not duplicate OpenStack state unnecessarily
+  - Cache only when required for performance
+
+- **Governance**
+  - Templates can be private, tenant-public, or global
+  - Public templates require approval and auditability
+
+---
+
 ## Architecture Overview
 
 FastAPI backend using a **Service-Repository-Model** layered architecture for managing OpenStack deployments:
@@ -136,3 +271,9 @@ Environment via `.env` (see [src/core/config.py](src/core/config.py)):
   - Maintain comments: update with code changes; remove obsolete or misleading notes.
   - Error and log messages must be actionable, precise, consistent, include request_id, and never expose secrets or PII.
 
+## Final Note
+
+This project is not a demo or toy system.
+It is designed as a **realistic teaching platform** that could be adopted by a university.
+
+Code should reflect that level of care.

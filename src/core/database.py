@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 from src.core.config import get_settings
 
+
 settings = get_settings()
 
 
@@ -20,8 +21,27 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def init_db() -> None:
-    """Initialize database tables."""
-    # Import all models here so they are registered with Base.metadata
-    from src.models import deployment
+    """Initialize database tables.
+    
+    Imports models here to avoid circular import issues.
+    Note: resource_usage_cache is stored in Redis, not PostgreSQL.
+    """
+    # Import all models to register them with SQLAlchemy metadata
+    from src.models import (
+        deployment,
+        deployment_instance,
+        deployment_instance_access,
+        deployment_log,
+        template,
+        template_category,
+        template_category_assignment,
+        template_version,
+        user,
+        course,
+        course_member,
+        course_group,
+        group_member,
+        openstack_project,
+    )
     
     Base.metadata.create_all(bind=engine)
