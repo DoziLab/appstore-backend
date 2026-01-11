@@ -27,7 +27,8 @@ def init_db() -> None:
     Note: resource_usage_cache is stored in Redis, not PostgreSQL.
     """
     # Import all models to register them with SQLAlchemy metadata
-    from src.models import (
+    # fmt: off
+    from src.models import (  # noqa: F401
         deployment,
         deployment_instance,
         deployment_instance_access,
@@ -43,5 +44,6 @@ def init_db() -> None:
         group_member,
         openstack_project,
     )
+    # fmt: on
     
     Base.metadata.create_all(bind=engine)

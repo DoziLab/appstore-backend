@@ -1,6 +1,5 @@
 """Repository for Deployment model."""
 from typing import List, Optional
-from uuid import UUID
 from sqlalchemy.orm import Session
 
 from src.models.deployment import Deployment, DeploymentStatus
