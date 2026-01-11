@@ -1,6 +1,6 @@
 from src.repositories.deployment_repository import DeploymentRepository
 from src.schemas.deployment import DeploymentCreate
-from src.models.deployment import Deployment, DeploymentStatus
+from src.models.deployment import Deployment
 from src.tasks.deploy_tasks import deploy_stack
 from sqlalchemy.orm import Session
 

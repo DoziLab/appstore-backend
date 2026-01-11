@@ -1,6 +1,6 @@
 """Deployment API endpoints."""
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, status, Query
 from src.models.deployment import DeploymentStatus
 from src.core.response_builder import ResponseBuilder
 from src.core.dependencies import DBSession, RequestID, Pagination
