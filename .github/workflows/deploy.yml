@@ -1,0 +1,82 @@
+name: Deploy to Production
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    permissions:
+      contents: read
+      packages: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Deploy to App Store Server
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          # Save SSH key
+          echo "$SSH_PRIVATE_KEY" > server_key.pem
+          chmod 600 server_key.pem
+          
+          # Deploy on server
+          ssh -i server_key.pem -o StrictHostKeyChecking=no ubuntu@$SERVER_HOST bash -s << 'ENDSSH'
+            cd /home/ubuntu/app-store
+            
+            # Check .env file exists
+            if [ ! -f .env ]; then
+              echo "❌ .env file not found on server!"
+              exit 1
+            fi
+            
+            # Login to GitHub Container Registry
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # Pull latest images
+            docker compose pull
+            
+            # Stop existing containers
+            docker compose down
+            
+            # Start new containers
+            docker compose up -d
+            
+            # Wait for API to be ready
+            echo "⏳ Waiting for API to start..."
+            sleep 15
+            
+            # Run database migrations
+            docker compose exec -T api alembic upgrade head
+            
+            # Health check
+            echo "🔍 Running health check..."
+            for i in {1..5}; do
+              if curl -f http://localhost:8000/health; then
+                echo "✅ Deployment successful!"
+                exit 0
+              fi
+              echo "Attempt $i/5 failed, retrying..."
+              sleep 5
+            done
+            
+            echo "❌ Health check failed after 5 attempts"
+            docker compose logs api
+            exit 1
+          ENDSSH
+          
+          # Cleanup
+          rm -f server_key.pem
+      
+      - name: Cleanup old images locally
+        run: |
+          docker image prune -af --filter "until=168h"
