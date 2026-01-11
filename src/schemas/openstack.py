@@ -41,8 +41,8 @@ class OpenstackProjectUpdate(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "vm_quota": 15,
-                "vcpu_quota": 30
+                "openstack_project_name": "my_project_ws2024_renamed",
+                "password": "new-secure-password"
             }
         }
     )

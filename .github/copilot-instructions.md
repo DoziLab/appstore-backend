@@ -40,7 +40,7 @@ This project replaces that with:
 
 ## Target Users (Personas)
 
-The system is designed around the following user personas :contentReference[oaicite:1]{index=1}:
+The system is designed around the following user personas:
 
 ### Lecturers (Primary Users)
 - May have **no IT knowledge** or **advanced IT knowledge**

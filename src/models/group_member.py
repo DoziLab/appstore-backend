@@ -15,7 +15,7 @@ class GroupMember(Base):
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     group_id: Mapped[str] = mapped_column(String(36), ForeignKey("course_groups.id"), nullable=False)
-    course_members_id: Mapped[str] = mapped_column(String(36), ForeignKey("course_members.id"), nullable=False)
+    course_member_id: Mapped[str] = mapped_column(String(36), ForeignKey("course_members.id"), nullable=False)
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relationships
