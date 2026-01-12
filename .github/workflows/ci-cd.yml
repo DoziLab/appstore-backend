@@ -94,7 +94,7 @@ jobs:
             
             docker compose up -d --force-recreate --remove-orphans
             
-            docker compose exec -T api python -m alembic upgrade head
+            docker compose exec -T api alembic upgrade head
             
             echo "🔍 Waiting for health check..."
             NEXT_WAIT_TIME=0
