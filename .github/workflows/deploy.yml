@@ -1,17 +1,13 @@
 name: Deploy to Production
 
 on:
-  workflow_run:
-    workflows: ["CI Pipeline"]
-    types:
-      - completed
-    branches:
-      - main
+  push:
+    branches: [ main ]
 
 jobs:
   deploy:
     runs-on: self-hosted
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: read
@@ -22,8 +18,8 @@ jobs:
       
       - name: Deploy to App Store Server
         env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_HOST: ${{ secrets.APPSTORE_SERVER_HOST }}
+          SSH_PRIVATE_KEY: ${{ secrets.APPSOTRE_SERVER_SSH_KEY }}
         run: |
           # Save SSH key
           echo "$SSH_PRIVATE_KEY" > server_key.pem
