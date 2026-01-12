@@ -1,0 +1,113 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Checks
+        run: |
+          ruff check src/ tests/
+          mypy src/
+      - name: Tests
+        run: |
+          pytest tests/ --cov=src --cov-report=xml
+      - uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main')
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/dozilab/appstore-backend
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy via Internal Network
+    needs: build-and-push
+    runs-on: self-hosted
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.APPSTORE_SERVER_SSH_KEY }}
+
+      - name: Remote Deployment
+        env:
+          SERVER_HOST: ${{ secrets.APPSTORE_SERVER_HOST }} 
+        run: |
+          ssh -o StrictHostKeyChecking=no ubuntu@$SERVER_HOST bash -s << 'ENDSSH'
+            
+            cd /home/ubuntu/app-store || { echo "❌ Path not found"; exit 1; }
+            
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            docker compose pull
+            
+            docker compose up -d --force-recreate --remove-orphans
+            
+            docker compose exec -T api alembic upgrade head
+            
+            echo "🔍 Waiting for health check..."
+            NEXT_WAIT_TIME=0
+            until curl -f http://localhost:8000/health || [ $NEXT_WAIT_TIME -eq 10 ]; do
+               sleep $(( NEXT_WAIT_TIME++ ))
+               echo "Retry check... ($NEXT_WAIT_TIME/10)"
+            done
+            
+            if ! curl -f http://localhost:8000/health; then
+               echo "❌ Deployment failed!"
+               docker compose logs api --tail=50
+               exit 1
+            fi
+            
+            docker image prune -af --filter "until=24h"
+          ENDSSH
