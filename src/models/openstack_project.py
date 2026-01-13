@@ -2,14 +2,19 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import String, DateTime, ForeignKey, Text
+from sqlalchemy import String, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
+from src.services.secret_encryption_service import EncryptedString
 
 
 class OpenstackProject(Base):
-    """OpenStack Project database model."""
+    """OpenStack Project database model.
+    
+    IMPORTANT: username and password fields are automatically encrypted/decrypted using EncryptedString type.
+    Never log these credential values.
+    """
     
     __tablename__ = "openstack_projects"
     
@@ -20,8 +25,9 @@ class OpenstackProject(Base):
     
     # OpenStack authentication and connection details
     auth_url: Mapped[str] = mapped_column(String(500), nullable=False)
-    username: Mapped[str] = mapped_column(String(255), nullable=False)
-    password: Mapped[str] = mapped_column(Text, nullable=False)  # Should be encrypted in production
+    # Automatically encrypted at rest, decrypted on read. NEVER log these values.
+    username: Mapped[str] = mapped_column(EncryptedString(500), nullable=False)
+    password: Mapped[str] = mapped_column(EncryptedString(500), nullable=False)
     user_domain_name: Mapped[str] = mapped_column(String(255), nullable=False, default="Default")
     region_name: Mapped[str] = mapped_column(String(100), nullable=False)
     
