@@ -5,16 +5,19 @@ from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from src.core.config import get_settings
 
 
-settings = get_settings()
-
-
 class Base(DeclarativeBase):
     """SQLAlchemy declarative base class."""
     pass
 
 
-# Database engine
-engine = create_engine(settings.database_url, echo=settings.debug)
+def _get_engine():
+    """Create database engine lazily."""
+    settings = get_settings()
+    return create_engine(settings.database_url, echo=settings.debug)
+
+
+# Database engine (created lazily)
+engine = _get_engine()
 
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

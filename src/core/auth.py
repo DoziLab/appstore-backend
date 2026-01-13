@@ -11,7 +11,6 @@ from src.core.config import get_settings
 
 
 security = HTTPBearer()
-settings = get_settings()
 
 
 @lru_cache(maxsize=1)
@@ -21,7 +20,7 @@ def get_keycloak_public_keys() -> dict[str, Any]:
     Keys are cached to avoid repeated network calls.
     Cache is cleared on application restart.
     """
-    print(f"Fetching Keycloak public keys from {settings.keycloak_realm_url}/protocol/openid-connect/certs")
+    settings = get_settings()
     certs_url = f"{settings.keycloak_realm_url}/protocol/openid-connect/certs"
     
     try:
@@ -44,6 +43,8 @@ def verify_jwt_token(token: str) -> dict[str, Any]:
     Raises:
         HTTPException: If token is invalid, expired, or verification fails
     """
+    settings = get_settings()
+    
     try:
         # Get unverified header to extract kid (key ID)
         unverified_header = jwt.get_unverified_header(token)

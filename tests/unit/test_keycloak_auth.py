@@ -29,11 +29,12 @@ def mock_token_payload():
     }
 
 
+@patch("src.core.auth.RSAKey")
 @patch("src.core.auth.get_keycloak_public_keys")
 @patch("src.core.auth.jwt.decode")
 @patch("src.core.auth.jwt.get_unverified_header")
 def test_verify_jwt_token_success(
-    mock_get_header, mock_jwt_decode, mock_get_keys, mock_token_payload
+    mock_get_header, mock_jwt_decode, mock_get_keys, mock_rsa_key, mock_token_payload
 ):
     """Test successful token verification."""
     # Setup mocks
@@ -41,6 +42,7 @@ def test_verify_jwt_token_success(
     mock_get_keys.return_value = {
         "keys": [{"kid": "test-key-id", "kty": "RSA", "use": "sig"}]
     }
+    mock_rsa_key.return_value = Mock()  # Mock RSAKey instance
     mock_jwt_decode.return_value = mock_token_payload
     
     result = verify_jwt_token("valid.jwt.token")
@@ -60,20 +62,22 @@ def test_verify_jwt_token_missing_kid(mock_get_header, mock_get_keys):
         verify_jwt_token("invalid.jwt.token")
     
     assert exc_info.value.status_code == 401
-    assert "missing key ID" in str(exc_info.value.detail).lower()
+    assert "key id" in str(exc_info.value.detail).lower()
 
 
+@patch("src.core.auth.RSAKey")
 @patch("src.core.auth.get_keycloak_public_keys")
 @patch("src.core.auth.jwt.decode")
 @patch("src.core.auth.jwt.get_unverified_header")
 def test_verify_jwt_token_untrusted_client(
-    mock_get_header, mock_jwt_decode, mock_get_keys
+    mock_get_header, mock_jwt_decode, mock_get_keys, mock_rsa_key
 ):
     """Test token verification fails for untrusted client."""
     mock_get_header.return_value = {"kid": "test-key-id"}
     mock_get_keys.return_value = {
         "keys": [{"kid": "test-key-id", "kty": "RSA", "use": "sig"}]
     }
+    mock_rsa_key.return_value = Mock()  # Mock RSAKey instance
     mock_jwt_decode.return_value = {
         "sub": "user-123",
         "azp": "untrusted-client"

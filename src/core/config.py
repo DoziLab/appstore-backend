@@ -1,5 +1,5 @@
 """Application configuration using Pydantic Settings."""
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
 
@@ -47,9 +47,10 @@ class Settings(BaseSettings):
         """Build Keycloak realm URL."""
         return f"{self.keycloak_url}/realms/{self.keycloak_realm}"
     
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore"
+    )
 
 
 @lru_cache
