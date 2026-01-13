@@ -5,9 +5,10 @@ from uuid import UUID
 from fastapi import APIRouter, status, Query
 
 from src.core.response_builder import ResponseBuilder
-from src.core.dependencies import DBSession, RequestID, Pagination
+from src.core.dependencies import DBSession, RequestID, Pagination, CurrentUser
 from src.schemas.template import TemplateCreate, TemplateUpdate, TemplateResponse
 from src.services.template_service import TemplateService
+from src.models.user import UserRole
 
 
 router = APIRouter(prefix="/templates", tags=["templates"])
@@ -87,21 +88,18 @@ async def create_template(
     template_data: TemplateCreate,
     db: DBSession,
     request_id: RequestID,
+    current_user: CurrentUser,
 ):
     """Create a new template.
     
     Templates are created with initial approval status 'pending'.
     They must be approved by an admin before becoming publicly available.
     
-    Note: Authentication integration pending. Currently uses mock owner_id.
+    Requires authentication. The authenticated user becomes the template owner.
     """
     service = TemplateService(db)
     
-    # TODO: Replace with actual user ID from authentication token
-    # For now, using a mock user ID for testing
-    mock_owner_id = "00000000-0000-0000-0000-000000000000"
-    
-    template = service.create_template(template_data, owner_id=mock_owner_id)
+    template = service.create_template(template_data, owner_id=current_user["user_id"])
     
     template_response = TemplateResponse.model_validate(template)
     
@@ -118,26 +116,24 @@ async def update_template(
     template_data: TemplateUpdate,
     db: DBSession,
     request_id: RequestID,
+    current_user: CurrentUser,
 ):
     """Update an existing template.
     
     Only template owners or admins can update templates.
     Partial updates are supported - only provided fields will be updated.
     
-    Note: Authentication and authorization integration pending.
+    Requires authentication. Permission checks enforce ownership or admin role.
     """
     service = TemplateService(db)
     
-    # TODO: Replace with actual user ID and admin status from authentication
-    # For now, using mock values for testing
-    mock_user_id = "00000000-0000-0000-0000-000000000000"
-    mock_is_admin = True
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
     
     template = service.update_template(
         template_id=str(template_id),
         template_data=template_data,
-        user_id=mock_user_id,
-        is_admin=mock_is_admin,
+        user_id=current_user["user_id"],
+        is_admin=is_admin,
     )
     
     template_response = TemplateResponse.model_validate(template)
@@ -154,25 +150,23 @@ async def delete_template(
     template_id: UUID,
     db: DBSession,
     request_id: RequestID,
+    current_user: CurrentUser,
 ):
     """Delete a template.
     
     Only template owners or admins can delete templates.
     This is a permanent operation and cannot be undone.
     
-    Note: Authentication and authorization integration pending.
+    Requires authentication. Permission checks enforce ownership or admin role.
     """
     service = TemplateService(db)
     
-    # TODO: Replace with actual user ID and admin status from authentication
-    # For now, using mock values for testing
-    mock_user_id = "00000000-0000-0000-0000-000000000000"
-    mock_is_admin = True
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
     
     service.delete_template(
         template_id=str(template_id),
-        user_id=mock_user_id,
-        is_admin=mock_is_admin,
+        user_id=current_user["user_id"],
+        is_admin=is_admin,
     )
     
     # For 204 No Content, return None (FastAPI handles this correctly)

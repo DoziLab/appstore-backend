@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from src.main import app
 from src.core.database import Base
-from src.core.dependencies import get_db
+from src.core.dependencies import get_db, get_current_user
 from src.models.template import Template, TemplateVisibility, TemplateApprovalStatus
 from src.models.user import User
 
@@ -51,7 +51,7 @@ def db_session():
 
 
 @pytest.fixture(scope="function")
-def client(db_session):
+def client(db_session, mock_user):
     """Create test client with overridden database dependency."""
     def override_get_db():
         try:
@@ -59,7 +59,19 @@ def client(db_session):
         finally:
             pass
     
+    def override_get_current_user():
+        """Mock authenticated user for tests."""
+        return {
+            "sub": mock_user.external_id,
+            "email": "test@example.com",
+            "name": "Test User",
+            "preferred_username": "testuser",
+            "roles": ["admin"],  # Grant admin role for tests
+            "user_id": mock_user.id,
+        }
+    
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = override_get_current_user
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
