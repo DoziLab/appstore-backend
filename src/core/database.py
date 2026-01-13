@@ -13,7 +13,13 @@ class Base(DeclarativeBase):
 def _get_engine():
     """Create database engine lazily."""
     settings = get_settings()
-    return create_engine(settings.database_url, echo=settings.debug)
+    # Enable pool_pre_ping to detect and recycle stale/closed connections
+    # which prevents "server closed the connection unexpectedly" errors
+    return create_engine(
+        settings.database_url,
+        echo=settings.debug,
+        pool_pre_ping=True,
+    )
 
 
 # Database engine (created lazily)
@@ -40,6 +46,7 @@ def init_db() -> None:
         template_category,
         template_category_assignment,
         template_version,
+        template_content,
         user,
         course,
         course_member,

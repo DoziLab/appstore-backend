@@ -28,3 +28,12 @@ class DeploymentRepository(BaseRepository[Deployment]):
             self.db.commit()
             self.db.refresh(deployment)
         return deployment
+    
+    def update_stack_id(self, deployment_id: str, stack_id: str) -> Optional[Deployment]:
+        """Update OpenStack stack ID for a deployment."""
+        deployment = self.get_by_id(deployment_id)
+        if deployment:
+            deployment.openstack_stack_id = stack_id
+            self.db.commit()
+            self.db.refresh(deployment)
+        return deployment

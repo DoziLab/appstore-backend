@@ -43,6 +43,14 @@ class ConflictException(StarletteHTTPException):
     def __init__(self, message: str = "Request conflicts with current state"):
         super().__init__(status_code=status.HTTP_409_CONFLICT, detail=message)
 
+
+class ResourceNotFoundError(NotFoundException):
+    """Exception raised when a specific resource is not found.
+    
+    Alias for NotFoundException for semantic clarity.
+    """
+    pass
+
         
 class AuthenticationError(Exception):
     """Raised when token validation fails."""

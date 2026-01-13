@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     keycloak_client_id: str
     keycloak_jwks_cache_ttl: int = 3600  # 1 hour in seconds
     
+    # OpenStack Configuration (required for Heat deployments)
+    openstack_auth_url: str
+    openstack_project_name: str
+    openstack_username: str
+    openstack_password: str
+    openstack_user_domain_name: str = "Default"
+    openstack_project_domain_name: str = "Default"
+    openstack_region_name: str = "RegionOne"
+    openstack_identity_api_version: str = "3"
+    
     # Encryption key for secrets (Fernet key)
     encryption_key: str | None = None
     

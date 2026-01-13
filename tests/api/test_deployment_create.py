@@ -55,7 +55,8 @@ def test_create_deployment_success(mock_service_class, mock_deployment):
     
     # Test data
     payload = {
-        "template_version_id": "version-123",
+        "template_id": "template-123",
+        "version": "v1.0.0",
         "course_id": "course-456",
         "deployment_mode": "per_course",
         "config_json": '{"cpu": 2, "ram": 4096}',

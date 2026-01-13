@@ -48,4 +48,6 @@ class Template(Base):
     owner: Mapped["User"] = relationship("User", back_populates="owned_templates")
     versions: Mapped[list["TemplateVersion"]] = relationship("TemplateVersion", back_populates="template")
     category_assignments: Mapped[list["TemplateCategoryAssignment"]] = relationship("TemplateCategoryAssignment", back_populates="template")
+    contents: Mapped[list["TemplateContent"]] = relationship("TemplateContent", back_populates="template")
+
 

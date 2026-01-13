@@ -6,7 +6,8 @@ from typing import Optional
 
 class DeploymentCreate(BaseModel):
     """Schema for creating a deployment."""
-    template_version_id: str = Field(..., description="Template version ID to deploy")
+    template_id: str = Field(..., description="Template ID to deploy")
+    version: str = Field(..., description="Template version to deploy")
     course_id: str = Field(..., description="Course ID")
     deployment_mode: str = Field(..., description="Deployment mode (per_course, per_group, per_student)")
     config_json: Optional[str] = Field(None, description="Deployment configuration as JSON string")
@@ -44,7 +45,8 @@ class DeploymentCreate(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "template_version_id": "version-123",
+                "template_id": "template-123",
+                "version": "v1.0.0",
                 "course_id": "course-456",
                 "deployment_mode": "per_group",
                 "group_ids": ["group-789", "group-abc"],

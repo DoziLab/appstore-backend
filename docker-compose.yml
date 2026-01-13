@@ -4,6 +4,11 @@ services:
     image: redis:7
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   db:
     image: postgres:15
@@ -52,6 +57,14 @@ services:
       - KEYCLOAK_REALM=${KEYCLOAK_REALM}
       - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}
       - KEYCLOAK_JWKS_CACHE_TTL=${KEYCLOAK_JWKS_CACHE_TTL:-3600}
+      - OPENSTACK_AUTH_URL=${OPENSTACK_AUTH_URL}
+      - OPENSTACK_PROJECT_NAME=${OPENSTACK_PROJECT_NAME}
+      - OPENSTACK_USERNAME=${OPENSTACK_USERNAME}
+      - OPENSTACK_PASSWORD=${OPENSTACK_PASSWORD}
+      - OPENSTACK_USER_DOMAIN_NAME=${OPENSTACK_USER_DOMAIN_NAME:-Default}
+      - OPENSTACK_PROJECT_DOMAIN_NAME=${OPENSTACK_PROJECT_DOMAIN_NAME:-Default}
+      - OPENSTACK_REGION_NAME=${OPENSTACK_REGION_NAME:-RegionOne}
+      - OPENSTACK_IDENTITY_API_VERSION=${OPENSTACK_IDENTITY_API_VERSION:-3}
     depends_on:
       redis:
         condition: service_healthy

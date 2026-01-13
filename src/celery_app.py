@@ -2,8 +2,13 @@
 from celery import Celery
 
 from src.core.config import get_settings
+from src.core.database import init_db
 
 settings = get_settings()
+
+# Initialize database models so SQLAlchemy knows about relationships
+# This must happen before any DB queries in Celery tasks
+init_db()
 
 celery_app = Celery(
     "appstore",
