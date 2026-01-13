@@ -1,5 +1,4 @@
 """Tests for deployment creation endpoint."""
-import json
 from unittest.mock import patch, MagicMock
 import pytest
 from fastapi.testclient import TestClient
