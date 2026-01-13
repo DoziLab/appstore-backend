@@ -221,3 +221,9 @@ clouds.yaml
 # SSL certificates and keys
 *.crt
 *.pem
+
+# User Stories
+personas_userstories.txt
+
+# issues
+all_issues.md
