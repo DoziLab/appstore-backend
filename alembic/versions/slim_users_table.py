@@ -1,7 +1,7 @@
 """Simplify users table - remove redundant Keycloak data.
 
 Revision ID: slim_users_table
-Revises: c3eb8a110c7a
+Revises: 54676bfeb014
 Create Date: 2026-01-12 14:30:00
 
 RATIONALE:
@@ -25,7 +25,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = 'slim_users_table'
-down_revision = 'c3eb8a110c7a'
+down_revision = '54676bfeb014'
 branch_labels = None
 depends_on = None
 
