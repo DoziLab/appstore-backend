@@ -5,7 +5,7 @@ consistent error responses across all endpoints using ResponseBuilder.
 """
 import logging
 
-from fastapi import Request
+from fastapi import Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -15,6 +15,35 @@ from .response_builder import ResponseBuilder
 logger = logging.getLogger(__name__)
 
 
+# Custom domain exceptions
+class NotFoundException(StarletteHTTPException):
+    """Exception raised when a resource is not found."""
+    
+    def __init__(self, message: str = "Resource not found"):
+        super().__init__(status_code=status.HTTP_404_NOT_FOUND, detail=message)
+
+
+class ForbiddenException(StarletteHTTPException):
+    """Exception raised when user lacks permission for an action."""
+    
+    def __init__(self, message: str = "You do not have permission to perform this action"):
+        super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail=message)
+
+
+class BadRequestException(StarletteHTTPException):
+    """Exception raised for invalid client requests."""
+    
+    def __init__(self, message: str = "Invalid request"):
+        super().__init__(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+
+
+class ConflictException(StarletteHTTPException):
+    """Exception raised when request conflicts with current state."""
+    
+    def __init__(self, message: str = "Request conflicts with current state"):
+        super().__init__(status_code=status.HTTP_409_CONFLICT, detail=message)
+
+        
 class AuthenticationError(Exception):
     """Raised when token validation fails."""
     pass
