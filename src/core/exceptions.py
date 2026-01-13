@@ -15,6 +15,16 @@ from .response_builder import ResponseBuilder
 logger = logging.getLogger(__name__)
 
 
+class AuthenticationError(Exception):
+    """Raised when token validation fails."""
+    pass
+
+
+class AuthorizationError(Exception):
+    """Raised when user lacks required permissions."""
+    pass
+
+
 async def http_exception_handler(
     request: Request, 
     exc: StarletteHTTPException
@@ -98,6 +108,70 @@ async def validation_exception_handler(
     )
 
 
+async def authentication_exception_handler(
+    request: Request,
+    exc: AuthenticationError
+) -> JSONResponse:
+    """Handle authentication errors (401 Unauthorized).
+    
+    Args:
+        request: The FastAPI request object
+        exc: The authentication error exception
+        
+    Returns:
+        Standardized JSON error response with 401 status
+    """
+    request_id = getattr(request.state, "request_id", None)
+    
+    logger.warning(
+        f"Authentication error on {request.method} {request.url.path}: {str(exc)}",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "request_id": request_id,
+            "event": "authentication_error"
+        }
+    )
+    
+    return ResponseBuilder.error(
+        message=str(exc) or "Authentication failed",
+        status_code=401,
+        request_id=request_id,
+    )
+
+
+async def authorization_exception_handler(
+    request: Request,
+    exc: AuthorizationError
+) -> JSONResponse:
+    """Handle authorization errors (403 Forbidden).
+    
+    Args:
+        request: The FastAPI request object
+        exc: The authorization error exception
+        
+    Returns:
+        Standardized JSON error response with 403 status
+    """
+    request_id = getattr(request.state, "request_id", None)
+    
+    logger.warning(
+        f"Authorization error on {request.method} {request.url.path}: {str(exc)}",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "request_id": request_id,
+            "event": "authorization_error"
+        }
+    )
+    
+    return ResponseBuilder.error(
+        message=str(exc) or "Insufficient permissions",
+        status_code=403,
+        request_id=request_id,
+    )
+
+
 async def generic_exception_handler(
     request: Request, 
     exc: Exception
@@ -146,6 +220,8 @@ def register_exception_handlers(app) -> None:
     """
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(AuthenticationError, authentication_exception_handler)
+    app.add_exception_handler(AuthorizationError, authorization_exception_handler)
     app.add_exception_handler(Exception, generic_exception_handler)
     
     logger.info("Exception handlers registered successfully")

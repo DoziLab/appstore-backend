@@ -271,6 +271,23 @@ Environment via `.env` (see [src/core/config.py](src/core/config.py)):
   - Maintain comments: update with code changes; remove obsolete or misleading notes.
   - Error and log messages must be actionable, precise, consistent, include request_id, and never expose secrets or PII.
 
+- TODO Comments
+  - Use the exact format: `# TODO: Description of what needs to be done`
+  - Start with `# TODO:` (space after colon) on its own line above the relevant code
+  - Write clear, actionable descriptions in English
+  - Include context with explanatory comments below the TODO if needed
+  - Example format:
+    ```python
+    # TODO: Implement rate limiting per user based on their role
+    # Current implementation applies global rate limit to all endpoints
+    current_user = get_current_user()
+    ```
+  - Keep TODOs visible and trackable; remove or update them when completed
+  - Never use TODO for critical security issues; fix those immediately
+
+- Documentation
+  DO NOT create documentations unless explicitly requested.
+
 ## Final Note
 
 This project is not a demo or toy system.
