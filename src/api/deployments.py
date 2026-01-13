@@ -1,6 +1,6 @@
 """Deployment API endpoints."""
 from uuid import UUID
-from fastapi import APIRouter, status, Query
+from fastapi import APIRouter, status, Query, Depends
 from src.models.deployment import DeploymentStatus
 from src.models.user import UserRole
 from src.core.response_builder import ResponseBuilder
@@ -36,8 +36,8 @@ async def create_deployment(
     deployment_data: DeploymentCreate,
     db: DBSession,
     request_id: RequestID,
-    user: CurrentUser = require_roles(UserRole.ADMIN, UserRole.LECTURER),
-) -> dict:
+    user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
+):
     """Create a new deployment (One-Click Deployment).
     
     Initiates deployment of a template version to a course.
