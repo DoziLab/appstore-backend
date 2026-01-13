@@ -1,9 +1,13 @@
-version: '3.8'
 services:
   redis:
     image: redis:7
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   db:
     image: postgres:15
@@ -34,6 +38,7 @@ services:
       - KEYCLOAK_REALM=${KEYCLOAK_REALM}
       - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}
       - KEYCLOAK_JWKS_CACHE_TTL=${KEYCLOAK_JWKS_CACHE_TTL:-3600}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
     depends_on:
       db:
         condition: service_healthy
@@ -52,6 +57,7 @@ services:
       - KEYCLOAK_REALM=${KEYCLOAK_REALM}
       - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}
       - KEYCLOAK_JWKS_CACHE_TTL=${KEYCLOAK_JWKS_CACHE_TTL:-3600}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
     depends_on:
       redis:
         condition: service_healthy
