@@ -3,8 +3,6 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import values
-
 
 class DeploymentCreate(BaseModel):
     """Schema for creating a deployment."""
@@ -23,16 +21,15 @@ class DeploymentCreate(BaseModel):
         description="Desired access types for instances (ssh, web_url, guacamole, rdp, vnc)"
     )
     
-    @field_validator("group_ids")
+    @field_validator("group_ids", mode="after")
     @classmethod
     def validate_group_ids(cls, v, info):
         """Validate group_ids is provided for per_group mode."""
-        deployment_mode = values.get("deployment_mode")
-        if deployment_mode == "per_group" and not v:
+        if info.data.get("deployment_mode") == "per_group" and not v:
             raise ValueError("group_ids is required when deployment_mode is 'per_group'")
         return v
     
-    @field_validator("course_member_ids")
+    @field_validator("course_member_ids", mode="after")
     @classmethod
     def validate_course_member_ids(cls, v, info):
         """Validate course_member_ids for per_student mode.
@@ -40,8 +37,7 @@ class DeploymentCreate(BaseModel):
         - Required when deployment_mode is 'per_student'
         - Optional otherwise (None means "all course members")
         """
-        deployment_mode = values.get("deployment_mode")
-        if deployment_mode == "per_student" and not v:
+        if info.data.get("deployment_mode") == "per_student" and not v:
             raise ValueError("course_member_ids is required when deployment_mode is 'per_student'")
         return v
     

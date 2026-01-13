@@ -1,9 +1,10 @@
 """Deployment API endpoints."""
 from uuid import UUID
-from fastapi import APIRouter, status, Query
+from fastapi import APIRouter, status, Query, Depends
 from src.models.deployment import DeploymentStatus
+from src.models.user import UserRole
 from src.core.response_builder import ResponseBuilder
-from src.core.dependencies import DBSession, RequestID, Pagination
+from src.core.dependencies import DBSession, RequestID, Pagination, CurrentUser, require_roles
 from src.schemas.deployment import DeploymentResponse, DeploymentCreate
 from src.services.deployment_service import DeploymentService
 
@@ -15,6 +16,7 @@ async def list_deployments(
     pagination: Pagination,
     db: DBSession,
     request_id: RequestID,
+    user: CurrentUser,
     course_id: UUID | None = Query(None, description="Filter by course ID"),
     status_filter: DeploymentStatus | None = Query(None, description="Filter by status", alias="status"),
 ):
@@ -30,11 +32,28 @@ async def list_deployments(
     )
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-def create_deployment(
+async def create_deployment(
     deployment_data: DeploymentCreate,
     db: DBSession,
-    request_id: RequestID
+    request_id: RequestID,
+    user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
 ):
+    """Create a new deployment (One-Click Deployment).
+    
+    Initiates deployment of a template version to a course.
+    The deployment is queued and processed asynchronously via Celery.
+    
+    **Authorization:** Requires ADMIN or LECTURER role.
+    
+    Args:
+        deployment_data: Deployment creation request with template_id, course_id, target_type
+        db: Database session
+        request_id: Request correlation ID
+        user: Authenticated user with required role (auto-validated)
+        
+    Returns:
+        Created deployment with status QUEUED
+    """
     service = DeploymentService(db)
     deployment = service.create_deployment(deployment_data)
     
