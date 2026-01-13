@@ -12,7 +12,11 @@ from src.core.middleware import RequestTrackingMiddleware
 from src.core.exceptions import (
     http_exception_handler,
     validation_exception_handler,
+    authentication_exception_handler,
+    authorization_exception_handler,
     generic_exception_handler,
+    AuthenticationError,
+    AuthorizationError,
 )
 from src.api import api_router
 
@@ -53,6 +57,8 @@ app.add_middleware(RequestTrackingMiddleware)
 # Register exception handlers
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(AuthenticationError, authentication_exception_handler)
+app.add_exception_handler(AuthorizationError, authorization_exception_handler)
 app.add_exception_handler(Exception, generic_exception_handler)
 
 # Include routers

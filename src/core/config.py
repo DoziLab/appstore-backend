@@ -1,5 +1,5 @@
 """Application configuration using Pydantic Settings."""
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
 
@@ -11,24 +11,46 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     debug: bool = False
     
-    # Redis / Celery
-    redis_url: str = "redis://localhost:6379/0"
+    # Redis / Celery (required)
+    redis_url: str
     
-    # Database
-    db_user: str = "postgres"
-    db_password: str = "postgres"
-    db_host: str = "localhost"
-    db_port: int = 5432
-    db_name: str = "dozilab"
+    # Database (required)
+    db_user: str
+    db_password: str
+    db_host: str
+    db_port: int
+    db_name: str
+    
+    # Keycloak Authentication (required)
+    keycloak_url: str
+    keycloak_realm: str
+    keycloak_client_id: str
+    keycloak_jwks_cache_ttl: int = 3600  # 1 hour in seconds
     
     @property
     def database_url(self) -> str:
         """Build database URL from components."""
         return f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
     
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+    @property
+    def keycloak_issuer(self) -> str:
+        """Build Keycloak token issuer URL."""
+        return f"{self.keycloak_url}/realms/{self.keycloak_realm}"
+    
+    @property
+    def keycloak_jwks_url(self) -> str:
+        """Build Keycloak JWKS (JSON Web Key Set) URL for public key retrieval."""
+        return f"{self.keycloak_issuer}/protocol/openid-connect/certs"
+
+    @property
+    def keycloak_realm_url(self) -> str:
+        """Build Keycloak realm URL."""
+        return f"{self.keycloak_url}/realms/{self.keycloak_realm}"
+    
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore"
+    )
 
 
 @lru_cache
