@@ -6,8 +6,11 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from jose.backends import RSAKey
+from sqlalchemy.orm import Session
 
 from src.core.config import get_settings
+from src.core.database import get_db
+from src.services.user_sync_service import UserSyncService
 
 
 security = HTTPBearer()
@@ -108,9 +111,13 @@ def verify_jwt_token(token: str) -> dict[str, Any]:
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
 ) -> dict[str, Any]:
     """FastAPI dependency to extract and verify current user from JWT token.
+    
+    Automatically syncs user to database on first login.
+    Commits immediately to ensure user is visible to other transactions.
     
     Returns:
         User claims from token including:
@@ -128,7 +135,17 @@ async def get_current_user(
             username = user["preferred_username"]
     """
     token = credentials.credentials
-    return verify_jwt_token(token)
+    payload = verify_jwt_token(token)
+    
+    # Sync user to database (creates on first login, updates last_login_at)
+    sync_service = UserSyncService(db)
+    sync_service.sync_user_from_token(payload)
+    
+    # Explicitly commit and close to ensure user is visible to other transactions
+    db.commit()
+    db.close()
+    
+    return payload
 
 
 def require_role(required_role: str):
@@ -197,18 +214,36 @@ def require_client_role(client_id: str, required_role: str):
     return check_client_role
 
 
-def get_user_id(user: dict[str, Any] = Depends(get_current_user)) -> str:
-    """Extract user ID from token claims.
+def get_user_id(
+    user: dict[str, Any] = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> str:
+    """Extract internal user ID from database.
+    
+    Looks up the user's internal UUID using their Keycloak external_id (sub claim).
+    The user must already be synced by get_current_user dependency.
     
     Returns:
-        User UUID as string from 'sub' claim
+        Internal user UUID as string (users.id, NOT external_id)
         
     Usage:
         @router.get("/my-deployments")
         async def my_deployments(user_id: str = Depends(get_user_id)):
             return db.query(Deployment).filter_by(lecturer_id=user_id).all()
     """
-    return user["sub"]
+    from src.services.user_sync_service import UserRepository
+    
+    external_id = user["sub"]
+    user_repo = UserRepository(db)
+    db_user = user_repo.get_by_external_id(external_id)
+    
+    if not db_user:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="User not found in database after sync"
+        )
+    
+    return str(db_user.id)
 
 
 def is_lecturer(user: dict[str, Any] = Depends(get_current_user)) -> bool:

@@ -23,6 +23,23 @@ engine = _get_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+def get_db():
+    """FastAPI dependency to get database session.
+    
+    Yields a database session and ensures it's closed after use.
+    
+    Usage:
+        @router.get("/items")
+        async def get_items(db: Session = Depends(get_db)):
+            return db.query(Item).all()
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 def init_db() -> None:
     """Initialize database tables.
     

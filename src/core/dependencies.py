@@ -1,10 +1,10 @@
 """FastAPI dependencies."""
-from typing import Generator, Annotated, Callable
+from typing import Annotated, Callable
 from fastapi import Request, Depends, Query, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from src.core.database import SessionLocal
+from src.core.database import get_db
 from src.core.auth import verify_jwt_token
 from src.core.exceptions import AuthenticationError, AuthorizationError
 from src.models.user import UserRole
@@ -13,15 +13,6 @@ from src.models.user import UserRole
 def get_request_id(request: Request) -> str | None:
     """Get request ID from request state."""
     return getattr(request.state, "request_id", None)
-
-
-def get_db() -> Generator[Session, None, None]:
-    """Dependency to get database session."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # HTTP Bearer token scheme for Swagger UI
