@@ -11,7 +11,6 @@ from src.core.database import Base
 from src.core.dependencies import get_db
 from src.models.template import Template, TemplateVisibility, TemplateApprovalStatus
 from src.models.user import User
-from src.models.course import Course  # Import to ensure table is created
 
 
 # Create in-memory SQLite database for testing
@@ -36,6 +35,7 @@ def db_session():
     import src.models.template_category  # noqa
     import src.models.template_category_assignment  # noqa
     import src.models.template_version  # noqa
+    import src.models.course #noqa
     import src.models.course_member  # noqa
     import src.models.course_group  # noqa
     import src.models.group_member  # noqa
