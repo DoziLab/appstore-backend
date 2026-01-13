@@ -25,16 +25,6 @@ class AuthorizationError(Exception):
     pass
 
 
-class AuthenticationError(Exception):
-    """Raised when token validation fails."""
-    pass
-
-
-class AuthorizationError(Exception):
-    """Raised when user lacks required permissions."""
-    pass
-
-
 async def http_exception_handler(
     request: Request, 
     exc: StarletteHTTPException

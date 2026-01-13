@@ -1,7 +1,6 @@
 """Unit tests for Keycloak authentication."""
 import pytest
 from unittest.mock import Mock, patch
-from jose import jwt
 from fastapi import HTTPException
 
 from src.core.auth import verify_jwt_token, get_current_user

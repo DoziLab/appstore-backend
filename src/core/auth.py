@@ -4,7 +4,7 @@ from functools import lru_cache
 import httpx
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import jwt, JWTError, jwk
+from jose import jwt, JWTError
 from jose.backends import RSAKey
 
 from src.core.config import get_settings
