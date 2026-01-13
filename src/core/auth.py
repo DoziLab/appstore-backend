@@ -59,14 +59,14 @@ def verify_jwt_token(token: str) -> dict[str, Any]:
         jwks = get_keycloak_public_keys()
         
         # Find matching key by kid
-        public_key = None
+        public_key: Any = None
         for key_data in jwks.get("keys", []):
             if key_data.get("kid") == kid:
                 # Convert JWK to PEM format for python-jose
-                public_key = RSAKey(key_data, algorithm="RS256")
+                public_key = RSAKey(key_data, algorithm="RS256")  # type: ignore[misc]
                 break
         
-        if not public_key:
+        if public_key is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Unable to find matching public key"

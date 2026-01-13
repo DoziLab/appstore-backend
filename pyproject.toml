@@ -26,6 +26,7 @@ dev = [
     "httpx>=0.25.0",
     "ruff>=0.1.0",
     "mypy>=1.7.0",
+    "types-python-jose>=3.3.0",
 ]
 
 [build-system]
