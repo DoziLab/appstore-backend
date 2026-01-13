@@ -271,6 +271,8 @@ Environment via `.env` (see [src/core/config.py](src/core/config.py)):
   - Maintain comments: update with code changes; remove obsolete or misleading notes.
   - Error and log messages must be actionable, precise, consistent, include request_id, and never expose secrets or PII.
 
+Do not create documentations unless explicitly requested.
+
 ## Final Note
 
 This project is not a demo or toy system.
