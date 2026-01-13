@@ -137,7 +137,8 @@ class TemplateService:
         if not update_data:
             return template
         
-        updated_template = self.template_repo.update(template_id, **update_data)
+        id_uuid = template_id if isinstance(template_id, UUID) else UUID(template_id)
+        updated_template = self.template_repo.update(id_uuid, **update_data)
         if not updated_template:
             raise NotFoundException(f"Template with ID {template_id} not found")
         
@@ -168,7 +169,8 @@ class TemplateService:
         if template.owner_id != user_id and not is_admin:
             raise ForbiddenException("You do not have permission to delete this template")
         
-        success = self.template_repo.delete(template_id)
+        id_uuid = template_id if isinstance(template_id, UUID) else UUID(template_id)
+        success = self.template_repo.delete(id_uuid)
         if not success:
             raise NotFoundException(f"Template with ID {template_id} not found")
 
