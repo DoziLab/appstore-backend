@@ -71,9 +71,6 @@ def mock_user(db_session):
     user = User(
         id="00000000-0000-0000-0000-000000000000",
         external_id="test-user-ext-id",
-        name="Test User",
-        email="test@example.com",
-        role="lecturer",
     )
     db_session.add(user)
     db_session.commit()

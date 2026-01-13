@@ -100,6 +100,6 @@ class TemplateRepository(BaseRepository[Template]):
         """
         template = self.get_by_id(template_id)
         if template:
-            id_uuid = template_id if isinstance(template_id, UUID) else UUID(template_id)
-            return self.update(id_uuid, approval_status=status)
+            uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
+            return self.update(uuid_id, approval_status=status)
         return None
