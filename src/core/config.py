@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     keycloak_client_id: str
     keycloak_jwks_cache_ttl: int = 3600  # 1 hour in seconds
     
+    # Encryption key for secrets (Fernet key)
+    encryption_key: str | None = None
+    
     @property
     def database_url(self) -> str:
         """Build database URL from components."""
