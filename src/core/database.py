@@ -47,22 +47,25 @@ def init_db() -> None:
     Note: resource_usage_cache is stored in Redis, not PostgreSQL.
     """
     # Import all models to register them with SQLAlchemy metadata
+    # This imports the classes themselves, not just modules, so SQLAlchemy
+    # can resolve string-based relationship references like "DeploymentInstance"
     # fmt: off
     from src.models import (  # noqa: F401
-        deployment,
-        deployment_instance,
-        deployment_instance_access,
-        deployment_log,
-        template,
-        template_category,
-        template_category_assignment,
-        template_version,
-        user,
-        course,
-        course_member,
-        course_group,
-        group_member,
-        openstack_project,
+        Course,
+        CourseGroup,
+        CourseMember,
+        Deployment,
+        DeploymentInstance,
+        DeploymentInstanceAccess,
+        DeploymentLog,
+        GroupMember,
+        OpenstackProject,
+        Template,
+        TemplateCategory,
+        TemplateCategoryAssignment,
+        TemplateVersion,
+        TemplateVersionFile,
+        User,
     )
     # fmt: on
     
