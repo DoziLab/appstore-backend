@@ -1,0 +1,27 @@
+meta {
+  name: Get Active Template Version
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{base_url}}/api/v1/template-versions/template/{{template_id}}/active
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # Get Active Template Version
+  
+  Retrieves the currently active version for a specific template.
+  Returns null if no active version exists.
+  
+  **Path Parameters:**
+  - `template_id`: UUID of the template
+  
+  **Returns:** Active template version or null
+}

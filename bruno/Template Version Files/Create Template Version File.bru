@@ -1,0 +1,50 @@
+meta {
+  name: Create Template Version File
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/api/v1/template-version-files
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "template_version_id": "{{version_id}}",
+    "file_name": "heat.yaml",
+    "file_type": "heat_template",
+    "file_path": "heat/heat.yaml",
+    "content": "heat_template_version: 2021-04-16\n...",
+    "file_size": 2048,
+    "description": "Main Heat template for VM deployment",
+    "is_primary": true,
+    "order": 1
+  }
+}
+
+docs {
+  # Create Template Version File
+  
+  Creates a new file for a template version.
+  
+  **Required Role:** Template owner or admin
+  
+  **Request Body:**
+  - `template_version_id`: UUID of the template version (required)
+  - `file_name`: Name of the file (required, max 255 chars)
+  - `file_type`: Type of file - heat_template, cloud_init, ansible_playbook, helm_chart, shell_script, config_file, other (required)
+  - `file_path`: Relative path in the git repository (required, max 500 chars)
+  - `content`: File content (optional, cached)
+  - `file_size`: File size in bytes (optional)
+  - `description`: File description (optional)
+  - `is_primary`: Whether this is the primary deployment file (default: false)
+  - `order`: Execution order if applicable (default: 0)
+  
+  **Returns:** Created file with ID and timestamps
+}

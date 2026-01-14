@@ -1,0 +1,47 @@
+meta {
+  name: Update Template
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{base_url}}/api/v1/templates/{{template_id}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "name": "Updated Template Name",
+    "description": "Updated description"
+  }
+}
+
+docs {
+  # Update Template
+  
+  Updates an existing template. Only template owners or admins can update.
+  Partial updates are supported - only provided fields will be updated.
+  
+  **Important Security Rules:**
+  - `visibility` field can ONLY be changed by ADMIN users
+  - `approval_status` cannot be changed via this endpoint (use approve/reject endpoints)
+  - Non-admin users can only update name, description, and repo_url
+  
+  **Required Role:** Template owner or admin
+  
+  **Path Parameters:**
+  - `template_id`: UUID of the template
+  
+  **Request Body (all optional):**
+  - `name`: Template name (max 255 chars)
+  - `description`: Template description
+  - `repo_url`: Git repository URL (max 500 chars)
+  - `visibility`: Template visibility - "private" or "public" (ADMIN ONLY)
+  
+  **Returns:** Updated template details
+}

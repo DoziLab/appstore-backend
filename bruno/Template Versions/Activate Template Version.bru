@@ -1,0 +1,29 @@
+meta {
+  name: Activate Template Version
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{base_url}}/api/v1/template-versions/{{version_id}}/activate
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # Activate Template Version
+  
+  Activates a specific template version and automatically deactivates all other versions.
+  Only template owners or admins can activate versions.
+  
+  **Required Role:** Template owner or admin
+  
+  **Path Parameters:**
+  - `version_id`: UUID of the template version to activate
+  
+  **Returns:** Activated template version details
+}
