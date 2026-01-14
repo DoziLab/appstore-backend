@@ -1,7 +1,7 @@
 """Deployment schemas for request/response validation."""
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 
 
 class DeploymentCreate(BaseModel):
@@ -86,3 +86,32 @@ class DeploymentResponse(BaseModel):
             }
         }
     )
+
+
+class DeploymentLogResponse(BaseModel):
+    """Schema for deployment log response."""
+    id: str = Field(..., description="Log entry ID")
+    deployment_id: str = Field(..., description="Deployment ID")
+    event_type: str = Field(..., description="Event type")
+    message: str = Field(..., description="Log message")
+    level: str = Field(..., description="Log level (INFO, WARNING, ERROR)")
+    details: Optional[dict[str, Any]] = Field(None, description="Additional details as JSON")
+    request_id: Optional[str] = Field(None, description="Request ID for tracing")
+    created_at: datetime = Field(..., description="Log timestamp")
+    
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                "id": "log-123",
+                "deployment_id": "deploy-123",
+                "event_type": "DEPLOYMENT_STARTED",
+                "message": "Deployment task started",
+                "level": "INFO",
+                "details": {"task_id": "abc-123"},
+                "request_id": "req-456",
+                "created_at": "2024-11-27T10:00:00Z"
+            }
+        }
+    )
+

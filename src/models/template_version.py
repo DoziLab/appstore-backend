@@ -22,4 +22,5 @@ class TemplateVersion(Base):
     # Relationships
     template: Mapped["Template"] = relationship("Template", back_populates="versions")
     deployments: Mapped[list["Deployment"]] = relationship("Deployment", back_populates="template_version")
+    files: Mapped[list["TemplateVersionFile"]] = relationship("TemplateVersionFile", back_populates="template_version")
     

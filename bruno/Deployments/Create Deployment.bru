@@ -1,0 +1,56 @@
+meta {
+  name: Create Deployment
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/api/v1/deployments
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "template_version_id": "{{template_version_id}}",
+    "course_id": "{{course_id}}",
+    "deployment_mode": "per_course",
+    "config_json": "{}",
+    "access_types": ["ssh", "web"]
+  }
+}
+
+script:post-response {
+  if (res.status === 201) {
+    const data = res.body.data;
+    bru.setEnvVar("deployment_id", data.id);
+    console.log("✅ Deployment created! ID:", data.id);
+    console.log("Status:", data.status);
+    console.log("Mode:", data.deployment_mode);
+  } else {
+    console.log("❌ Deployment creation failed:", res.status, res.body);
+  }
+}
+
+docs {
+  # Create Deployment (One-Click Deployment)
+  
+  Creates a new deployment and queues it for asynchronous processing via Celery.
+  
+  **Required Role:** Admin or Lecturer
+  
+  **Request Body:**
+  - `template_version_id`: ID of the template version to deploy
+  - `course_id`: ID of the course to deploy to
+  - `deployment_mode`: Target mode (per_course, per_group, per_student)
+  - `config_json`: Configuration parameters as JSON string (optional)
+  - `access_types`: Array of access types (e.g., ["ssh", "web", "rdp"])
+  
+  **Returns:** Created deployment with status QUEUED
+  
+  **Note:** The deployment is processed asynchronously. Use the logs endpoint to track progress.
+}

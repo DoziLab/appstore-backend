@@ -1,0 +1,50 @@
+meta {
+  name: Get Deployment Stack
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{base_url}}/api/v1/deployments/{{deployment_id}}/stack
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+script:post-response {
+  if (res.status === 200) {
+    const data = res.body.data;
+    console.log("✅ Stack information retrieved");
+    console.log("Stack Status:", data.stack?.stack_status);
+    console.log("Stack Name:", data.stack?.stack_name);
+    console.log("Resources:", data.resources?.length || 0);
+    console.log("Outputs:", Object.keys(data.outputs || {}).length);
+  } else {
+    console.log("❌ Failed to retrieve stack:", res.status, res.body);
+  }
+}
+
+docs {
+  # Get Deployment Stack Information
+  
+  Retrieves OpenStack Heat stack details for a deployment.
+  
+  **Required Role:** Admin or Lecturer
+  
+  **Path Parameters:**
+  - `deployment_id`: ID of the deployment
+  
+  **Returns:**
+  - `stack`: Stack metadata (status, name, creation time, etc.)
+  - `resources`: Array of stack resources (VMs, networks, etc.)
+  - `outputs`: Stack outputs (IPs, URLs, credentials)
+  
+  **Errors:**
+  - 404: Deployment or stack not found
+  - 500: OpenStack API error
+  
+  **Use Case:** Debug stack creation, retrieve resource IDs, get access information
+}

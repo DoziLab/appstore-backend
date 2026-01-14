@@ -1,0 +1,45 @@
+meta {
+  name: Get Deployment Logs
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/api/v1/deployments/{{deployment_id}}/logs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+script:post-response {
+  if (res.status === 200) {
+    const logs = res.body.data;
+    console.log(`✅ Retrieved ${logs.length} log entries`);
+    logs.forEach((log, index) => {
+      console.log(`[${index + 1}] ${log.level} - ${log.message}`);
+    });
+  } else {
+    console.log("❌ Failed to retrieve logs:", res.status, res.body);
+  }
+}
+
+docs {
+  # Get Deployment Logs
+  
+  Retrieves all logs for a specific deployment in chronological order (oldest first).
+  
+  **Required Role:** Admin or Lecturer
+  
+  **Path Parameters:**
+  - `deployment_id`: ID of the deployment
+  
+  **Returns:** Array of log entries with:
+  - `level`: Log level (INFO, WARNING, ERROR)
+  - `message`: Log message
+  - `created_at`: Timestamp
+  
+  **Use Case:** Track deployment progress, debug failures
+}
