@@ -1,9 +1,9 @@
 """Template Version File API routes."""
 from uuid import UUID
-from fastapi import APIRouter, status
+from fastapi import APIRouter, status, Depends
 from typing import Optional
 
-from src.core.dependencies import DBSession, RequestID, CurrentUser
+from src.core.dependencies import DBSession, RequestID, require_roles
 from src.core.response_builder import ResponseBuilder
 from src.schemas.template_version_file import (
     TemplateVersionFileCreate,
@@ -12,6 +12,7 @@ from src.schemas.template_version_file import (
     TemplateVersionFileListResponse
 )
 from src.services.template_version_file_service import TemplateVersionFileService
+from src.models.user import UserRole
 
 router = APIRouter(prefix="/template-version-files", tags=["template-version-files"])
 
@@ -25,7 +26,7 @@ async def create_file(
     file_data: TemplateVersionFileCreate,
     db: DBSession,
     request_id: RequestID,
-    current_user: CurrentUser
+    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER))
 ):
     """Create a new template version file.
     
@@ -56,7 +57,7 @@ async def get_file(
     file_id: str,
     db: DBSession,
     request_id: RequestID,
-    current_user: CurrentUser,
+    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
     include_content: bool = True
 ):
     """Get a template version file by ID.
@@ -91,7 +92,7 @@ async def get_file_content(
     file_id: str,
     db: DBSession,
     request_id: RequestID,
-    current_user: CurrentUser
+    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER))
 ):
     """Get only the content of a template version file.
     
@@ -122,7 +123,7 @@ async def list_version_files(
     version_id: str,
     db: DBSession,
     request_id: RequestID,
-    current_user: CurrentUser,
+    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
     include_content: bool = False,
     file_type: Optional[str] = None
 ):
@@ -160,7 +161,7 @@ async def get_primary_file(
     version_id: str,
     db: DBSession,
     request_id: RequestID,
-    current_user: CurrentUser
+    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER))
 ):
     """Get the primary deployment file for a template version.
     
@@ -199,7 +200,7 @@ async def update_file(
     file_data: TemplateVersionFileUpdate,
     db: DBSession,
     request_id: RequestID,
-    current_user: CurrentUser
+    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER))
 ):
     """Update a template version file.
     
@@ -231,7 +232,7 @@ async def delete_file(
     file_id: UUID,
     db: DBSession,
     request_id: RequestID,
-    current_user: CurrentUser
+    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER))
 ):
     """Delete a template version file.
     

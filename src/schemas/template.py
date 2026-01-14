@@ -28,14 +28,13 @@ class TemplateUpdate(BaseModel):
     name: Optional[str] = Field(None, description="Name of the template", max_length=255)
     description: Optional[str] = Field(None, description="Template description")
     repo_url: Optional[str] = Field(None, description="Git repository URL", max_length=500)
-    visibility: Optional[str] = Field(None, description="Template visibility (private/public)")
-    approval_status: Optional[str] = Field(None, description="Approval status")
+    visibility: Optional[str] = Field(None, description="Template visibility (private/public) - Only admins can change this")
     
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "name": "Updated Template Name",
-                "approval_status": "approved"
+                "description": "Updated description"
             }
         }
     )
