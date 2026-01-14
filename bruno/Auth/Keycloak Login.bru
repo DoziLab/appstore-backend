@@ -1,0 +1,28 @@
+meta {
+  name: Keycloak Login
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{keycloak_url}}/realms/{{realm}}/protocol/openid-connect/token
+  body: formUrlEncoded
+  auth: none
+}
+
+body:form-urlencoded {
+  client_id: {{client_id}}
+  username: {{username}}
+  password: {{password}}
+  grant_type: password
+}
+
+script:post-response {
+  if (res.status === 200) {
+    const data = res.body;
+    bru.setEnvVar("access_token", data.access_token);
+    console.log("✅ Login successful! Access token saved.");
+  } else {
+    console.log("❌ Login failed:", res.status, res.body);
+  }
+}
