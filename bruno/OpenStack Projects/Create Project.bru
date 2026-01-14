@@ -1,0 +1,54 @@
+meta {
+  name: Create OpenStack Project
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/api/v1/openstack-projects
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "auth_url": "{{openstack_auth_url}}/v3",
+    "username": "{{openstack_username}}",
+    "password": "{{openstack_password}}",
+    "user_domain_name": "{{openstack_user_domain_name}}",
+    "region_name": "{{openstack_region_name}}",
+    "openstack_project_id": "{{openstack_project_id}}",
+    "openstack_project_name": "{{openstack_project_name}}"
+  }
+}
+
+script:post-response {
+  if (res.status === 201) {
+    const data = res.body.data;
+    bru.setEnvVar("project_id", data.id);
+    console.log("✅ Project created! ID:", data.id);
+    console.log("Username (masked):", data.username);
+    console.log("Password (masked):", data.password);
+  } else {
+    console.log("❌ Project creation failed:", res.status, res.body);
+  }
+}
+
+docs {
+  # Create OpenStack Project
+  
+  Creates a new OpenStack project with encrypted credentials.
+  
+  **Required Role:** Admin or Lecturer
+  
+  **Security:**
+  - Credentials are automatically encrypted using Fernet
+  - Response contains masked credentials (password: ********, username: ad***in)
+  - Returns generated project_id
+  
+  **Note:** Password and username are stored encrypted in database
+}

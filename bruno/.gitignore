@@ -1,0 +1,9 @@
+# Bruno secret variables are stored separately and should not be committed
+# Bruno automatically handles this, but we add this as extra safety
+
+# Ignore any local override files
+*.local.bru
+
+# Ignore backup files
+*.bak
+*.backup

@@ -1,0 +1,43 @@
+meta {
+  name: Update Project Credentials
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{base_url}}/api/v1/openstack-projects/{{project_id}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "auth_url": "https://openstack.example.com:5000/v3",
+    "username": "admin_updated",
+    "password": "new_secret_password_456",
+    "user_domain_name": "Default",
+    "region_name": "RegionOne",
+    "openstack_project_id": "project-abc-123",
+    "openstack_project_name": "My Updated Project"
+  }
+}
+
+docs {
+  # Update Project Credentials
+  
+  Updates OpenStack credentials for an existing project.
+  
+  **Required Role:** Admin or Lecturer (Owner only)
+  
+  **Security:**
+  - New credentials are automatically re-encrypted
+  - Only project owner can update
+  - Update is logged for audit
+  
+  **Variables used:**
+  - `project_id`: Set automatically after creating a project
+}

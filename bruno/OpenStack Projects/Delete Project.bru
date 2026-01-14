@@ -1,0 +1,40 @@
+meta {
+  name: Delete Project
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{base_url}}/api/v1/openstack-projects/{{project_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+script:post-response {
+  if (res.status === 204 || res.status === 200) {
+    console.log("✅ Project deleted successfully");
+    bru.setEnvVar("project_id", "");
+  } else {
+    console.log("❌ Project deletion failed:", res.status, res.body);
+  }
+}
+
+docs {
+  # Delete Project
+  
+  Deletes OpenStack project and all its encrypted credentials.
+  
+  **Required Role:** Admin or Lecturer (Owner only)
+  
+  **Security:**
+  - Deletion is logged for audit
+  - Only project owner can delete
+  - Credentials are permanently removed
+  
+  **Variables used:**
+  - `project_id`: Set automatically after creating a project
+}

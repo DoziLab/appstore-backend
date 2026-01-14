@@ -1,0 +1,42 @@
+meta {
+  name: Test - Student Access (Should Fail)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{base_url}}/api/v1/openstack-projects
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+script:post-response {
+  if (res.status === 403) {
+    console.log("✅ Test passed: Student correctly denied access");
+    console.log("Response:", res.body);
+  } else if (res.status === 200) {
+    console.log("❌ Test FAILED: Student should not have access!");
+  } else {
+    console.log("⚠️ Unexpected response:", res.status, res.body);
+  }
+}
+
+docs {
+  # Test Student Access Restriction
+  
+  This request should return 403 Forbidden when executed with student credentials.
+  
+  **Expected Behavior:**
+  - Status: 403 Forbidden
+  - Message: "Insufficient permissions. Required roles: admin, lecturer"
+  
+  **How to test:**
+  1. Switch to "student" environment
+  2. Login using "Keycloak Login" request
+  3. Run this request
+  4. Should receive 403 error
+}

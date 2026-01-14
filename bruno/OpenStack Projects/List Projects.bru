@@ -1,0 +1,25 @@
+meta {
+  name: List OpenStack Projects
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/api/v1/openstack-projects
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # List OpenStack Projects
+  
+  Lists all OpenStack projects for the authenticated user.
+  
+  **Required Role:** Admin or Lecturer
+  
+  **Returns:** Array of projects with metadata (without credentials)
+}
