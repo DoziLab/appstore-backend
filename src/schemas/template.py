@@ -2,7 +2,7 @@
 from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from typing import Optional
-
+from src.schemas.template_version import TemplateVersionResponse
 
 class TemplateCreate(BaseModel):
     """Schema for creating a template."""
@@ -49,6 +49,7 @@ class TemplateResponse(BaseModel):
     repo_url: str = Field(..., description="Git repository URL")
     visibility: str = Field(..., description="Template visibility")
     approval_status: str = Field(..., description="Approval status")
+    versions: Optional[list[TemplateVersionResponse]] = Field(None, description="List of template versions")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
     
@@ -63,6 +64,7 @@ class TemplateResponse(BaseModel):
                 "repo_url": "https://github.com/example/flask-template",
                 "visibility": "public",
                 "approval_status": "approved",
+                "versions": [],
                 "created_at": "2024-11-27T10:00:00Z",
                 "updated_at": "2024-11-27T10:00:00Z"
             }
