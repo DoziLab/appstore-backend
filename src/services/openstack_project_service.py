@@ -1,6 +1,8 @@
 """Service for OpenStack Project operations."""
 import logging
+from uuid import UUID
 from sqlalchemy.orm import Session
+from src.core.dependencies import RequestID
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
 from src.schemas.openstack_project import OpenstackCredentialsCreate
 from src.models.openstack_project import OpenstackProject
@@ -23,7 +25,7 @@ class OpenstackProjectService:
         project_id: str,
         credentials: OpenstackCredentialsCreate,
         owner_user_id: str,
-        request_id: str,
+        request_id: RequestID,
     ) -> OpenstackProject:
         """Create or update OpenStack credentials for a project.
         
@@ -37,7 +39,7 @@ class OpenstackProjectService:
             # Verify ownership
             if existing.owner_user_id != owner_user_id:
                 logger.warning(
-                    f"Unauthorized credentials update attempt",
+                    "Unauthorized credentials update attempt",
                     extra={
                         "request_id": request_id,
                         "project_id": project_id,
@@ -97,9 +99,9 @@ class OpenstackProjectService:
     
     def get_credentials(
         self,
-        project_id: str,
+        project_id: UUID,
         user_id: str,
-        request_id: str,
+        request_id: RequestID,
     ) -> OpenstackProject:
         """Get OpenStack credentials for a project.
         
@@ -139,9 +141,9 @@ class OpenstackProjectService:
     
     def delete_credentials(
         self,
-        project_id: str,
+        project_id: UUID,
         user_id: str,
-        request_id: str,
+        request_id: RequestID,
     ) -> None:
         """Delete OpenStack credentials for a project."""
         project = self.repository.get_by_id(project_id)
@@ -177,7 +179,7 @@ class OpenstackProjectService:
     def list_projects_for_user(
         self,
         user_id: str,
-        request_id: str,
+        request_id: RequestID,
     ) -> list[OpenstackProject]:
         """List all OpenStack projects for a user."""
         projects = self.repository.get_by_owner(user_id)

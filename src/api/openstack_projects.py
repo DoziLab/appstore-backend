@@ -1,5 +1,5 @@
 """OpenStack Projects API endpoints."""
-from uuid import uuid4
+from uuid import UUID, uuid4
 from fastapi import APIRouter, status, Depends
 from src.core.response_builder import ResponseBuilder
 from src.core.dependencies import DBSession, RequestID, require_roles
@@ -136,7 +136,7 @@ async def update_project_credentials(
     response_model=OpenstackCredentialsResponse,
 )
 async def get_project_credentials(
-    project_id: str,
+    project_id: UUID,
     db: DBSession,
     request_id: RequestID,
     user_id: str = Depends(get_user_id),
@@ -171,7 +171,7 @@ async def get_project_credentials(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_project(
-    project_id: str,
+    project_id: UUID,
     db: DBSession,
     request_id: RequestID,
     user_id: str = Depends(get_user_id),

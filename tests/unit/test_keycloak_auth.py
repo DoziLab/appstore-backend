@@ -92,16 +92,32 @@ def test_verify_jwt_token_untrusted_client(
 
 @pytest.mark.asyncio
 @patch("src.core.auth.verify_jwt_token")
-async def test_get_current_user_with_bearer_token(mock_verify, mock_token_payload):
+@patch("src.core.auth.UserSyncService")
+async def test_get_current_user_with_bearer_token(mock_sync_service_class, mock_verify, mock_token_payload):
     """Test get_current_user with valid Bearer token."""
+    # Setup mocks
     mock_credentials = Mock()
     mock_credentials.credentials = "valid.jwt.token"
     mock_verify.return_value = mock_token_payload
     
-    user_info = await get_current_user(credentials=mock_credentials)
+    # Mock database session
+    mock_db = Mock()
+    
+    # Mock UserSyncService instance
+    mock_sync_service = Mock()
+    mock_sync_service_class.return_value = mock_sync_service
+    
+    user_info = await get_current_user(credentials=mock_credentials, db=mock_db)
     
     assert user_info["sub"] == "user-123"
     assert user_info["email"] == "lecturer@example.com"
+    
+    # Verify user was synced
+    mock_sync_service.sync_user_from_token.assert_called_once_with(mock_token_payload)
+    
+    # Verify database session was committed and closed
+    mock_db.commit.assert_called_once()
+    mock_db.close.assert_called_once()
 
 
 @pytest.mark.asyncio
