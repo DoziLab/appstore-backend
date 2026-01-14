@@ -1,0 +1,39 @@
+meta {
+  name: Update Template Version
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{base_url}}/api/v1/template-versions/{{version_id}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "is_active": false
+  }
+}
+
+docs {
+  # Update Template Version
+  
+  Updates an existing template version. Only template owners or admins can update.
+  If setting as active, automatically deactivates other versions.
+  
+  **Required Role:** Template owner or admin
+  
+  **Path Parameters:**
+  - `version_id`: UUID of the template version
+  
+  **Request Body (all optional):**
+  - `git_commit_sha`: Git commit SHA for this version (max 255 chars)
+  - `is_active`: Whether this version is active
+  
+  **Returns:** Updated template version details
+}

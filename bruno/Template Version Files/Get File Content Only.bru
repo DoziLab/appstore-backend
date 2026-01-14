@@ -1,0 +1,27 @@
+meta {
+  name: Get File Content Only
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/api/v1/template-version-files/{{file_id}}/content
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # Get File Content Only
+  
+  Retrieves only the content of a specific template version file.
+  Useful when you only need the file content without metadata.
+  
+  **Path Parameters:**
+  - `file_id`: UUID of the file
+  
+  **Returns:** Object with content field only
+}

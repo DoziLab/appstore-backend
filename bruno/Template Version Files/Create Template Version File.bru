@@ -1,0 +1,50 @@
+meta {
+  name: Create Template Version File
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/api/v1/template-version-files
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "template_version_id": "{{version_id}}",
+    "file_name": "heat.yaml",
+    "file_type": "heat_template",
+    "file_path": "heat/heat.yaml",
+    "content": "heat_template_version: \"2018-08-31\"\ndescription: VM with Security Group + Floating IP + cloud-init DoziLab Dashboard (SSH + H48271310-6f0d-400a-aaf3-40c46cf7b607TTP)\n\nparameters:\n  image:\n    type: string\n    default: \"Ubuntu 22.04 2025-01\"\n\n  flavor:\n    type: string\n    default: \"gp1.small\"\n\n  network:\n    type: string\n    description: Internal tenant network for the VM\n    default: \"NAT\"\n\n  external_network:\n    type: string\n    description: Network that provides Floating IPs\n    default: \"DHBW\"\n\n  key_name:\n    type: string\n    description: OpenStack keypair name to inject into the VM\n    default: \"heat-bastion-key\"\n\n  ssh_cidr:\n    type: string\n    description: Who may SSH to the VM (use your public IP /32 for safety)\n    default: \"0.0.0.0/0\"\n\n  page_title:\n    type: string\n    default: \"DoziLab — Mini Dashboard\"\n\n  stack_label:\n    type: string\n    default: \"heat-vm-fip\"\n\nresources:\n  secgroup:\n    type: OS::Neutron::SecurityGroup\n    properties:\n      description: Allow SSH + HTTP + ICMP\n      rules:\n        - direction: ingress\n          ethertype: IPv4\n          protocol: tcp\n          port_range_min: 22\n          port_range_max: 22\n          remote_ip_prefix: { get_param: ssh_cidr }\n\n        - direction: ingress\n          ethertype: IPv4\n          protocol: tcp\n          port_range_min: 80\n          port_range_max: 80\n          remote_ip_prefix: 0.0.0.0/0\n\n        - direction: ingress\n          ethertype: IPv4\n          protocol: icmp\n          remote_ip_prefix: 0.0.0.0/0\n\n  port:\n    type: OS::Neutron::Port\n    properties:\n      network: { get_param: network }\n      security_groups:\n        - { get_resource: secgroup }\n\n  server:\n    type: OS::Nova::Server\n    properties:\n      name: heat-vm-ssh\n      image: { get_param: image }\n      flavor: { get_param: flavor }\n      key_name: { get_param: key_name }\n\n      user_data_format: RAW\n      user_data:\n        str_replace:\n          params:\n            __PAGE_TITLE__: { get_param: page_title }\n            __STACK_LABEL__: { get_param: stack_label }\n          template: |-\n            #!/bin/bash\n            set -euxo pipefail\n            export DEBIAN_FRONTEND=noninteractive\n\n            TITLE=\"__PAGE_TITLE__\"\n            LABEL=\"__STACK_LABEL__\"\n\n            echo \"cloud-init started $(date -Is)\" > /var/log/cloud-init-custom.log\n\n            apt-get update -y\n            apt-get install -y nginx curl\n\n            PRIVATE_IP=\"$(hostname -I | awk '{print $1}')\"\n            HOST=\"$(hostname)\"\n            DEPLOY_TIME=\"$(date -Is)\"\n            UPTIME=\"$(uptime -p || true)\"\n\n            # nginx header + hardening\n            cat >/etc/nginx/conf.d/dozilab.conf <<EOF\n            add_header X-DoziLab-Stack \"${LABEL}\" always;\n            server_tokens off;\n            EOF\n\n            # create HTML with placeholders (no command substitutions inside HTML)\n            cat >/var/www/html/index.html <<'HTML'\n            <!doctype html>\n            <html lang=\"de\">\n            <head>\n              <meta charset=\"utf-8\"/>\n              <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n              <title>__TITLE__</title>\n              <style>\n                body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Arial; margin: 0; background: #0b1020; color: #e7e9ee; }\n                .wrap { max-width: 920px; margin: 0 auto; padding: 28px 18px 60px; }\n                .card { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 18px; margin-top: 14px; }\n                h1 { margin: 8px 0 0; font-size: 28px; }\n                .sub { opacity: .8; margin-top: 6px; }\n                .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }\n                .k { opacity: .75; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }\n                .v { font-size: 16px; margin-top: 6px; }\n                .pill { display: inline-block; padding: 4px 10px; border-radius: 999px; background: rgba(0,255,170,0.12); border: 1px solid rgba(0,255,170,0.25); }\n                pre { background: rgba(0,0,0,0.35); padding: 12px; border-radius: 12px; overflow: auto; }\n                @media (max-width: 700px){ .grid { grid-template-columns: 1fr; } }\n              </style>\n            </head>\n            <body>\n              <div class=\"wrap\">\n                <div class=\"card\">\n                  <div class=\"pill\">LIVE</div>\n                  <h1>__TITLE__</h1>\n                  <div class=\"sub\">Deployed via Heat + cloud-init • <b>__DEPLOY_TIME__</b></div>\n                </div>\n\n                <div class=\"grid\">\n                  <div class=\"card\">\n                    <div class=\"k\">Stack / Label</div>\n                    <div class=\"v\">__LABEL__</div>\n                  </div>\n                  <div class=\"card\">\n                    <div class=\"k\">Hostname</div>\n                    <div class=\"v\">__HOST__</div>\n                  </div>\n                  <div class=\"card\">\n                    <div class=\"k\">Private IP</div>\n                    <div class=\"v\">__PRIVATE_IP__</div>\n                  </div>\n                  <div class=\"card\">\n                    <div class=\"k\">Uptime</div>\n                    <div class=\"v\">__UPTIME__</div>\n                  </div>\n                </div>\n\n                <div class=\"card\">\n                  <div class=\"k\">Nginx Status</div>\n                  <div class=\"v\"><pre>__NGINX_STATUS__</pre></div>\n                  <div class=\"sub\">Header check: <code>curl -I http://&lt;FIP&gt;</code> → <code>X-DoziLab-Stack</code></div>\n                </div>\n\n                <div class=\"card\">\n                  <div class=\"k\">ASCII vibes</div>\n                  <pre>\n              ____            _ _      _\n              |  _ \\  ___  ___(_) | ___| |__\n              | | | |/ _ \\/ __| | |/ _ \\ '_ \\\n              | |_| | (_) \\__ \\ | |  __/ |_) |\n              |____/ \\___/|___/_|_|\\___|_.__/\n                  </pre>\n                </div>\n              </div>\n            </body>\n            </html>\n            HTML\n\n            # compute nginx status after config + before restart\n            NGINX_STATUS=\"$(systemctl is-active nginx || true)\"\n\n            # replace placeholders safely\n            sed -i \\\n              -e \"s|__TITLE__|${TITLE}|g\" \\\n              -e \"s|__LABEL__|${LABEL}|g\" \\\n              -e \"s|__HOST__|${HOST}|g\" \\\n              -e \"s|__PRIVATE_IP__|${PRIVATE_IP}|g\" \\\n              -e \"s|__DEPLOY_TIME__|${DEPLOY_TIME}|g\" \\\n              -e \"s|__UPTIME__|${UPTIME}|g\" \\\n              -e \"s|__NGINX_STATUS__|${NGINX_STATUS}|g\" \\\n              /var/www/html/index.html\n\n            systemctl enable nginx\n            systemctl restart nginx\n\n            echo \"cloud-init finished $(date -Is)\" >> /var/log/cloud-init-custom.log\n\n      networks:\n        - port: { get_resource: port }\n\n  fip:\n    type: OS::Neutron::FloatingIP\n    properties:\n      floating_network: { get_param: external_network }\n\n  fip_assoc:\n    type: OS::Neutron::FloatingIPAssociation\n    properties:\n      floatingip_id: { get_resource: fip }\n      port_id: { get_resource: port }\n\noutputs:\n  floating_ip:\n    description: Public Floating IP (reachable from outside)\n    value: { get_attr: [fip, floating_ip_address] }\n\n  http_url:\n    description: URL of the dashboard (HTTP)\n    value:\n      str_replace:\n        template: \"http://FIP/\"\n        params:\n          FIP: { get_attr: [fip, floating_ip_address] }\n\n  ssh_command:\n    description: SSH command to connect from your PC\n    value:\n      str_replace:\n        template: \"ssh -i ~/.ssh/heat-bastion-key.pem ubuntu@FIP\"\n        params:\n          FIP: { get_attr: [fip, floating_ip_address] }\n\n  private_ip:\n    description: Private IP on tenant network (NAT)\n    value: { get_attr: [port, fixed_ips, 0, ip_address] }\n\n  server_id:\n    description: Nova server (instance) ID\n    value: { get_resource: server }\n\n  security_group_id:\n    description: Security group ID created by this stack\n    value: { get_resource: secgroup }\n\n  port_id:\n    description: Neutron port ID of the instance\n    value: { get_resource: port }\n",
+    "file_size": 2048,
+    "description": "Main Heat template for VM deployment",
+    "is_primary": true,
+    "order": 1
+  }
+}
+
+docs {
+  # Create Template Version File
+  
+  Creates a new file for a template version.
+  
+  **Required Role:** Template owner or admin
+  
+  **Request Body:**
+  - `template_version_id`: UUID of the template version (required)
+  - `file_name`: Name of the file (required, max 255 chars)
+  - `file_type`: Type of file - heat_template, cloud_init, ansible_playbook, helm_chart, shell_script, config_file, other (required)
+  - `file_path`: Relative path in the git repository (required, max 500 chars)
+  - `content`: File content (optional, cached)
+  - `file_size`: File size in bytes (optional)
+  - `description`: File description (optional)
+  - `is_primary`: Whether this is the primary deployment file (default: false)
+  - `order`: Execution order if applicable (default: 0)
+  
+  **Returns:** Created file with ID and timestamps
+}

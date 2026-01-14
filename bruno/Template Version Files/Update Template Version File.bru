@@ -1,0 +1,47 @@
+meta {
+  name: Update Template Version File
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{base_url}}/api/v1/template-version-files/{{file_id}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "file_name": "heat_updated.yaml",
+    "description": "Updated Heat template",
+    "is_primary": true
+  }
+}
+
+docs {
+  # Update Template Version File
+  
+  Updates an existing template version file. Only template owners or admins can update.
+  Partial updates are supported - only provided fields will be updated.
+  
+  **Required Role:** Template owner or admin
+  
+  **Path Parameters:**
+  - `file_id`: UUID of the file
+  
+  **Request Body (all optional):**
+  - `file_name`: Name of the file (max 255 chars)
+  - `file_type`: Type of file
+  - `file_path`: Relative path in repository (max 500 chars)
+  - `content`: File content
+  - `file_size`: File size in bytes
+  - `description`: File description
+  - `is_primary`: Whether this is the primary deployment file
+  - `order`: Execution order if applicable
+  
+  **Returns:** Updated file details
+}

@@ -1,0 +1,35 @@
+meta {
+  name: List Version Files
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{base_url}}/api/v1/template-version-files/version/{{version_id}}?include_content=false
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~include_content: false
+  ~file_type: 
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # List Version Files
+  
+  Lists all files for a specific template version.
+  
+  **Path Parameters:**
+  - `version_id`: UUID of the template version
+  
+  **Query Parameters:**
+  - `include_content`: Whether to include file content (default: false)
+  - `file_type`: Optional filter by file type (heat_template, cloud_init, ansible_playbook, helm_chart, shell_script, config_file, other)
+  
+  **Returns:** List of files for the version
+}

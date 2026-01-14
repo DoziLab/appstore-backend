@@ -1,0 +1,27 @@
+meta {
+  name: Get Primary File
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{base_url}}/api/v1/template-version-files/version/{{version_id}}/primary
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # Get Primary File
+  
+  Retrieves the primary deployment file for a template version.
+  The primary file is typically the main file used for deployment (e.g., main heat.yaml).
+  
+  **Path Parameters:**
+  - `version_id`: UUID of the template version
+  
+  **Returns:** Primary file or null if not set
+}

@@ -1,0 +1,29 @@
+meta {
+  name: Delete Template
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{base_url}}/api/v1/templates/{{template_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # Delete Template
+  
+  Deletes a template permanently. Only template owners or admins can delete.
+  This operation cannot be undone.
+  
+  **Required Role:** Template owner or ADMIN
+  
+  **Path Parameters:**
+  - `template_id`: UUID of the template
+  
+  **Returns:** Success message with 200 status code
+}
