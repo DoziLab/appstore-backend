@@ -1,0 +1,38 @@
+meta {
+  name: List Deployments
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/api/v1/deployments?page=1&page_size=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  page_size: 10
+  ~course_id: 
+  ~status: 
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # List Deployments
+  
+  Lists all deployments with optional filters and pagination.
+  
+  **Required Role:** Admin or Lecturer
+  
+  **Query Parameters:**
+  - `page`: Page number (default: 1)
+  - `page_size`: Items per page (default: 10)
+  - `course_id`: Filter by course ID (optional)
+  - `status`: Filter by deployment status (optional: queued, creating, running, failed, deleted)
+  
+  **Returns:** Paginated list of deployments with metadata
+}
