@@ -202,7 +202,7 @@ class TemplateVersionFileService:
 
     def delete_file(
         self,
-        file_id: str | UUID
+        file_id: UUID
     ) -> None:
         """Delete a template version file.
         

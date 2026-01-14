@@ -102,6 +102,20 @@ def deploy_stack(self, deployment_id: str) -> dict:
             return {"status": "failed", "error": error_msg}
         
         logger.info(f"Found Heat template: {heat_file.file_name} ({len(heat_file.content or '')} bytes)")
+        
+        # Ensure content is not None
+        if not heat_file.content:
+            error_msg = f"Heat template {heat_file.file_name} has no content"
+            logger.error(error_msg)
+            log_service.log(
+                deployment_id=deployment_id,
+                event_type=DeploymentLogEventType.FAILED,
+                message=error_msg,
+                level=DeploymentLogLevel.ERROR
+            )
+            repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            return {"status": "failed", "error": error_msg}
+        
         log_service.log(
             deployment_id=deployment_id,
             event_type=DeploymentLogEventType.TEMPLATE_CREATE,

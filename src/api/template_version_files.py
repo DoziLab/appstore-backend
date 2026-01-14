@@ -1,4 +1,5 @@
 """Template Version File API routes."""
+from uuid import UUID
 from fastapi import APIRouter, status
 from typing import Optional
 
@@ -227,7 +228,7 @@ async def update_file(
     status_code=status.HTTP_204_NO_CONTENT
 )
 async def delete_file(
-    file_id: str,
+    file_id: UUID,
     db: DBSession,
     request_id: RequestID,
     current_user: CurrentUser
