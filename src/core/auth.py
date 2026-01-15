@@ -196,7 +196,7 @@ def require_roles(*required_roles: str):
         realm_roles = user.get("realm_access", {}).get("roles", [])
         
         if not any(role in realm_roles for role in required_roles):
-            raise Forbidden()
+            raise ForbiddenException()
         
         return user
     
