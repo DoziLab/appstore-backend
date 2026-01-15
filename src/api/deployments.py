@@ -29,14 +29,61 @@ async def list_deployments(
     course_id: UUID | None = Query(None, description="Filter by course ID"),
     status_filter: DeploymentStatus | None = Query(None, description="Filter by status", alias="status"),
 ):
-    """List deployments with optional filters."""
+    """List all OpenStack Heat stacks for the current user.
+    
+    Fetches stacks directly from OpenStack API and enriches them with deployment
+    information from the database if available. This ensures the list always shows
+    what actually exists in OpenStack, not just what's tracked in the database.
+    
+    Returns stack information including:
+    - Current stack status from OpenStack
+    - Stack resources (VMs, networks, etc.)
+    - Stack outputs (access URLs, IPs, etc.)
+    - Associated deployment information (if tracked in database)
+    
+    Optional filters:
+    - Course ID: Only show stacks associated with a specific course
+    - Status: Filter by OpenStack stack status
+    
+    Returns paginated results with total count.
+    """
+    service = DeploymentService(db)
+    
+    # Check if user is admin
+    user_roles = user.get("roles", [])
+    is_admin = "admin" in [role.lower() for role in user_roles]
+    
+    # Fetch stacks: admins get all (user_id=None), lecturers get only their own
+    all_stacks = service.list_all_openstack_stacks(user_id=None if is_admin else user["user_id"])
+    
+    # Apply filters
+    filtered_stacks = all_stacks
+    
+    if course_id:
+        filtered_stacks = [
+            s for s in filtered_stacks 
+            if s.get('course_id') == str(course_id)
+        ]
+    
+    if status_filter:
+        # Filter by OpenStack stack status, not deployment status
+        filtered_stacks = [
+            s for s in filtered_stacks 
+            if s.get('status', '').upper() == status_filter.value.upper()
+        ]
+    
+    # Apply pagination
+    total = len(filtered_stacks)
+    start_idx = (pagination.page - 1) * pagination.page_size
+    end_idx = start_idx + pagination.page_size
+    paginated_stacks = filtered_stacks[start_idx:end_idx]
     
     return ResponseBuilder.paginated(
-        data=[],
+        data=paginated_stacks,
         page=pagination.page,
         page_size=pagination.page_size,
-        total=0,
-        message="Deployments retrieved successfully",
+        total=total,
+        message=f"Retrieved {len(paginated_stacks)} stacks from OpenStack (total: {total})",
         request_id=request_id,
     )
 
@@ -97,6 +144,7 @@ async def get_deployment_logs(
         
     Raises:
         NotFoundException: If deployment does not exist
+        HTTPException: If access is forbidden
     """
     # Verify deployment exists
     deployment_repo = DeploymentRepository(db)
@@ -104,6 +152,19 @@ async def get_deployment_logs(
     
     if not deployment:
         raise NotFoundException(f"Deployment with ID {deployment_id} not found")
+    
+    # Check authorization: Lecturers can only see their own deployments
+    user_roles = user.get("roles", [])
+    is_admin = "admin" in [role.lower() for role in user_roles]
+    
+    if not is_admin:
+        # Non-admin users can only access their own deployments
+        lecturer_id = deployment.course.lecturer_id
+        if user["user_id"] != lecturer_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to access this deployment"
+            )
     
     # Get logs
     log_service = DeploymentLogService(db)
@@ -120,7 +181,8 @@ async def get_deployment_logs(
 async def get_deployment_stack(
     deployment_id: str,
     db: DBSession,
-    request_id: RequestID
+    request_id: RequestID,
+    user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
 ):
     """Get OpenStack Heat stack information for a deployment.
     
@@ -130,13 +192,14 @@ async def get_deployment_stack(
         deployment_id: ID of the deployment
         db: Database session
         request_id: Request ID for tracing
+        user: Authenticated user
         
     Returns:
         Stack information including status and resources
         
     Raises:
         NotFoundException: If deployment does not exist
-        HTTPException: If stack information cannot be retrieved
+        HTTPException: If stack information cannot be retrieved or access is forbidden
     """
     # Verify deployment exists
     deployment_repo = DeploymentRepository(db)
@@ -144,6 +207,19 @@ async def get_deployment_stack(
     
     if not deployment:
         raise NotFoundException(f"Deployment with ID {deployment_id} not found")
+    
+    # Check authorization: Lecturers can only see their own deployments
+    user_roles = user.get("roles", [])
+    is_admin = "admin" in [role.lower() for role in user_roles]
+    
+    if not is_admin:
+        # Non-admin users can only access their own deployments
+        lecturer_id = deployment.course.lecturer_id
+        if user["user_id"] != lecturer_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to access this deployment"
+            )
     
     if not deployment.openstack_stack_id:
         raise HTTPException(

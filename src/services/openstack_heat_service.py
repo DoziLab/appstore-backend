@@ -233,3 +233,28 @@ class HeatStackService:
         except Exception as e:
             logger.error(f"Error getting stack outputs for {stack_id}: {e}")
             raise
+    
+    def list_all_stacks(self) -> list[dict]:
+        """List all Heat stacks in the OpenStack project.
+        
+        Returns:
+            List of stack information dicts
+        """
+        try:
+            conn = self._get_connection()
+            stacks = conn.orchestration.stacks()
+            
+            return [
+                {
+                    'stack_id': s.id,
+                    'stack_name': s.name,
+                    'status': s.status,
+                    'status_reason': s.status_reason,
+                    'creation_time': str(s.created_at) if s.created_at else None,
+                    'updated_time': str(s.updated_at) if s.updated_at else None,
+                }
+                for s in stacks
+            ]
+        except Exception as e:
+            logger.error(f"Error listing stacks: {e}")
+            raise
