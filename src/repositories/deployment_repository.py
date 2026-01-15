@@ -25,7 +25,7 @@ class DeploymentRepository(BaseRepository[Deployment]):
             deployments = query.offset(skip).limit(limit).all()
             
             logger.debug(
-                f"Retrieved deployments by status",
+                "Retrieved deployments by status",
                 extra={
                     "status": status.value,
                     "count": len(deployments),
@@ -55,7 +55,7 @@ class DeploymentRepository(BaseRepository[Deployment]):
                 self.db.refresh(deployment)
                 
                 logger.info(
-                    f"Deployment status updated",
+                    "Deployment status updated",
                     extra={
                         "deployment_id": deployment_id,
                         "old_status": old_status.value,
@@ -64,7 +64,7 @@ class DeploymentRepository(BaseRepository[Deployment]):
                 )
             else:
                 logger.warning(
-                    f"Deployment not found for status update",
+                    "Deployment not found for status update",
                     extra={"deployment_id": deployment_id}
                 )
             

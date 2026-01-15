@@ -90,7 +90,7 @@ def configure_logging(log_level: str = "INFO", json_format: bool = True) -> None
     
     # Set formatter
     if json_format:
-        formatter = JSONFormatter()
+        formatter: logging.Formatter = JSONFormatter()
     else:
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
