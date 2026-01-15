@@ -1,0 +1,41 @@
+meta {
+  name: List Courses
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/api/v1/courses?page=1&page_size=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  page_size: 10
+  ~semester: WS2024
+  ~search: 
+  ~lecturer_id: 
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # List Courses
+  
+  Lists all courses with optional filters and pagination.
+  
+  **Required Role:** Authenticated user
+  
+  **Query Parameters:**
+  - `page`: Page number (default: 1)
+  - `page_size`: Items per page (default: 10)
+  - `semester`: Filter by semester (e.g., WS2024, SS2025)
+  - `search`: Search in course name
+  - `lecturer_id`: Filter by lecturer ID
+  
+  **Response:**
+  - Paginated list of courses with total count
+}

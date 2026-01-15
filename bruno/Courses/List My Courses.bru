@@ -1,0 +1,26 @@
+meta {
+  name: List My Courses
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/api/v1/courses/my
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # List My Courses
+  
+  Lists all courses where the authenticated user is the lecturer.
+  
+  **Required Role:** Lecturer
+  
+  **Response:**
+  - List of all courses owned by the current user
+}

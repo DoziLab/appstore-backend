@@ -1,0 +1,38 @@
+meta {
+  name: Delete Course
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{base_url}}/api/v1/courses/{{course_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+script:post-response {
+  if (res.status === 200) {
+    console.log("✅ Course deleted successfully");
+    bru.setEnvVar("course_id", "");
+  } else {
+    console.log("❌ Course deletion failed:", res.status, res.body);
+  }
+}
+
+docs {
+  # Delete Course
+  
+  Deletes a course permanently. Only the course lecturer can delete.
+  
+  **Required Role:** Lecturer (Owner only)
+  
+  **Response:**
+  - Success message
+  
+  **Variables used:**
+  - `course_id`: Set automatically after creating a course
+}

@@ -1,0 +1,52 @@
+meta {
+  name: Create Course
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/api/v1/courses
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "name": "Advanced Web Development",
+    "semester": "WS2024"
+  }
+}
+
+script:post-response {
+  if (res.status === 201) {
+    const data = res.body.data;
+    bru.setEnvVar("course_id", data.id);
+    console.log("✅ Course created! ID:", data.id);
+    console.log("Name:", data.name);
+    console.log("Semester:", data.semester);
+  } else {
+    console.log("❌ Course creation failed:", res.status, res.body);
+  }
+}
+
+docs {
+  # Create Course
+  
+  Creates a new course. The authenticated user becomes the course lecturer.
+  
+  **Required Role:** Lecturer
+  
+  **Request Body:**
+  - `name`: Course name (required, max 255 chars)
+  - `semester`: Semester (required, e.g., WS2024, SS2025)
+  
+  **Response:**
+  - Created course with generated ID and timestamps
+  
+  **Variables set:**
+  - `course_id`: Set automatically after successful creation
+}

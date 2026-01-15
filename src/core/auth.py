@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from src.core.config import get_settings
 from src.core.database import get_db
 from src.services.user_sync_service import UserSyncService
+from src.core.exceptions import ForbiddenException
 
 
 security = HTTPBearer()
@@ -169,50 +170,38 @@ def require_role(required_role: str):
         realm_roles = user.get("realm_access", {}).get("roles", [])
         
         if required_role not in realm_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Missing required role: {required_role}"
-            )
+            raise ForbiddenException()
         
         return user
     
     return check_role
 
-
-def require_client_role(client_id: str, required_role: str):
-    """Dependency factory to require specific client-level role.
+def require_roles(*required_roles: str):
+    """Dependency factory to require at least one of the specified Keycloak realm roles.
     
     Args:
-        client_id: Client ID to check roles for (e.g., "appstore-backend")
-        required_role: Role name to check (e.g., "read:templates", "write:deployments")
+        required_roles: Role names to check (e.g., "lecturer", "admin", "student")
         
     Returns:
-        Dependency function that validates client role presence
+        Dependency function that validates presence of at least one role
         
     Raises:
-        HTTPException 403: If user doesn't have required client role
+        HTTPException 403: If user doesn't have any of the required roles
         
     Usage:
-        @router.post("/deployments")
-        async def create_deployment(
-            user: dict = Depends(require_client_role("appstore-backend", "write:deployments"))
-        ):
+        @router.get("/admin-or-lecturer-data", dependencies=[Depends(require_roles("admin", "lecturer"))])
+        async def get_data(...):
             pass
     """
-    async def check_client_role(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
-        resource_access = user.get("resource_access", {})
-        client_roles = resource_access.get(client_id, {}).get("roles", [])
+    async def check_roles(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+        realm_roles = user.get("realm_access", {}).get("roles", [])
         
-        if required_role not in client_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Missing required client role: {client_id}.{required_role}"
-            )
+        if not any(role in realm_roles for role in required_roles):
+            raise ForbiddenException()
         
         return user
     
-    return check_client_role
-
+    return check_roles
 
 def get_user_id(
     user: dict[str, Any] = Depends(get_current_user),

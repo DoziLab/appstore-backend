@@ -1,0 +1,29 @@
+meta {
+  name: Get Course
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{base_url}}/api/v1/courses/{{course_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # Get Course
+  
+  Retrieves a single course by ID.
+  
+  **Required Role:** Authenticated user
+  
+  **Response:**
+  - Complete course details including metadata and timestamps
+  
+  **Variables used:**
+  - `course_id`: Set automatically after creating a course
+}

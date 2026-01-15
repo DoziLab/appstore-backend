@@ -1,0 +1,40 @@
+meta {
+  name: Update Course
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{base_url}}/api/v1/courses/{{course_id}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "name": "Updated Course Name",
+    "semester": "SS2025"
+  }
+}
+
+docs {
+  # Update Course
+  
+  Updates an existing course. Only the course lecturer can update.
+  
+  **Required Role:** Lecturer (Owner only)
+  
+  **Request Body (all optional):**
+  - `name`: New course name
+  - `semester`: New semester
+  
+  **Response:**
+  - Updated course details
+  
+  **Variables used:**
+  - `course_id`: Set automatically after creating a course
+}
