@@ -13,7 +13,11 @@ from src.services.openstack_project_service import OpenstackProjectService
 from src.core.auth import get_user_id
 
 
-router = APIRouter(prefix="/openstack-projects", tags=["openstack-projects"])
+router = APIRouter(
+    prefix="/openstack-projects",
+    tags=["openstack-projects"],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER))],  # All endpoints require at least LECTURER role
+)
 
 
 @router.get("", response_model=list[OpenstackProjectResponse])
@@ -21,7 +25,6 @@ async def list_openstack_projects(
     db: DBSession,
     request_id: RequestID,
     user_id: str = Depends(get_user_id),
-    user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
 ):
     """List all OpenStack projects for the current user.
     
@@ -62,7 +65,6 @@ async def create_project(
     db: DBSession,
     request_id: RequestID,
     user_id: str = Depends(get_user_id),
-    user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
 ):
     """Create a new OpenStack project with credentials.
     
@@ -103,7 +105,6 @@ async def update_project_credentials(
     db: DBSession,
     request_id: RequestID,
     user_id: str = Depends(get_user_id),
-    user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
 ):
     """Update OpenStack credentials for an existing project.
     
@@ -140,7 +141,6 @@ async def get_project_credentials(
     db: DBSession,
     request_id: RequestID,
     user_id: str = Depends(get_user_id),
-    user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
 ):
     """Get OpenStack project with credentials (masked).
     
@@ -175,7 +175,6 @@ async def delete_project(
     db: DBSession,
     request_id: RequestID,
     user_id: str = Depends(get_user_id),
-    user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
 ):
     """Delete OpenStack project and its credentials.
     
