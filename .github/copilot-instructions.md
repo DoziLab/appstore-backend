@@ -210,17 +210,204 @@ pytest tests/api/             # API tests only
 
 ## Configuration
 Environment via `.env` (see [src/core/config.py](src/core/config.py)):
-- `DB_*`: PostgreSQL connection
-- `REDIS_URL`: Celery broker/backend
-- `DEBUG`: Enable SQLAlchemy echo
+
+### Core Settings
+- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`: PostgreSQL connection
+- `REDIS_URL`: Celery broker/backend (format: `redis://host:port/db`)
+- `DEBUG`: Enable SQLAlchemy echo and verbose logging
+
+### OpenStack Integration
+- `OPENSTACK_AUTH_URL`: OpenStack Keystone endpoint
+- `OPENSTACK_PROJECT_NAME`: Project/tenant name
+- `OPENSTACK_PROJECT_DOMAIN_NAME`: Project domain (typically `default`)
+- `OPENSTACK_USERNAME`: OpenStack admin username
+- `OPENSTACK_PASSWORD`: OpenStack admin password
+- `OPENSTACK_USER_DOMAIN_NAME`: User domain (typically `default`)
+- `OPENSTACK_REGION_NAME`: Target region (e.g., `RegionOne`)
+
+Alternatively, configure via `~/.config/openstack/clouds.yaml` and set `OPENSTACK_CLOUD=<cloud-name>`.
+
+### Logging & Observability
+- `LOG_LEVEL`: Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`)
+
+### Seed Data (Development)
+- `SEED_ON_STARTUP`: Auto-seed demo data when container starts (default: `false`)
+- `ADMIN_EMAIL`, `ADMIN_PASSWORD`: Default admin credentials for seed data
+
+---
+
+## Development Environment
+
+### Codespace & Devcontainer
+The project includes a complete Devcontainer configuration in [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json):
+
+**Pre-installed Extensions:**
+- Python, Pylance, Ruff, Black Formatter
+- PostgreSQL, REST Client (Bruno)
+- Docker, YAML
+
+**Automatic Setup:**
+- Docker Compose starts PostgreSQL, Redis, API, Celery Worker on container creation
+- Database is auto-migrated via Alembic
+- Optional seed data is loaded if `SEED_ON_STARTUP=true`
+
+**Port Forwarding:**
+- `8000`: FastAPI application
+- `5432`: PostgreSQL
+- `6379`: Redis
+
+### OpenStack Setup
+The system interacts with OpenStack via the `openstacksdk` library.
+
+**Service Layer:**
+- [`src/services/openstack_service.py`](src/services/openstack_service.py): OpenStack client wrapper
+- Heat orchestration for stack deployments
+- Keystone project/user management
+- Neutron network operations
+
+**Configuration:**
+- Use `clouds.yaml` for multi-environment support (dev, staging, prod)
+- Store credentials in environment variables or OpenStack config files
+- Never commit `clouds.yaml` or credentials to Git
+
+**Testing OpenStack Connectivity:**
+```bash
+openstack --os-cloud=<cloud-name> server list
+```
+
+### Seed Data & Initialization
+[`scripts/seed_data.py`](scripts/seed_data.py) creates demo data for local development:
+
+**Created Entities:**
+- Admin user with full permissions
+- Sample templates (Ubuntu VM, Kubernetes cluster, etc.)
+- Template versions with Heat YAML files
+- Sample courses and OpenStack projects
+
+**Manual Seeding:**
+```bash
+python -m scripts.seed_data
+```
+
+**Automatic Seeding:**
+Set `SEED_ON_STARTUP=true` in `.env` for container auto-seed.
+
+### Scripts & Utilities
+The [`scripts/`](scripts/) directory contains helper tools:
+
+- `seed_data.py`: Demo data initialization
+- `test_auth.sh`: Keycloak token acquisition test
+- `add_dozilab_dashboard_template.py`: Add specific template
+- `create-server.sh`, `create-github-runner-vm.sh`: OpenStack VM provisioning
+
+---
+
+## Testing Strategy
+
+### Test Organization
+```
+tests/
+├── api/              # FastAPI route tests (HTTP layer)
+├── unit/             # Service & repository tests (isolated)
+├── integrations/     # OpenStack integration tests (optional)
+└── fixtures/         # Shared test data and mocks
+```
+
+### Running Tests
+```bash
+pytest                              # All tests
+pytest tests/api/                   # API tests only
+pytest tests/unit/                  # Unit tests only
+pytest -v --cov=src --cov-report=html  # With coverage
+```
+
+### Mocking OpenStack
+For unit tests, mock OpenStack SDK calls to avoid external dependencies:
+```python
+from unittest.mock import patch
+
+@patch('src.services.openstack_service.OpenStackService.create_stack')
+def test_deploy(mock_create_stack, db_session):
+    mock_create_stack.return_value = {'id': 'stack-123', 'status': 'CREATE_IN_PROGRESS'}
+    # Test logic here
+```
+
+For integration tests, use a real or test OpenStack instance.
+
+### Test Fixtures
+Define reusable fixtures in [`tests/conftest.py`](tests/conftest.py):
+- `db_session`: Test database session
+- `client`: TestClient for FastAPI
+- Sample models (users, templates, courses)
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+**Port Conflicts**
+```bash
+# Check if ports 8000, 5432, 6379 are in use
+lsof -i :8000
+# Kill process or change port in docker-compose.yml
+```
+
+**OpenStack Connection Timeouts**
+- Verify `OPENSTACK_AUTH_URL` is reachable
+- Check credentials in `.env` or `clouds.yaml`
+- Test with: `openstack --os-cloud=<cloud> server list`
+
+**Celery Worker Not Starting**
+- Check Redis connection: `redis-cli -u $REDIS_URL ping`
+- Verify worker logs: `docker compose logs celery-worker`
+- Restart worker: `docker compose restart celery-worker`
+
+**Database Migration Failures**
+```bash
+# Reset database (⚠️ destroys data)
+docker compose down -v
+docker compose up -d db
+alembic upgrade head
+```
+
+**Import Errors After New Dependencies**
+```bash
+# Rebuild container after pyproject.toml changes
+docker compose build api celery-worker
+docker compose up -d
+```
+
+**Seed Data Already Exists**
+- Drop and recreate database, or
+- Manually delete conflicting records before seeding
+
+### Debugging in VS Code
+Launch configurations in [`.vscode/launch.json`](.vscode/launch.json):
+- **Debug FastAPI**: Attach to running Uvicorn server
+- **Debug Celery Task**: Attach to Celery worker process
+
+**Enable Debug Logging:**
+```bash
+export LOG_LEVEL=DEBUG
+export DEBUG=true
+```
+
+---
 
 ## Adding New Features
 
 1. **Model**: Create in [src/models/](src/models/) inheriting `Base`, import in [database.py](src/core/database.py) `init_db()`
-2. **Schema**: Create Pydantic models in [src/schemas/](src/schemas/)
-3. **Repository**: Extend `BaseRepository` in [src/repositories/](src/repositories/)
-4. **Service**: Business logic in [src/services/](src/services/)
-5. **Route**: FastAPI router in [src/api/](src/api/), register in [src/api/__init__.py](src/api/__init__.py)
+2. **Migration**: Generate Alembic migration: `alembic revision --autogenerate -m "description"`
+3. **Schema**: Create Pydantic models in [src/schemas/](src/schemas/) (`*Create`, `*Update`, `*Response`)
+4. **Repository**: Extend `BaseRepository` in [src/repositories/](src/repositories/)
+5. **Service**: Business logic in [src/services/](src/services/)
+6. **Route**: FastAPI router in [src/api/](src/api/), register in [src/api/__init__.py](src/api/__init__.py)
+7. **Tests**: 
+   - Unit tests in [tests/unit/](tests/unit/) for services/repositories
+   - API tests in [tests/api/](tests/api/) for routes
+8. **Bruno**: Add API requests in [bruno/](bruno/) for manual testing and documentation
+9. **Apply Migration**: Run `alembic upgrade head` or restart Docker containers
 
 ## Code Style & Cleanliness Guidelines
 
