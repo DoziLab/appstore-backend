@@ -1,0 +1,74 @@
+# Promtail Configuration
+# Documentation: https://grafana.com/docs/loki/latest/clients/promtail/configuration/
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Scrape all Docker containers
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    
+    relabel_configs:
+      # Use container name as job label
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'job'
+      
+      # Add container ID
+      - source_labels: ['__meta_docker_container_id']
+        target_label: 'container_id'
+      
+      # Add compose service
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'compose_service'
+    
+    pipeline_stages:
+      # Parse Docker JSON log wrapper
+      - json:
+          expressions:
+            output: log
+            stream: stream
+      
+      # Try to parse application JSON (will fail for non-JSON logs, that's OK)
+      - json:
+          source: output
+          expressions:
+            timestamp: timestamp
+            level: level
+            message: message
+            request_id: request_id
+            event: event
+            http_method: http_method
+            http_path: http_path
+            http_status_code: http_status_code
+            duration_ms: duration_ms
+      
+      # Set timestamp if available
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+          action_on_failure: skip
+      
+      # Add labels if they exist
+      - labels:
+          level:
+          event:
+      
+      # Output the message (use output if message doesn't exist)
+      - template:
+          source: final_message
+          template: '{{ if .message }}{{ .message }}{{ else }}{{ .output }}{{ end }}'
+      
+      - output:
+          source: final_message

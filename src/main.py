@@ -5,9 +5,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from src.core.config import get_settings
 from src.core.database import init_db
+from src.core.logging_config import configure_logging
 from src.core.middleware import RequestTrackingMiddleware
 from src.core.exceptions import (
     http_exception_handler,
@@ -20,26 +22,34 @@ from src.core.exceptions import (
 )
 from src.api import api_router
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# Configure structured JSON logging for Loki integration
+configure_logging(
+    log_level="DEBUG" if settings.debug else "INFO",
+    json_format=True  # Enable JSON formatting for Loki
+)
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
    """Application lifespan events"""
     # Startup
-   logger.info("Starting OpenStack Application Catalog...")
+   logger.info(
+       "Starting OpenStack Application Catalog",
+       extra={'event': 'application_startup', 'version': settings.app_version}
+   )
    init_db()
-   logger.info("Database initialized")
+   logger.info("Database initialized", extra={'event': 'database_initialized'})
    yield
 
    #shutdown
-   logger.info("Shutting down OpenStack Application Catalog...")
+   logger.info(
+       "Shutting down OpenStack Application Catalog",
+       extra={'event': 'application_shutdown'}
+   )
 
 
 app = FastAPI(
@@ -63,6 +73,9 @@ app.add_exception_handler(Exception, generic_exception_handler)
 
 # Include routers
 app.include_router(api_router)
+
+# Initialize Prometheus metrics
+Instrumentator().instrument(app).expose(app)
 
 # Root endpoint
 @app.get("/")
