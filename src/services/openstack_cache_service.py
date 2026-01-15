@@ -124,3 +124,89 @@ class OpenstackCacheService:
         except redis.RedisError as e:
             logger.error(f"Redis error getting cached projects: {e}")
             return []
+    
+    def get_quotas(self, project_id: str) -> Optional[dict]:
+        """Get cached quota data for an OpenStack project.
+        
+        Args:
+            project_id: OpenStack project ID
+            
+        Returns:
+            Dictionary with quota data or None if not cached:
+            {
+                'compute': {...},
+                'network': {...},
+                'block_storage': {...},
+                'fetched_at': str (ISO timestamp)
+            }
+        """
+        key = f"openstack:quotas:{project_id}"
+        try:
+            data = self.redis.get(key)
+            if data:
+                logger.debug(f"Cache hit for quotas for OpenStack project {project_id}")
+                return json.loads(data)
+            logger.debug(f"Cache miss for quotas for OpenStack project {project_id}")
+            return None
+        except redis.RedisError as e:
+            logger.error(f"Redis error getting quotas for project {project_id}: {e}")
+            return None
+    
+    def set_quotas(self, project_id: str, quotas: dict) -> bool:
+        """Cache quota data for an OpenStack project.
+        
+        Args:
+            project_id: OpenStack project ID
+            quotas: Dictionary with quota data (from get_quotas())
+            
+        Returns:
+            True if cached successfully, False otherwise
+        """
+        key = f"openstack:quotas:{project_id}"
+        data = {
+            **quotas,
+            'fetched_at': datetime.now(timezone.utc).isoformat()
+        }
+        try:
+            self.redis.setex(
+                key,
+                self.ttl,
+                json.dumps(data)
+            )
+            logger.info(f"Cached quotas for project {project_id}")
+            return True
+        except redis.RedisError as e:
+            logger.error(f"Redis error setting quotas for project {project_id}: {e}")
+            return False
+    
+    def delete_quotas(self, project_id: str) -> bool:
+        """Delete cached quota data for a project.
+        
+        Args:
+            project_id: OpenStack project ID
+            
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+        key = f"openstack:quotas:{project_id}"
+        try:
+            result = self.redis.delete(key)
+            if result:
+                logger.info(f"Deleted quota cache for OpenStack project {project_id}")
+            return bool(result)
+        except redis.RedisError as e:
+            logger.error(f"Redis error deleting quotas for project {project_id}: {e}")
+            return False
+    
+    def invalidate_project_cache(self, project_id: str) -> bool:
+        """Invalidate all cached data for a project (usage and quotas).
+        
+        Args:
+            project_id: OpenStack project ID
+            
+        Returns:
+            True if all caches deleted successfully, False otherwise
+        """
+        usage_deleted = self.delete_usage(project_id)
+        quotas_deleted = self.delete_quotas(project_id)
+        return usage_deleted or quotas_deleted  # Return True if at least one was deleted
