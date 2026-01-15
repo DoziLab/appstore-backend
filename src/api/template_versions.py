@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, status, Query, Depends
 
 from src.core.response_builder import ResponseBuilder
-from src.core.dependencies import DBSession, RequestID, require_roles
+from src.core.dependencies import DBSession, RequestID, require_roles, CurrentUser
 from src.schemas.template_version import (
     TemplateVersionCreate,
     TemplateVersionUpdate,
@@ -15,7 +15,11 @@ from src.services.template_version_service import TemplateVersionService
 from src.models.user import UserRole
 
 
-router = APIRouter(prefix="/template-versions", tags=["template-versions"])
+router = APIRouter(
+    prefix="/template-versions",
+    tags=["template-versions"],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER))],  # All endpoints require at least LECTURER role
+)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=None)
@@ -23,7 +27,7 @@ async def create_version(
     version_data: TemplateVersionCreate,
     db: DBSession,
     request_id: RequestID,
-    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
+    current_user: CurrentUser,
 ):
     """Create a new template version.
     
@@ -149,7 +153,7 @@ async def update_version(
     version_data: TemplateVersionUpdate,
     db: DBSession,
     request_id: RequestID,
-    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
+    current_user: CurrentUser,
 ):
     """Update an existing template version.
     
@@ -183,7 +187,7 @@ async def activate_version(
     version_id: UUID,
     db: DBSession,
     request_id: RequestID,
-    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
+    current_user: CurrentUser,
 ):
     """Activate a specific template version.
     
@@ -216,7 +220,7 @@ async def delete_version(
     version_id: UUID,
     db: DBSession,
     request_id: RequestID,
-    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
+    current_user: CurrentUser,
 ):
     """Delete a template version.
     
