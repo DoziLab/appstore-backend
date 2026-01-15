@@ -58,7 +58,7 @@ class TemplateService:
                     "template_id": str(template.id),
                     "template_name": template.name,
                     "owner_id": owner_id,
-                    "visibility": template_data.visibility.value,
+                    "visibility": template_data.visibility,
                     "approval_status": TemplateApprovalStatus.PENDING.value
                 }
             )
