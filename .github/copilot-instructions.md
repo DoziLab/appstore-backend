@@ -225,80 +225,25 @@ Environment via `.env` (see [src/core/config.py](src/core/config.py)):
 - `OPENSTACK_USER_DOMAIN_NAME`: User domain (typically `default`)
 - `OPENSTACK_REGION_NAME`: Target region (e.g., `RegionOne`)
 
-Alternatively, configure via `~/.config/openstack/clouds.yaml` and set `OPENSTACK_CLOUD=<cloud-name>`.
-
 ### Logging & Observability
 - `LOG_LEVEL`: Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`)
 
-### Seed Data (Development)
-- `SEED_ON_STARTUP`: Auto-seed demo data when container starts (default: `false`)
-- `ADMIN_EMAIL`, `ADMIN_PASSWORD`: Default admin credentials for seed data
 
 ---
 
 ## Development Environment
 
-### Codespace & Devcontainer
-The project includes a complete Devcontainer configuration in [`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json):
-
-**Pre-installed Extensions:**
-- Python, Pylance, Ruff, Black Formatter
-- PostgreSQL, REST Client (Bruno)
-- Docker, YAML
-
-**Automatic Setup:**
-- Docker Compose starts PostgreSQL, Redis, API, Celery Worker on container creation
+### Codespace
+- Docker Compose auto-starts PostgreSQL, Redis, API, Celery Worker
 - Database is auto-migrated via Alembic
-- Optional seed data is loaded if `SEED_ON_STARTUP=true`
-
-**Port Forwarding:**
-- `8000`: FastAPI application
-- `5432`: PostgreSQL
-- `6379`: Redis
+- Ports: 8000 (API), 5432 (PostgreSQL), 6379 (Redis)
 
 ### OpenStack Setup
 The system interacts with OpenStack via the `openstacksdk` library.
-
-**Service Layer:**
 - [`src/services/openstack_service.py`](src/services/openstack_service.py): OpenStack client wrapper
 - Heat orchestration for stack deployments
-- Keystone project/user management
-- Neutron network operations
+- Keystone project/user management, Neutron network operations
 
-**Configuration:**
-- Use `clouds.yaml` for multi-environment support (dev, staging, prod)
-- Store credentials in environment variables or OpenStack config files
-- Never commit `clouds.yaml` or credentials to Git
-
-**Testing OpenStack Connectivity:**
-```bash
-openstack --os-cloud=<cloud-name> server list
-```
-
-### Seed Data & Initialization
-[`scripts/seed_data.py`](scripts/seed_data.py) creates demo data for local development:
-
-**Created Entities:**
-- Admin user with full permissions
-- Sample templates (Ubuntu VM, Kubernetes cluster, etc.)
-- Template versions with Heat YAML files
-- Sample courses and OpenStack projects
-
-**Manual Seeding:**
-```bash
-python -m scripts.seed_data
-```
-
-**Automatic Seeding:**
-Set `SEED_ON_STARTUP=true` in `.env` for container auto-seed.
-
-### Scripts & Utilities
-The [`scripts/`](scripts/) directory contains helper tools:
-
-- `seed_data.py`: Demo data initialization
-- `test_auth.sh`: Keycloak token acquisition test
-- `add_dozilab_dashboard_template.py`: Add specific template
-- `create-server.sh`, `create-github-runner-vm.sh`: OpenStack VM provisioning
 
 ---
 
@@ -322,76 +267,25 @@ pytest -v --cov=src --cov-report=html  # With coverage
 ```
 
 ### Mocking OpenStack
-For unit tests, mock OpenStack SDK calls to avoid external dependencies:
+For unit tests, mock OpenStack SDK calls:
 ```python
 from unittest.mock import patch
 
 @patch('src.services.openstack_service.OpenStackService.create_stack')
 def test_deploy(mock_create_stack, db_session):
     mock_create_stack.return_value = {'id': 'stack-123', 'status': 'CREATE_IN_PROGRESS'}
-    # Test logic here
 ```
-
-For integration tests, use a real or test OpenStack instance.
-
-### Test Fixtures
-Define reusable fixtures in [`tests/conftest.py`](tests/conftest.py):
-- `db_session`: Test database session
-- `client`: TestClient for FastAPI
-- Sample models (users, templates, courses)
 
 ---
 
 ## Troubleshooting
 
-### Common Issues
-
-**Port Conflicts**
-```bash
-# Check if ports 8000, 5432, 6379 are in use
-lsof -i :8000
-# Kill process or change port in docker-compose.yml
-```
-
-**OpenStack Connection Timeouts**
-- Verify `OPENSTACK_AUTH_URL` is reachable
-- Check credentials in `.env` or `clouds.yaml`
-- Test with: `openstack --os-cloud=<cloud> server list`
-
-**Celery Worker Not Starting**
-- Check Redis connection: `redis-cli -u $REDIS_URL ping`
-- Verify worker logs: `docker compose logs celery-worker`
-- Restart worker: `docker compose restart celery-worker`
-
-**Database Migration Failures**
-```bash
-# Reset database (⚠️ destroys data)
-docker compose down -v
-docker compose up -d db
-alembic upgrade head
-```
-
-**Import Errors After New Dependencies**
-```bash
-# Rebuild container after pyproject.toml changes
-docker compose build api celery-worker
-docker compose up -d
-```
-
-**Seed Data Already Exists**
-- Drop and recreate database, or
-- Manually delete conflicting records before seeding
-
-### Debugging in VS Code
-Launch configurations in [`.vscode/launch.json`](.vscode/launch.json):
-- **Debug FastAPI**: Attach to running Uvicorn server
-- **Debug Celery Task**: Attach to Celery worker process
-
-**Enable Debug Logging:**
-```bash
-export LOG_LEVEL=DEBUG
-export DEBUG=true
-```
+**Common Issues:**
+- Port conflicts: `lsof -i :8000` and kill process or change port in `docker-compose.yml`
+- OpenStack connection: Verify `OPENSTACK_AUTH_URL` and credentials in `.env` or `clouds.yaml`
+- Celery not starting: Check Redis connection with `redis-cli -u $REDIS_URL ping`
+- Migration failures: Reset with `docker compose down -v && docker compose up -d db && alembic upgrade head`
+- Import errors: Rebuild containers after dependency changes: `docker compose build api celery-worker`
 
 ---
 
