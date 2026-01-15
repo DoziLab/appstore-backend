@@ -156,9 +156,21 @@ API Route → Service → Repository → Model/DB
 Use typed aliases from [src/core/dependencies.py](src/core/dependencies.py):
 ```python
 from src.core.dependencies import DBSession, RequestID, Pagination
+from src.core.auth import get_current_user, require_roles
+from src.models.user import UserRole
 
 @router.get("")
-async def list_items(db: DBSession, request_id: RequestID, pagination: Pagination):
+async def list_items(
+    db: DBSession,
+    request_id: RequestID,
+    pagination: Pagination,
+    user: dict = Depends(get_current_user)  # JWT from Keycloak
+):
+    # user contains: sub, email, name, preferred_username, roles (list), user_id (local DB)
+
+@router.post("", dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER))])
+async def create_item(db: DBSession, user: dict = Depends(get_current_user)):
+    # Only ADMIN or LECTURER roles can access
 ```
 
 ### Response Format
@@ -210,17 +222,122 @@ pytest tests/api/             # API tests only
 
 ## Configuration
 Environment via `.env` (see [src/core/config.py](src/core/config.py)):
-- `DB_*`: PostgreSQL connection
-- `REDIS_URL`: Celery broker/backend
-- `DEBUG`: Enable SQLAlchemy echo
+
+### Core Settings
+- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`: PostgreSQL connection
+- `REDIS_URL`: Celery broker/backend (format: `redis://host:port/db`)
+- `DEBUG`: Enable SQLAlchemy echo and verbose logging
+
+### Keycloak Authentication
+- `KEYCLOAK_URL`: Keycloak server URL
+- `KEYCLOAK_REALM`: Keycloak realm name
+- `KEYCLOAK_CLIENT_ID`: Client ID for token validation
+- `KEYCLOAK_JWKS_CACHE_TTL`: JWT key cache duration in seconds (default: 3600)
+- Users are synced from Keycloak to local database via [UserSyncService](src/services/user_sync_service.py)
+- Authentication handled in [src/core/auth.py](src/core/auth.py) with `get_current_user()` and `require_roles()`
+
+### Security Settings
+- `ENCRYPTION_KEY`: Fernet key for encrypting OpenStack credentials at rest (generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`)
+- Credentials are auto-encrypted/decrypted via `EncryptedString` column type in database models
+
+### OpenStack Integration
+Each lecturer stores **their own encrypted OpenStack credentials** in the database:
+- Credentials managed via [OpenstackProjectService](src/services/openstack_project_service.py)
+- Stored in `openstack_projects` table with Fernet encryption (see [OpenstackProject model](src/models/openstack_project.py))
+- Deployments use lecturer's project credentials (see [deploy_stack task](src/tasks/deploy_tasks.py))
+- **No global OpenStack credentials required in `.env`**
+- OpenStack API interactions via [openstack_heat_service.py](src/services/openstack_heat_service.py) and [openstack_cache_service.py](src/services/openstack_cache_service.py)
+
+### Logging & Observability
+- `LOG_LEVEL`: Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`)
+
+
+---
+
+## Development Environment
+
+### Codespace
+- Docker Compose auto-starts PostgreSQL, Redis, API, Celery Worker
+- Database is auto-migrated via Alembic
+- Ports: 8000 (API), 5432 (PostgreSQL), 6379 (Redis)
+
+### OpenStack Setup
+The system interacts with OpenStack via the `openstacksdk` library:
+- [openstack_heat_service.py](src/services/openstack_heat_service.py): Heat orchestration for stack deployments
+- [openstack_project_service.py](src/services/openstack_project_service.py): Project/user credential management
+- [openstack_cache_service.py](src/services/openstack_cache_service.py): Caching layer for OpenStack API calls
+- Each deployment uses lecturer-specific credentials from database
+
+
+---
+
+## Testing Strategy
+
+### Test Organization
+```
+tests/
+├── api/              # FastAPI route tests (HTTP layer)
+├── unit/             # Service & repository tests (isolated)
+├── integrations/     # OpenStack integration tests (optional)
+└── fixtures/         # Shared test data and mocks
+```
+
+### Running Tests
+```bash
+pytest                              # Run all tests
+pytest tests/api/                   # API tests only
+pytest tests/unit/                  # Unit tests only
+pytest tests/integrations/          # Integration tests only
+pytest -v --cov=src --cov-report=html  # With coverage
+```
+
+**Test Coverage:**
+- **API Tests** ([tests/api/](tests/api/)): Routes for templates, deployments, OpenStack projects
+- **Unit Tests** ([tests/unit/](tests/unit/)): Keycloak auth, secret encryption, Git service
+- **Integration Tests** ([tests/integrations/](tests/integrations/)): Celery tasks
+
+### Mocking OpenStack
+For unit tests, mock OpenStack SDK calls:
+```python
+from unittest.mock import patch
+
+@patch('src.services.openstack_heat_service.OpenStackHeatService.create_stack')
+def test_deploy(mock_create_stack, db_session):
+    mock_create_stack.return_value = {'id': 'stack-123', 'status': 'CREATE_IN_PROGRESS'}
+```
+
+---
+
+## Troubleshooting
+
+**Common Issues:**
+- Port conflicts: `lsof -i :8000` and kill process or change port in `docker-compose.yml`
+- OpenStack connection: Verify `OPENSTACK_AUTH_URL` and credentials in `.env` or `clouds.yaml`
+- Celery not starting: Check Redis connection with `redis-cli -u $REDIS_URL ping`
+- Migration failures: Reset with `docker compose down -v && docker compose up -d db && alembic upgrade head`
+- Import errors: Rebuild containers after dependency changes: `docker compose build api celery-worker`
+
+---
 
 ## Adding New Features
 
-1. **Model**: Create in [src/models/](src/models/) inheriting `Base`, import in [database.py](src/core/database.py) `init_db()`
-2. **Schema**: Create Pydantic models in [src/schemas/](src/schemas/)
-3. **Repository**: Extend `BaseRepository` in [src/repositories/](src/repositories/)
-4. **Service**: Business logic in [src/services/](src/services/)
-5. **Route**: FastAPI router in [src/api/](src/api/), register in [src/api/__init__.py](src/api/__init__.py)
+1. **Model**: Create in [src/models/](src/models/) inheriting `Base`
+   - Import in [init_db()](src/core/database.py) function (see existing imports)
+   - Also import in [alembic/env.py](alembic/env.py) for migration auto-detection
+2. **Migration**: Generate Alembic migration: `alembic revision --autogenerate -m "description"`
+3. **Schema**: Create Pydantic models in [src/schemas/](src/schemas/) (`*Create`, `*Update`, `*Response`)
+   - Use `model_config = {"from_attributes": True}` for ORM compatibility
+   - Example: [DeploymentMode](src/models/deployment.py) and [DeploymentStatus](src/models/deployment.py) are Enums, not strings
+4. **Repository**: Extend `BaseRepository` in [src/repositories/](src/repositories/)
+5. **Service**: Business logic in [src/services/](src/services/)
+6. **Route**: FastAPI router in [src/api/](src/api/), register in [src/api/__init__.py](src/api/__init__.py)
+7. **Tests**: 
+   - Unit tests in [tests/unit/](tests/unit/) for services/repositories
+   - API tests in [tests/api/](tests/api/) for routes
+8. **Bruno**: Add API requests in [bruno/](bruno/) for manual testing and documentation
+   - See [bruno/README.md](bruno/README.md) for collection structure
+   - Use environment-specific configs: [local.bru](bruno/environments/local.bru)
+9. **Apply Migration**: Run `alembic upgrade head` or restart Docker containers
 
 ## Code Style & Cleanliness Guidelines
 

@@ -1,0 +1,48 @@
+meta {
+  name: List Templates
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/api/v1/templates?page=1&page_size=10
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 1
+  page_size: 10
+  ~status: 
+  ~visibility: 
+  ~owner_id: 
+  ~search: 
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # List Templates
+  
+  Lists all templates with optional filters and pagination.
+  
+  **Visibility Rules:**
+  - Admins see all templates
+  - Lecturers see:
+    - Their own templates (any status/visibility)
+    - Approved public templates from others
+  
+  **Required Role:** ADMIN or LECTURER
+  
+  **Query Parameters:**
+  - `page`: Page number (default: 1)
+  - `page_size`: Items per page (default: 10)
+  - `status`: Filter by approval status (pending, approved, rejected, deprecated)
+  - `visibility`: Filter by visibility (private, public)
+  - `owner_id`: Filter by owner ID
+  - `search`: Search in name and description
+  
+  **Returns:** Paginated list of templates with metadata
+}

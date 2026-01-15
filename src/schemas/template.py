@@ -2,7 +2,7 @@
 from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from typing import Optional
-
+from src.schemas.template_version import TemplateVersionResponse
 
 class TemplateCreate(BaseModel):
     """Schema for creating a template."""
@@ -28,14 +28,13 @@ class TemplateUpdate(BaseModel):
     name: Optional[str] = Field(None, description="Name of the template", max_length=255)
     description: Optional[str] = Field(None, description="Template description")
     repo_url: Optional[str] = Field(None, description="Git repository URL", max_length=500)
-    visibility: Optional[str] = Field(None, description="Template visibility (private/public)")
-    approval_status: Optional[str] = Field(None, description="Approval status")
+    visibility: Optional[str] = Field(None, description="Template visibility (private/public) - Only admins can change this")
     
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "name": "Updated Template Name",
-                "approval_status": "approved"
+                "description": "Updated description"
             }
         }
     )
@@ -50,6 +49,7 @@ class TemplateResponse(BaseModel):
     repo_url: str = Field(..., description="Git repository URL")
     visibility: str = Field(..., description="Template visibility")
     approval_status: str = Field(..., description="Approval status")
+    versions: Optional[list[TemplateVersionResponse]] = Field(None, description="List of template versions")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
     
@@ -64,6 +64,7 @@ class TemplateResponse(BaseModel):
                 "repo_url": "https://github.com/example/flask-template",
                 "visibility": "public",
                 "approval_status": "approved",
+                "versions": [],
                 "created_at": "2024-11-27T10:00:00Z",
                 "updated_at": "2024-11-27T10:00:00Z"
             }

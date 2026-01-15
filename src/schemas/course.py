@@ -3,19 +3,27 @@ from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from typing import Optional
 
+class DeploymentSummary(BaseModel):
+    """Minimal deployment info for embedding in course response."""
+    id: str = Field(..., description="Deployment ID")
+    template_version_id: str = Field(..., description="Template version ID")
+    deployment_mode: str = Field(..., description="Deployment mode")
+    status: str = Field(..., description="Current status")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    
+    model_config = ConfigDict(from_attributes=True)
+
 
 class CourseCreate(BaseModel):
     """Schema for creating a course."""
     name: str = Field(..., description="Course name", max_length=255)
     semester: str = Field(..., description="Semester (e.g., WS2024, SS2025)", max_length=50)
-    lecturer_id: str = Field(..., description="Lecturer user ID")
     
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "name": "Advanced Web Development",
-                "semester": "WS2024",
-                "lecturer_id": "user-456"
+                "semester": "WS2024"
             }
         }
     )
@@ -25,14 +33,12 @@ class CourseUpdate(BaseModel):
     """Schema for updating a course."""
     name: Optional[str] = Field(None, description="Course name", max_length=255)
     semester: Optional[str] = Field(None, description="Semester", max_length=50)
-    lecturer_id: Optional[str] = Field(None, description="Lecturer user ID")
     
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "name": "Updated Course Name",
-                "semester": "SS2025",
-                "lecturer_id": "user-789"
+                "semester": "SS2025"
             }
         }
     )
@@ -44,6 +50,7 @@ class CourseResponse(BaseModel):
     name: str = Field(..., description="Course name")
     semester: str = Field(..., description="Semester")
     lecturer_id: str = Field(..., description="Lecturer user ID")
+    deployments: list[DeploymentSummary] = Field(..., description="List of deployments associated with the course")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
     
@@ -55,6 +62,15 @@ class CourseResponse(BaseModel):
                 "name": "Advanced Web Development",
                 "semester": "WS2024",
                 "lecturer_id": "user-456",
+                "deployments": [
+                    {
+                        "id": "deployment-789",
+                        "template_version_id": "template-version-101",
+                        "deployment_mode": "automatic",
+                        "status": "active",
+                        "created_at": "2024-11-27T10:00:00Z"
+                    }
+                ],
                 "created_at": "2024-11-27T10:00:00Z",
                 "updated_at": "2024-11-27T10:00:00Z"
             }

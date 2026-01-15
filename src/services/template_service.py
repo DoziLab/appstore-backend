@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from src.models.template import Template, TemplateVisibility, TemplateApprovalStatus
 from src.repositories.template_repository import TemplateRepository
 from src.schemas.template import TemplateCreate, TemplateUpdate
-from src.core.exceptions import NotFoundException, ForbiddenException
+from src.core.exceptions import NotFoundException, ForbiddenException, BadRequestException
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +32,8 @@ class TemplateService:
     ) -> Template:
         """Create a new template.
         
-        Templates are created with initial status 'pending' and must be
-        approved before becoming publicly available.
+        Templates are created with visibility 'private' and approval status 'pending'.
+        They must be approved by an admin before becoming publicly available.
         
         Args:
             template_data: Template creation data
@@ -47,7 +47,7 @@ class TemplateService:
                 name=template_data.name,
                 description=template_data.description,
                 repo_url=template_data.repo_url,
-                visibility=template_data.visibility,
+                visibility=TemplateVisibility.PRIVATE,
                 owner_id=owner_id,
                 approval_status=TemplateApprovalStatus.PENDING
             )
@@ -75,21 +75,47 @@ class TemplateService:
             )
             raise
 
-    def get_template(self, template_id: str | UUID) -> Template:
+    def get_template(
+        self,
+        template_id: str | UUID,
+        user_id: Optional[str] = None,
+        is_admin: bool = False
+    ) -> Template:
         """Get a template by ID.
+        
+        Admins can view any template.
+        Lecturers can only view approved public templates or their own templates.
         
         Args:
             template_id: Template ID
+            user_id: ID of the requesting user (for permission check)
+            is_admin: Whether the requesting user is an admin
             
         Returns:
             Template instance
             
         Raises:
             NotFoundException: If template not found
+            ForbiddenException: If user lacks permission to view template
         """
         template = self.template_repo.get_by_id(template_id)
         if not template:
             raise NotFoundException(f"Template with ID {template_id} not found")
+        
+        # Permission check for non-admins
+        if not is_admin and user_id:
+            # Non-admins can only see:
+            # 1. Their own templates (any status)
+            # 2. Approved public templates
+            is_owner = template.owner_id == user_id
+            is_public_approved = (
+                template.visibility == TemplateVisibility.PUBLIC and
+                template.approval_status == TemplateApprovalStatus.APPROVED
+            )
+            
+            if not is_owner and not is_public_approved:
+                raise ForbiddenException("You do not have permission to view this template")
+        
         return template
 
     def list_templates(
@@ -100,8 +126,13 @@ class TemplateService:
         visibility: Optional[str] = None,
         owner_id: Optional[str] = None,
         search: Optional[str] = None,
+        user_id: Optional[str] = None,
+        is_admin: bool = False,
     ) -> tuple[list[Template], int]:
         """List templates with filters and pagination.
+        
+        Admins see all templates.
+        Lecturers see only approved public templates and their own templates.
         
         Args:
             skip: Number of records to skip
@@ -110,6 +141,8 @@ class TemplateService:
             visibility: Filter by visibility (private/public)
             owner_id: Filter by owner ID
             search: Search term for name/description
+            user_id: ID of the requesting user (for permission filtering)
+            is_admin: Whether the requesting user is an admin
             
         Returns:
             Tuple of (list of templates, total count)
@@ -118,7 +151,8 @@ class TemplateService:
         status_enum = TemplateApprovalStatus(status) if status else None
         visibility_enum = TemplateVisibility(visibility) if visibility else None
         
-        return self.template_repo.get_all_filtered(
+        # Get filtered templates from repository
+        templates, total = self.template_repo.get_all_filtered(
             skip=skip,
             limit=limit,
             status=status_enum,
@@ -126,6 +160,27 @@ class TemplateService:
             owner_id=owner_id,
             search=search,
         )
+        
+        # Apply permission filtering for non-admins
+        if not is_admin and user_id:
+            filtered_templates = []
+            for template in templates:
+                # Lecturers can see:
+                # 1. Their own templates (any status, any visibility)
+                # 2. Approved public templates
+                is_owner = template.owner_id == user_id
+                is_public_approved = (
+                    template.visibility == TemplateVisibility.PUBLIC and
+                    template.approval_status == TemplateApprovalStatus.APPROVED
+                )
+                
+                if is_owner or is_public_approved:
+                    filtered_templates.append(template)
+            
+            templates = filtered_templates
+            total = len(filtered_templates)
+        
+        return templates, total
 
     def update_template(
         self,
@@ -137,6 +192,7 @@ class TemplateService:
         """Update a template.
         
         Only template owners or admins can update templates.
+        Only admins can change visibility.
         
         Args:
             template_id: Template ID
@@ -149,9 +205,9 @@ class TemplateService:
             
         Raises:
             NotFoundException: If template not found
-            ForbiddenException: If user is not owner or admin
+            ForbiddenException: If user is not owner or admin, or non-admin tries to change visibility
         """
-        template = self.get_template(template_id)
+        template = self.get_template(template_id, user_id=user_id, is_admin=is_admin)
         
         # Permission check: only owner or admin can update
         if template.owner_id != user_id and not is_admin:
@@ -173,7 +229,18 @@ class TemplateService:
             return template
         
         try:
-            uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
+            # Check if visibility is being changed
+        if "visibility" in update_data:
+            if not is_admin:
+                raise ForbiddenException("Only admins can change template visibility")
+            
+            # Validate visibility value
+            try:
+                TemplateVisibility(update_data["visibility"])
+            except ValueError:
+                raise BadRequestException(f"Invalid visibility value: {update_data['visibility']}")
+        
+        uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
             updated_template = self.template_repo.update(uuid_id, **update_data)
             if not updated_template:
                 raise NotFoundException(f"Template with ID {template_id} not found")
@@ -218,7 +285,7 @@ class TemplateService:
             NotFoundException: If template not found
             ForbiddenException: If user is not owner or admin
         """
-        template = self.get_template(template_id)
+        template = self.get_template(template_id, user_id=user_id, is_admin=is_admin)
         
         # Permission check: only owner or admin can delete
         if template.owner_id != user_id and not is_admin:
@@ -261,6 +328,8 @@ class TemplateService:
     def approve_template(self, template_id: str | UUID) -> Template:
         """Approve a template for public use.
         
+        Automatically sets approval_status to 'approved' and visibility to 'public'.
+        
         Args:
             template_id: Template ID
             
@@ -271,11 +340,16 @@ class TemplateService:
             NotFoundException: If template not found
         """
         try:
-            updated = self.template_repo.update_approval_status(
-                template_id,
-                TemplateApprovalStatus.APPROVED
+            uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
+        
+        # Update both approval status and visibility
+        updated = self.template_repo.update(
+                uuid_id,
+                approval_status=TemplateApprovalStatus.APPROVED,
+            visibility=TemplateVisibility.PUBLIC
             )
-            if not updated:
+            
+        if not updated:
                 raise NotFoundException(f"Template with ID {template_id} not found")
             
             logger.info(

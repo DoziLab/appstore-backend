@@ -1,0 +1,29 @@
+meta {
+  name: Delete Template Version File
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{base_url}}/api/v1/template-version-files/{{file_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # Delete Template Version File
+  
+  Deletes a template version file permanently. Only template owners or admins can delete.
+  This operation cannot be undone.
+  
+  **Required Role:** Template owner or admin
+  
+  **Path Parameters:**
+  - `file_id`: UUID of the file
+  
+  **Returns:** 204 No Content on success
+}

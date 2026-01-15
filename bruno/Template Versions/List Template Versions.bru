@@ -1,0 +1,35 @@
+meta {
+  name: List Template Versions
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/api/v1/template-versions/template/{{template_id}}?active_only=false
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~active_only: false
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # List Template Versions
+  
+  Lists all versions for a specific template.
+  Returns versions ordered by creation date (newest first).
+  Can be filtered to show only active versions.
+  
+  **Path Parameters:**
+  - `template_id`: UUID of the template
+  
+  **Query Parameters:**
+  - `active_only`: Return only active versions (default: false)
+  
+  **Returns:** List of template versions
+}

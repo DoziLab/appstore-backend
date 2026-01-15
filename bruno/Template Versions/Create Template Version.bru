@@ -1,0 +1,40 @@
+meta {
+  name: Create Template Version
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/api/v1/template-versions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "template_id": "{{template_id}}",
+    "git_commit_sha": "a1b2c3d4e5f6g7h8i9j0",
+    "is_active": true
+  }
+}
+
+docs {
+  # Create Template Version
+  
+  Creates a new version for a template based on a git commit.
+  Only template owners or admins can create versions.
+  If set as active, automatically deactivates other versions.
+  
+  **Required Role:** Template owner or admin
+  
+  **Request Body:**
+  - `template_id`: UUID of the template (required)
+  - `git_commit_sha`: Git commit SHA for this version (required, max 255 chars)
+  - `is_active`: Whether this version is active (default: true)
+  
+  **Returns:** Created template version with ID and timestamps
+}

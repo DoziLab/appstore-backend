@@ -1,0 +1,33 @@
+meta {
+  name: Get Template Version File
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/api/v1/template-version-files/{{file_id}}?include_content=true
+  body: none
+  auth: bearer
+}
+
+params:query {
+  ~include_content: true
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # Get Template Version File
+  
+  Retrieves details of a specific template version file by its ID.
+  
+  **Path Parameters:**
+  - `file_id`: UUID of the file
+  
+  **Query Parameters:**
+  - `include_content`: Whether to include file content (default: true)
+  
+  **Returns:** File details with or without content
+}
