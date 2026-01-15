@@ -230,17 +230,17 @@ class TemplateService:
         
         try:
             # Check if visibility is being changed
-        if "visibility" in update_data:
-            if not is_admin:
-                raise ForbiddenException("Only admins can change template visibility")
+            if "visibility" in update_data:
+                if not is_admin:
+                    raise ForbiddenException("Only admins can change template visibility")
+                
+                # Validate visibility value
+                try:
+                    TemplateVisibility(update_data["visibility"])
+                except ValueError:
+                    raise BadRequestException(f"Invalid visibility value: {update_data['visibility']}")
             
-            # Validate visibility value
-            try:
-                TemplateVisibility(update_data["visibility"])
-            except ValueError:
-                raise BadRequestException(f"Invalid visibility value: {update_data['visibility']}")
-        
-        uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
+            uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
             updated_template = self.template_repo.update(uuid_id, **update_data)
             if not updated_template:
                 raise NotFoundException(f"Template with ID {template_id} not found")
@@ -341,15 +341,15 @@ class TemplateService:
         """
         try:
             uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
-        
-        # Update both approval status and visibility
-        updated = self.template_repo.update(
+            
+            # Update both approval status and visibility
+            updated = self.template_repo.update(
                 uuid_id,
                 approval_status=TemplateApprovalStatus.APPROVED,
-            visibility=TemplateVisibility.PUBLIC
+                visibility=TemplateVisibility.PUBLIC
             )
             
-        if not updated:
+            if not updated:
                 raise NotFoundException(f"Template with ID {template_id} not found")
             
             logger.info(
