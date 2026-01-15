@@ -155,23 +155,46 @@ API Route → Service → Repository → Model/DB
 ### Dependency Injection
 Use typed aliases from [src/core/dependencies.py](src/core/dependencies.py):
 ```python
-from src.core.dependencies import DBSession, RequestID, Pagination
-from src.core.auth import get_current_user, require_roles
+from src.core.dependencies import DBSession, RequestID, Pagination, CurrentUser, require_roles
 from src.models.user import UserRole
+from fastapi import Depends
 
+# Router-level role protection: applies to ALL endpoints in the router
+router = APIRouter(
+    prefix="/courses",
+    tags=["courses"],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER))],  # All endpoints require at least LECTURER
+)
+
+# Endpoint with base authentication (inherits router-level roles)
 @router.get("")
 async def list_items(
     db: DBSession,
     request_id: RequestID,
     pagination: Pagination,
-    user: dict = Depends(get_current_user)  # JWT from Keycloak
+    current_user: CurrentUser,  # Typed alias for authenticated user
 ):
-    # user contains: sub, email, name, preferred_username, roles (list), user_id (local DB)
+    # current_user contains: sub, email, name, preferred_username, roles (list), user_id (local DB)
+    pass
 
-@router.post("", dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER))])
-async def create_item(db: DBSession, user: dict = Depends(get_current_user)):
-    # Only ADMIN or LECTURER roles can access
+# Endpoint with additional role restriction (beyond router-level)
+@router.post(
+    "/{id}/approve",
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],  # Only ADMIN can approve (stricter than router-level)
+)
+async def approve_item(
+    id: UUID,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    # This endpoint requires ADMIN role specifically, even though router allows LECTURER
+    pass
 ```
+
+**Role Protection Pattern:**
+- **Router-level**: Use `dependencies=[Depends(require_roles(...))]` on `APIRouter` to protect ALL endpoints with a base set of roles (e.g., ADMIN + LECTURER)
+- **Endpoint-level**: Add additional `dependencies=[Depends(require_roles(...))]` to specific endpoints that need stricter role requirements (e.g., ADMIN-only for approval/rejection actions)
+- **Type annotation**: Use `CurrentUser` type alias instead of `dict = Depends(get_current_user)` for cleaner code
 
 ### Response Format
 **Always** use `ResponseBuilder` from [src/core/response_builder.py](src/core/response_builder.py):
