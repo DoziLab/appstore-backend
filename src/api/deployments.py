@@ -13,6 +13,8 @@ from src.services.deployment_service import DeploymentService
 from src.services.deployment_log_service import DeploymentLogService
 from src.services.openstack_heat_service import HeatStackService
 from src.schemas.deployment import DeploymentLogResponse
+from src.tasks.deploy_tasks import delete_deployment as delete_deployment_task
+from src.models.deployment_log import DeploymentLogEventType, DeploymentLogLevel
 
 router = APIRouter(
     prefix="/deployments",
@@ -272,3 +274,83 @@ async def get_deployment_stack(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve stack information: {str(e)}"
         )
+
+
+@router.delete(
+    "/{deployment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a deployment",
+    responses={
+        204: {"description": "Deletion requested; operation in progress"},
+        403: {"description": "Forbidden - not owner or insufficient role"},
+        404: {"description": "Deployment not found"},
+        500: {"description": "Failed to enqueue deletion task or internal error"},
+    },
+)
+async def delete_deployment(
+    deployment_id: str,
+    db: DBSession,
+    request_id: RequestID,
+    user: CurrentUser,
+):
+    """Request deletion of a deployment.
+
+    Sets deployment status to DELETING, logs the request and enqueues the
+    `delete_deployment` Celery task which performs the actual OpenStack
+    deletion and cleans up the database.
+    """
+    # Verify deployment exists
+    deployment_repo = DeploymentRepository(db)
+    deployment = deployment_repo.get_by_id(deployment_id)
+
+    if not deployment:
+        raise NotFoundException(f"Deployment with ID {deployment_id} not found")
+
+    # Authorization: Lecturers may delete only their own deployments
+    user_roles = user.get("roles", [])
+    is_admin = "admin" in [role.lower() for role in user_roles]
+
+    if not is_admin:
+        lecturer_id = deployment.course.lecturer_id
+        if user["user_id"] != lecturer_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to delete this deployment",
+            )
+
+    # Set status to DELETING in DB
+    try:
+        deployment_repo.update_status(deployment_id, DeploymentStatus.DELETING)
+    except Exception:
+        # If status update fails, continue to enqueue task but log it
+        pass
+
+    # Write a deployment log entry
+    log_service = DeploymentLogService(db)
+    log_service.log(
+        deployment_id=deployment_id,
+        event_type=DeploymentLogEventType.DEPLOYMENT_DELETION_REQUESTED,
+        message="Deletion requested via API",
+        level=DeploymentLogLevel.INFO,
+        details={"requested_by": user.get("user_id")},
+        request_id=request_id,
+    )
+
+    # Enqueue Celery task to perform deletion asynchronously
+    try:
+        delete_deployment_task.delay(deployment_id)
+    except Exception:
+        # If queuing fails, attempt to revert status and return server error
+        try:
+            deployment_repo.update_status(deployment_id, DeploymentStatus.FAILED)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to enqueue deletion task",
+        )
+
+    return ResponseBuilder.no_content(
+        message="Deletion requested; operation is in progress",
+        request_id=request_id,
+    )

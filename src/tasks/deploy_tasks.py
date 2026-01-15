@@ -345,3 +345,98 @@ def deploy_stack(self, deployment_id: str) -> dict:
         }
     finally:
         db.close()
+
+
+@celery_app.task(bind=True)
+def delete_deployment(self, deployment_id: str) -> dict:
+    """Delete a deployment's OpenStack resources and remove DB record.
+
+    This task performs the actual deletion on OpenStack and then deletes
+    the deployment row from the database. It logs progress to the
+    deployment logs table.
+    """
+    task_id = self.request.id
+    logger.info(f"Starting delete task for deployment_id={deployment_id}, task_id={task_id}")
+
+    db = SessionLocal()
+    try:
+        repo = DeploymentRepository(db)
+        log_service = DeploymentLogService(db)
+
+        deployment = repo.get_by_id(deployment_id)
+        if not deployment:
+            logger.warning(f"Deployment not found for deletion: {deployment_id}")
+            return {"status": "not_found", "deployment_id": deployment_id}
+
+        # Update status to DELETING
+        try:
+            repo.update_status(deployment_id, DeploymentStatus.DELETING)
+        except Exception:
+            logger.warning("Could not set DELETING status; continuing with deletion")
+
+        log_service.log(
+            deployment_id=deployment_id,
+            event_type=DeploymentLogEventType.DEPLOYMENT_DELETION_REQUESTED,
+            message=f"Deletion requested (task_id: {task_id})",
+            level=DeploymentLogLevel.INFO,
+            details={"task_id": task_id}
+        )
+
+        # If there is an associated Heat stack, attempt to delete it
+        if deployment.openstack_stack_id:
+            try:
+                openstack_repo = OpenstackProjectRepository(db)
+                lecturer_id = deployment.course.lecturer_id
+                openstack_projects = openstack_repo.get_by_owner(lecturer_id)
+
+                if openstack_projects:
+                    heat_service = HeatStackService(openstack_projects[0])
+                    heat_service.delete_stack(deployment.openstack_stack_id)
+                    log_service.log(
+                        deployment_id=deployment_id,
+                        event_type=DeploymentLogEventType.DEPLOYMENT_DELETED,
+                        message=f"Heat stack deleted: {deployment.openstack_stack_id}",
+                        level=DeploymentLogLevel.INFO,
+                        details={"stack_id": deployment.openstack_stack_id}
+                    )
+                else:
+                    logger.warning(f"No OpenStack project found for lecturer {lecturer_id}; skipping stack deletion")
+            except Exception as e:
+                logger.error(f"Failed to delete Heat stack {deployment.openstack_stack_id}: {e}", exc_info=True)
+                log_service.log(
+                    deployment_id=deployment_id,
+                    event_type=DeploymentLogEventType.FAILED,
+                    message=f"Failed to delete Heat stack: {str(e)}",
+                    level=DeploymentLogLevel.ERROR,
+                    details={"error": str(e)}
+                )
+
+        # Finally delete DB record
+        try:
+            deleted = repo.delete(deployment_id)
+            if deleted:
+                log_service.log(
+                    deployment_id=deployment_id,
+                    event_type=DeploymentLogEventType.DEPLOYMENT_DELETED,
+                    message="Deployment record deleted from database",
+                    level=DeploymentLogLevel.INFO,
+                )
+            else:
+                logger.warning(f"Deployment record not found when attempting delete: {deployment_id}")
+        except Exception as e:
+            logger.error(f"Failed to delete deployment record {deployment_id}: {e}", exc_info=True)
+            log_service.log(
+                deployment_id=deployment_id,
+                event_type=DeploymentLogEventType.FAILED,
+                message=f"Failed to delete deployment record: {str(e)}",
+                level=DeploymentLogLevel.ERROR,
+                details={"error": str(e)}
+            )
+
+        return {"status": "deleted", "deployment_id": deployment_id, "task_id": task_id}
+
+    except Exception as e:
+        logger.exception(f"Error during delete task for deployment {deployment_id}: {e}")
+        return {"status": "failed", "deployment_id": deployment_id, "error": str(e)}
+    finally:
+        db.close()
