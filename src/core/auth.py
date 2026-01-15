@@ -72,7 +72,8 @@ def verify_jwt_token(token: str) -> dict[str, Any]:
                 break
         
         if public_key is None:
-            raise ForbiddenException(
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Unable to find matching public key"
             )
         

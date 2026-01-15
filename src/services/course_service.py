@@ -92,10 +92,10 @@ class CourseService:
 
     def update_course(
         self,
-        course_id: str | UUID,
+        course_id: UUID,
         course_data: CourseUpdate,
         current_user_id: str,
-    ) -> Course:
+    ) -> Course | None:
         """Update an existing course.
         
         Only the course lecturer can update the course.
@@ -124,12 +124,12 @@ class CourseService:
         if not update_data:
             return course
         
-        updated_course = self.course_repo.update(str(course_id), **update_data)
+        updated_course = self.course_repo.update(course_id, **update_data)
         return updated_course
 
     def delete_course(
         self,
-        course_id: str | UUID,
+        course_id: UUID,
         current_user_id: str,
     ) -> bool:
         """Delete a course.
@@ -153,7 +153,7 @@ class CourseService:
         if course.lecturer_id != current_user_id:
             raise ForbiddenException("Only the course lecturer can delete this course")
         
-        return self.course_repo.delete(str(course_id))
+        return self.course_repo.delete(course_id)
 
     def get_lecturer_courses(self, lecturer_id: str | UUID) -> list[Course]:
         """Get all courses for a specific lecturer.

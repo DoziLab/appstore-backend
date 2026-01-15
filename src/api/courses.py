@@ -166,7 +166,7 @@ async def update_course(
     service = CourseService(db)
     
     course = service.update_course(
-        course_id=str(course_id),
+        course_id=course_id,
         course_data=course_data,
         current_user_id=current_user["user_id"],
     )
@@ -195,7 +195,7 @@ async def delete_course(
     service = CourseService(db)
     
     service.delete_course(
-        course_id=str(course_id),
+        course_id=course_id,
         current_user_id=current_user["user_id"],
     )
     
