@@ -227,3 +227,8 @@ personas_userstories.txt
 
 # issues
 all_issues.md
+
+# Docker volumes and monitoring data
+loki-data/
+grafana-data/
+promtail-positions.yaml
