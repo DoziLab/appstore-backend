@@ -78,7 +78,7 @@ async def create_project(
     # Generate new project UUID
     project_id = str(uuid4())
     
-    project = service.create_or_update_credentials(
+    project = service.create_credentials(
         project_id=project_id,
         credentials=credentials,
         owner_user_id=user_id,
@@ -115,7 +115,7 @@ async def update_project_credentials(
     """
     service = OpenstackProjectService(db)
     
-    project = service.create_or_update_credentials(
+    project = service.update_credentials(
         project_id=project_id,
         credentials=credentials,
         owner_user_id=user_id,
