@@ -1,6 +1,7 @@
-"""OpenStack Resource service for retrieving available resources."""
+"""Service for retrieving OpenStack resources."""
 import logging
 from typing import Optional, Dict, Any
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 import openstack
 from openstack.exceptions import HttpException, SDKException
@@ -8,7 +9,7 @@ from openstack.exceptions import HttpException, SDKException
 from src.models.openstack_project import OpenstackProject
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
 from src.services.openstack_cache_service import OpenstackCacheService
-from src.core.exceptions import NotFoundException, BadRequestException
+from src.core.exceptions import NotFoundException, BadRequestException, ForbiddenException
 
 
 logger = logging.getLogger(__name__)
@@ -62,494 +63,210 @@ class OpenstackResourceService:
         except Exception as e:
             logger.error(
                 f"Failed to establish OpenStack connection: {e}",
-                extra={
-                    "project_id": openstack_project.openstack_project_id,
-                    "auth_url": openstack_project.auth_url,
-                }
+                extra={"project_id": openstack_project.openstack_project_id}
             )
             raise BadRequestException(f"Failed to connect to OpenStack: {str(e)}")
     
     def _get_project_for_user(
-        self,
-        user_id: str,
-        project_id: Optional[str] = None
+        self, 
+        user_id: str, 
+        project_id: Optional[str] = None,
+        allow_admin_access: bool = False
     ) -> OpenstackProject:
         """Get OpenStack project for user.
         
         Args:
             user_id: User ID
-            project_id: Optional specific project ID, otherwise uses first project
+            project_id: Optional specific project ID
+            allow_admin_access: If True, allows access to projects owned by other users
             
         Returns:
             OpenstackProject instance
             
         Raises:
-            NotFoundException: If no project found for user
+            NotFoundException: If no project found
+            ForbiddenException: If access is denied (project exists but user doesn't own it)
         """
         if project_id:
+            # Get specific project
             project = self.repository.get_by_id(project_id)
             if not project:
                 raise NotFoundException(f"OpenStack project {project_id} not found")
-            if project.owner_user_id != user_id:
-                raise NotFoundException("OpenStack project not found for this user")
+            
+            # Check ownership unless admin access is allowed
+            # Use ForbiddenException (403) for access control errors, not BadRequestException (400)
+            # This properly distinguishes permission errors from resource-not-found errors
+            if not allow_admin_access and project.owner_user_id != user_id:
+                raise ForbiddenException(
+                    f"You do not have permission to access project {project_id}"
+                )
+            
             return project
-        
-        # Get first project for user
-        projects = self.repository.get_by_owner(user_id)
-        if not projects:
-            raise NotFoundException("No OpenStack project found for this user")
-        return projects[0]
+        else:
+            # Get user's first project
+            projects = self.repository.get_by_owner(user_id)
+            if not projects:
+                raise NotFoundException(f"No OpenStack projects found for user {user_id}")
+            
+            return projects[0]
     
-    def get_servers(
-        self,
-        user_id: str,
-        project_id: Optional[str] = None,
-        all_projects: bool = False
-    ) -> list[dict]:
-        """Get available compute servers/VMs for a user.
+    def _get_compute_quotas(self, conn, project_id: str) -> Optional[dict]:
+        """Get compute quotas from OpenStack.
         
         Args:
-            user_id: User ID
-            project_id: Optional specific project ID
-            all_projects: If True, retrieve servers from all user's projects
-            
+            conn: OpenStack connection
+            project_id: OpenStack project ID
+        
         Returns:
-            List of server information dicts
-            
-        Raises:
-            NotFoundException: If no project found
-            BadRequestException: If OpenStack API call fails
+            Dictionary with compute quota information, or None if retrieval failed
         """
+        quotas = {}
+        
         try:
-            if all_projects:
-                projects = self.repository.get_by_owner(user_id)
-                if not projects:
-                    raise NotFoundException("No OpenStack projects found for this user")
-            else:
-                projects = [self._get_project_for_user(user_id, project_id)]
+            # Get quota set with usage=True to get used values
+            quota_set = conn.compute.get_quota_set(project_id, usage=True)
+            quota_dict = quota_set.to_dict() if hasattr(quota_set, 'to_dict') else {}
             
-            all_servers = []
-            for project in projects:
-                conn = self._get_connection(project)
-                servers = conn.compute.servers(details=True)
-                
-                for server in servers:
-                    all_servers.append({
-                        'id': server.id,
-                        'name': server.name,
-                        'status': server.status,
-                        'flavor': {
-                            'id': server.flavor.get('id') if server.flavor else None,
-                            'name': server.flavor.get('name') if server.flavor else None,
-                        } if server.flavor else None,
-                        'image': {
-                            'id': server.image.get('id') if server.image else None,
-                            'name': server.image.get('name') if server.image else None,
-                        } if server.image else None,
-                        'networks': server.addresses if hasattr(server, 'addresses') else {},
-                        'created': str(server.created_at) if server.created_at else None,
-                        'updated': str(server.updated_at) if server.updated_at else None,
-                        'project_id': project.openstack_project_id,
-                    })
+            # Extract usage dict
+            usage = quota_dict.get('usage', {})
             
-            logger.info(
-                f"Retrieved {len(all_servers)} servers for user {user_id}",
-                extra={"user_id": user_id, "count": len(all_servers)}
-            )
-            return all_servers
+            # Fields to extract
+            compute_fields = [
+                'instances', 'cores', 'ram', 'key_pairs', 'metadata_items',
+                'server_groups', 'server_group_members', 'injected_files',
+                'injected_file_content_bytes', 'injected_file_path_bytes'
+            ]
             
-        except HttpException as e:
-            logger.error(f"OpenStack API error retrieving servers: {e}")
-            raise BadRequestException(f"Failed to retrieve servers: {str(e)}")
-        except SDKException as e:
-            logger.error(f"OpenStack SDK error retrieving servers: {e}")
-            raise BadRequestException(f"Failed to retrieve servers: {str(e)}")
+            for field in compute_fields:
+                # Get limit (direct attribute in quota_dict)
+                limit = quota_dict.get(field)
+                if limit is not None:
+                    # Get used value from usage dict
+                    used = usage.get(field, 0)
+                    available = limit - used if limit >= 0 else -1
+                    
+                    quotas[field] = {
+                        'limit': limit,
+                        'used': used,
+                        'available': available
+                    }
+        except Exception as e:
+            logger.warning(f"Could not retrieve compute quotas: {e}", exc_info=True)
+        
+        return quotas if quotas else None
     
-    def get_networks(
-        self,
-        user_id: str,
-        project_id: Optional[str] = None
-    ) -> list[dict]:
-        """Get available networks for a user.
+    def _get_network_quotas(self, conn, project_id: str) -> Optional[dict]:
+        """Get network quotas from OpenStack.
         
         Args:
-            user_id: User ID
-            project_id: Optional specific project ID
-            
+            conn: OpenStack connection
+            project_id: OpenStack project ID
+        
         Returns:
-            List of network information dicts
-            
-        Raises:
-            NotFoundException: If no project found
-            BadRequestException: If OpenStack API call fails
+            Dictionary with network quota information, or None if retrieval failed
         """
+        quotas = {}
+        
         try:
-            project = self._get_project_for_user(user_id, project_id)
-            openstack_project_id = project.openstack_project_id
+            # Get network quota with details=True to get used values
+            quota_set = conn.network.get_quota(project_id, details=True)
+            quota_dict = quota_set.to_dict() if hasattr(quota_set, 'to_dict') else {}
             
-            # Try to get from cache first
-            if use_cache and not force_refresh:
-                cached_quotas = self.cache_service.get_quotas(openstack_project_id)
-                if cached_quotas:
-                    logger.debug(f"Using cached quotas for project {openstack_project_id}")
-                    return cached_quotas
+            # Fields to extract - each is a dict with 'limit', 'used', 'reserved'
+            network_fields = [
+                'floating_ips', 'networks', 'ports', 'rbac_policies', 'routers',
+                'security_groups', 'security_group_rules', 'subnets', 'subnet_pools'
+            ]
             
-            # Fetch fresh data from OpenStack
-            conn = self._get_connection(project)
-            networks = conn.network.networks()
-            
-            result = []
-            for network in networks:
-                result.append({
-                    'id': network.id,
-                    'name': network.name,
-                    'status': network.status,
-                    'admin_state_up': network.admin_state_up,
-                    'shared': network.shared,
-                    'subnets': [subnet.id for subnet in network.subnets] if hasattr(network, 'subnets') else [],
-                    'created': str(network.created_at) if network.created_at else None,
-                    'updated': str(network.updated_at) if network.updated_at else None,
-                })
-            
-            logger.info(
-                f"Retrieved {len(result)} networks for user {user_id}",
-                extra={"user_id": user_id, "count": len(result)}
-            )
-            return result
-            
-        except HttpException as e:
-            logger.error(f"OpenStack API error retrieving networks: {e}")
-            raise BadRequestException(f"Failed to retrieve networks: {str(e)}")
-        except SDKException as e:
-            logger.error(f"OpenStack SDK error retrieving networks: {e}")
-            raise BadRequestException(f"Failed to retrieve networks: {str(e)}")
+            for field in network_fields:
+                quota_data = quota_dict.get(field)
+                if quota_data and isinstance(quota_data, dict):
+                    limit = quota_data.get('limit', -1)
+                    used = quota_data.get('used', 0)
+                    available = limit - used if limit >= 0 else -1
+                    
+                    # Map to our field names (remove underscores for some fields)
+                    our_field = field
+                    if field == 'floating_ips':
+                        our_field = 'floatingip'
+                    elif field == 'rbac_policies':
+                        our_field = 'rbac_policy'
+                    elif field == 'subnet_pools':
+                        our_field = 'subnetpool'
+                    
+                    quotas[our_field] = {
+                        'limit': limit,
+                        'used': used,
+                        'available': available
+                    }
+        except Exception as e:
+            logger.warning(f"Could not retrieve network quotas: {e}", exc_info=True)
+        
+        return quotas if quotas else None
     
-    def get_volumes(
-        self,
-        user_id: str,
-        project_id: Optional[str] = None
-    ) -> list[dict]:
-        """Get available volumes for a user.
+    def _get_volume_quotas(self, conn, project_id: str) -> Optional[dict]:
+        """Get volume quotas from OpenStack.
         
         Args:
-            user_id: User ID
-            project_id: Optional specific project ID
-            
-        Returns:
-            List of volume information dicts
-            
-        Raises:
-            NotFoundException: If no project found
-            BadRequestException: If OpenStack API call fails
-        """
-        try:
-            project = self._get_project_for_user(user_id, project_id)
-            openstack_project_id = project.openstack_project_id
-            
-            # Try to get from cache first
-            if use_cache and not force_refresh:
-                cached_quotas = self.cache_service.get_quotas(openstack_project_id)
-                if cached_quotas:
-                    logger.debug(f"Using cached quotas for project {openstack_project_id}")
-                    return cached_quotas
-            
-            # Fetch fresh data from OpenStack
-            conn = self._get_connection(project)
-            volumes = conn.block_storage.volumes()
-            
-            result = []
-            for volume in volumes:
-                result.append({
-                    'id': volume.id,
-                    'name': volume.name,
-                    'status': volume.status,
-                    'size': volume.size,
-                    'volume_type': volume.volume_type,
-                    'attachments': volume.attachments if hasattr(volume, 'attachments') else [],
-                    'created': str(volume.created_at) if volume.created_at else None,
-                    'updated': str(volume.updated_at) if volume.updated_at else None,
-                })
-            
-            logger.info(
-                f"Retrieved {len(result)} volumes for user {user_id}",
-                extra={"user_id": user_id, "count": len(result)}
-            )
-            return result
-            
-        except HttpException as e:
-            logger.error(f"OpenStack API error retrieving volumes: {e}")
-            raise BadRequestException(f"Failed to retrieve volumes: {str(e)}")
-        except SDKException as e:
-            logger.error(f"OpenStack SDK error retrieving volumes: {e}")
-            raise BadRequestException(f"Failed to retrieve volumes: {str(e)}")
-    
-    def get_images(
-        self,
-        user_id: str,
-        project_id: Optional[str] = None,
-        include_public: bool = True
-    ) -> list[dict]:
-        """Get available images for a user.
+            conn: OpenStack connection
+            project_id: OpenStack project ID
         
-        Args:
-            user_id: User ID
-            project_id: Optional specific project ID
-            include_public: If True, include public images
-            
         Returns:
-            List of image information dicts
-            
-        Raises:
-            NotFoundException: If no project found
-            BadRequestException: If OpenStack API call fails
+            Dictionary with volume quota information, or None if retrieval failed
         """
-        try:
-            project = self._get_project_for_user(user_id, project_id)
-            openstack_project_id = project.openstack_project_id
-            
-            # Try to get from cache first
-            if use_cache and not force_refresh:
-                cached_quotas = self.cache_service.get_quotas(openstack_project_id)
-                if cached_quotas:
-                    logger.debug(f"Using cached quotas for project {openstack_project_id}")
-                    return cached_quotas
-            
-            # Fetch fresh data from OpenStack
-            conn = self._get_connection(project)
-            
-            if include_public:
-                images = conn.image.images()
-            else:
-                images = conn.image.images(owner=project.openstack_project_id)
-            
-            result = []
-            for image in images:
-                result.append({
-                    'id': image.id,
-                    'name': image.name,
-                    'status': image.status,
-                    'visibility': image.visibility if hasattr(image, 'visibility') else None,
-                    'size': image.size if hasattr(image, 'size') else None,
-                    'min_disk': image.min_disk if hasattr(image, 'min_disk') else None,
-                    'min_ram': image.min_ram if hasattr(image, 'min_ram') else None,
-                    'created': str(image.created_at) if image.created_at else None,
-                    'updated': str(image.updated_at) if image.updated_at else None,
-                })
-            
-            logger.info(
-                f"Retrieved {len(result)} images for user {user_id}",
-                extra={"user_id": user_id, "count": len(result)}
-            )
-            return result
-            
-        except HttpException as e:
-            logger.error(f"OpenStack API error retrieving images: {e}")
-            raise BadRequestException(f"Failed to retrieve images: {str(e)}")
-        except SDKException as e:
-            logger.error(f"OpenStack SDK error retrieving images: {e}")
-            raise BadRequestException(f"Failed to retrieve images: {str(e)}")
-    
-    def get_flavors(
-        self,
-        user_id: str,
-        project_id: Optional[str] = None
-    ) -> list[dict]:
-        """Get available flavors (VM sizes) for a user.
+        quotas = {}
         
-        Args:
-            user_id: User ID
-            project_id: Optional specific project ID
-            
-        Returns:
-            List of flavor information dicts
-            
-        Raises:
-            NotFoundException: If no project found
-            BadRequestException: If OpenStack API call fails
-        """
         try:
-            project = self._get_project_for_user(user_id, project_id)
-            openstack_project_id = project.openstack_project_id
+            # Get volume quota set with usage=True to get used values
+            quota_set = conn.volume.get_quota_set(project_id, usage=True)
+            quota_dict = quota_set.to_dict() if hasattr(quota_set, 'to_dict') else {}
             
-            # Try to get from cache first
-            if use_cache and not force_refresh:
-                cached_quotas = self.cache_service.get_quotas(openstack_project_id)
-                if cached_quotas:
-                    logger.debug(f"Using cached quotas for project {openstack_project_id}")
-                    return cached_quotas
+            # Extract usage dict
+            usage = quota_dict.get('usage', {})
             
-            # Fetch fresh data from OpenStack
-            conn = self._get_connection(project)
-            flavors = conn.compute.flavors(details=True)
+            # Fields to extract
+            volume_fields = [
+                'volumes', 'snapshots', 'gigabytes', 'backups', 
+                'backup_gigabytes', 'per_volume_gigabytes', 'groups'
+            ]
             
-            result = []
-            for flavor in flavors:
-                result.append({
-                    'id': flavor.id,
-                    'name': flavor.name,
-                    'vcpus': flavor.vcpus,
-                    'ram': flavor.ram,
-                    'disk': flavor.disk,
-                    'ephemeral': flavor.ephemeral if hasattr(flavor, 'ephemeral') else 0,
-                    'swap': flavor.swap if hasattr(flavor, 'swap') else 0,
-                    'is_public': flavor.is_public if hasattr(flavor, 'is_public') else True,
-                })
-            
-            logger.info(
-                f"Retrieved {len(result)} flavors for user {user_id}",
-                extra={"user_id": user_id, "count": len(result)}
-            )
-            return result
-            
-        except HttpException as e:
-            logger.error(f"OpenStack API error retrieving flavors: {e}")
-            raise BadRequestException(f"Failed to retrieve flavors: {str(e)}")
-        except SDKException as e:
-            logger.error(f"OpenStack SDK error retrieving flavors: {e}")
-            raise BadRequestException(f"Failed to retrieve flavors: {str(e)}")
-    
-    def get_security_groups(
-        self,
-        user_id: str,
-        project_id: Optional[str] = None
-    ) -> list[dict]:
-        """Get available security groups for a user.
+            for field in volume_fields:
+                # Get limit (direct attribute in quota_dict)
+                limit = quota_dict.get(field)
+                if limit is not None:
+                    # Get used value from usage dict
+                    used = usage.get(field, 0)
+                    available = limit - used if limit >= 0 else -1
+                    
+                    quotas[field] = {
+                        'limit': limit,
+                        'used': used,
+                        'available': available
+                    }
+        except Exception as e:
+            logger.warning(f"Could not retrieve volume quotas: {e}", exc_info=True)
         
-        Args:
-            user_id: User ID
-            project_id: Optional specific project ID
-            
-        Returns:
-            List of security group information dicts
-            
-        Raises:
-            NotFoundException: If no project found
-            BadRequestException: If OpenStack API call fails
-        """
-        try:
-            project = self._get_project_for_user(user_id, project_id)
-            openstack_project_id = project.openstack_project_id
-            
-            # Try to get from cache first
-            if use_cache and not force_refresh:
-                cached_quotas = self.cache_service.get_quotas(openstack_project_id)
-                if cached_quotas:
-                    logger.debug(f"Using cached quotas for project {openstack_project_id}")
-                    return cached_quotas
-            
-            # Fetch fresh data from OpenStack
-            conn = self._get_connection(project)
-            security_groups = conn.network.security_groups()
-            
-            result = []
-            for sg in security_groups:
-                result.append({
-                    'id': sg.id,
-                    'name': sg.name,
-                    'description': sg.description if hasattr(sg, 'description') else None,
-                    'rules': [
-                        {
-                            'id': rule.id,
-                            'direction': rule.direction,
-                            'protocol': rule.protocol,
-                            'port_range_min': rule.port_range_min,
-                            'port_range_max': rule.port_range_max,
-                            'remote_ip_prefix': rule.remote_ip_prefix,
-                        }
-                        for rule in sg.security_group_rules
-                    ] if hasattr(sg, 'security_group_rules') else [],
-                    'created': str(sg.created_at) if sg.created_at else None,
-                    'updated': str(sg.updated_at) if sg.updated_at else None,
-                })
-            
-            logger.info(
-                f"Retrieved {len(result)} security groups for user {user_id}",
-                extra={"user_id": user_id, "count": len(result)}
-            )
-            return result
-            
-        except HttpException as e:
-            logger.error(f"OpenStack API error retrieving security groups: {e}")
-            raise BadRequestException(f"Failed to retrieve security groups: {str(e)}")
-        except SDKException as e:
-            logger.error(f"OpenStack SDK error retrieving security groups: {e}")
-            raise BadRequestException(f"Failed to retrieve security groups: {str(e)}")
-    
-    def get_keypairs(
-        self,
-        user_id: str,
-        project_id: Optional[str] = None
-    ) -> list[dict]:
-        """Get available key pairs for a user.
-        
-        Args:
-            user_id: User ID
-            project_id: Optional specific project ID
-            
-        Returns:
-            List of key pair information dicts (without private keys)
-            
-        Raises:
-            NotFoundException: If no project found
-            BadRequestException: If OpenStack API call fails
-        """
-        try:
-            project = self._get_project_for_user(user_id, project_id)
-            openstack_project_id = project.openstack_project_id
-            
-            # Try to get from cache first
-            if use_cache and not force_refresh:
-                cached_quotas = self.cache_service.get_quotas(openstack_project_id)
-                if cached_quotas:
-                    logger.debug(f"Using cached quotas for project {openstack_project_id}")
-                    return cached_quotas
-            
-            # Fetch fresh data from OpenStack
-            conn = self._get_connection(project)
-            keypairs = conn.compute.keypairs()
-            
-            result = []
-            for kp in keypairs:
-                result.append({
-                    'id': kp.id if hasattr(kp, 'id') else None,
-                    'name': kp.name,
-                    'fingerprint': kp.fingerprint if hasattr(kp, 'fingerprint') else None,
-                    'public_key': kp.public_key if hasattr(kp, 'public_key') else None,
-                    'type': kp.type if hasattr(kp, 'type') else None,
-                    'created': str(kp.created_at) if hasattr(kp, 'created_at') and kp.created_at else None,
-                })
-            
-            logger.info(
-                f"Retrieved {len(result)} key pairs for user {user_id}",
-                extra={"user_id": user_id, "count": len(result)}
-            )
-            return result
-            
-        except HttpException as e:
-            logger.error(f"OpenStack API error retrieving key pairs: {e}")
-            raise BadRequestException(f"Failed to retrieve key pairs: {str(e)}")
-        except SDKException as e:
-            logger.error(f"OpenStack SDK error retrieving key pairs: {e}")
-            raise BadRequestException(f"Failed to retrieve key pairs: {str(e)}")
-    
+        return quotas if quotas else None
+
     def get_quotas(
         self,
         user_id: str,
         project_id: Optional[str] = None,
         use_cache: bool = True,
-        force_refresh: bool = False
+        force_refresh: bool = False,
+        allow_admin_access: bool = False
     ) -> dict:
         """Get quotas and usage for an OpenStack project.
         
-        Retrieves quotas and current usage for compute, network, and block storage.
-        Uses cache by default to reduce OpenStack API calls.
+        Uses the OpenStack limits API to get accurate quota and usage information.
         
         Args:
-            user_id: User ID
-            project_id: Optional specific project ID
-            use_cache: If True, use cached data if available (default: True)
-            force_refresh: If True, bypass cache and fetch fresh data (default: False)
-            
+            user_id: User ID to get quotas for
+            project_id: Optional project ID (defaults to user's first project)
+            use_cache: Whether to use cached data
+            force_refresh: Force refresh from OpenStack (bypass cache)
+            allow_admin_access: Allow admin to access any user's project
+        
         Returns:
             Dict containing quotas and usage:
             {
@@ -559,106 +276,48 @@ class OpenstackResourceService:
                     'ram': {'limit': int, 'used': int, 'available': int},
                     ...
                 },
+                'volume': {...},
                 'network': {...},
-                'block_storage': {...}
+                'project_id': str,
+                'project_name': str,
+                'owner_user_id': str,
+                'fetched_at': str
             }
-            
-        Raises:
-            NotFoundException: If no project found
-            BadRequestException: If OpenStack API call fails
         """
+        project = self._get_project_for_user(user_id, project_id, allow_admin_access)
+        openstack_project_id = project.openstack_project_id
+        
+        # Check cache first if enabled
+        if use_cache and not force_refresh:
+            cached_quotas = self.cache_service.get_quotas(openstack_project_id)
+            if cached_quotas:
+                logger.info(f"Using cached quotas for user {user_id}")
+                cached_quotas['owner_user_id'] = project.owner_user_id
+                return cached_quotas
+        
+        # Get fresh data from OpenStack
         try:
-            project = self._get_project_for_user(user_id, project_id)
-            openstack_project_id = project.openstack_project_id
-            
-            # Try to get from cache first
-            if use_cache and not force_refresh:
-                cached_quotas = self.cache_service.get_quotas(openstack_project_id)
-                if cached_quotas:
-                    logger.debug(f"Using cached quotas for project {openstack_project_id}")
-                    return cached_quotas
-            
-            # Fetch fresh data from OpenStack
             conn = self._get_connection(project)
             
             quotas = {
-                'project_id': project.openstack_project_id,
+                'project_id': openstack_project_id,
                 'project_name': project.openstack_project_name,
+                'owner_user_id': project.owner_user_id,
             }
             
             # Get compute quotas
-            try:
-                compute_quota = conn.compute.get_quota_set(project.openstack_project_id)
-                quotas['compute'] = {}
-                
-                # Common compute quota fields
-                compute_fields = [
-                    'instances', 'cores', 'ram', 'key_pairs', 'metadata_items',
-                    'server_groups', 'server_group_members', 'injected_files',
-                    'injected_file_content_bytes', 'injected_file_path_bytes'
-                ]
-                
-                for field in compute_fields:
-                    limit = getattr(compute_quota, field, None)
-                    if limit is not None:
-                        used = getattr(compute_quota, f'{field}_used', 0) if hasattr(compute_quota, f'{field}_used') else 0
-                        available = limit - used if limit >= 0 else -1  # -1 means unlimited
-                        quotas['compute'][field] = {
-                            'limit': limit,
-                            'used': used,
-                            'available': available
-                        }
-            except Exception as e:
-                logger.warning(f"Could not retrieve compute quotas: {e}")
-                quotas['compute'] = {}
+            quotas['compute'] = self._get_compute_quotas(conn, openstack_project_id)
             
             # Get network quotas
-            try:
-                network_quota = conn.network.get_quota(project.openstack_project_id)
-                quotas['network'] = {}
-                
-                network_fields = [
-                    'floatingip', 'network', 'port', 'rbac_policy', 'router',
-                    'security_group', 'security_group_rule', 'subnet', 'subnetpool'
-                ]
-                
-                for field in network_fields:
-                    limit = getattr(network_quota, field, None)
-                    if limit is not None:
-                        used = getattr(network_quota, f'{field}_used', 0) if hasattr(network_quota, f'{field}_used') else 0
-                        available = limit - used if limit >= 0 else -1
-                        quotas['network'][field] = {
-                            'limit': limit,
-                            'used': used,
-                            'available': available
-                        }
-            except Exception as e:
-                logger.warning(f"Could not retrieve network quotas: {e}")
-                quotas['network'] = {}
+            quotas['network'] = self._get_network_quotas(conn, openstack_project_id)
             
-            # Get block storage quotas
-            try:
-                volume_quota = conn.block_storage.get_quota_set(project.openstack_project_id)
-                quotas['block_storage'] = {}
-                
-                volume_fields = [
-                    'volumes', 'snapshots', 'gigabytes', 'backups', 'backup_gigabytes',
-                    'per_volume_gigabytes', 'groups', 'group_snapshots'
-                ]
-                
-                for field in volume_fields:
-                    limit = getattr(volume_quota, field, None)
-                    if limit is not None:
-                        used = getattr(volume_quota, f'{field}_used', 0) if hasattr(volume_quota, f'{field}_used') else 0
-                        available = limit - used if limit >= 0 else -1
-                        quotas['block_storage'][field] = {
-                            'limit': limit,
-                            'used': used,
-                            'available': available
-                        }
-            except Exception as e:
-                logger.warning(f"Could not retrieve block storage quotas: {e}")
-                quotas['block_storage'] = {}
+            # Get volume quotas
+            quotas['volume'] = self._get_volume_quotas(conn, openstack_project_id)
+            
+            logger.info(f"Successfully retrieved all quotas for project {openstack_project_id}")
+            
+            # Add timestamp
+            quotas['fetched_at'] = datetime.now(timezone.utc).isoformat()
             
             logger.info(
                 f"Retrieved quotas for user {user_id}",
@@ -671,6 +330,9 @@ class OpenstackResourceService:
             
             return quotas
             
+        except BadRequestException:
+            # Re-raise BadRequestException from _get_connection
+            raise
         except HttpException as e:
             logger.error(f"OpenStack API error retrieving quotas: {e}")
             raise BadRequestException(f"Failed to retrieve quotas: {str(e)}")
@@ -684,394 +346,77 @@ class OpenstackResourceService:
         required_resources: Dict[str, Any],
         project_id: Optional[str] = None
     ) -> dict:
-        """Check if required resources are available in the project.
+        """Check if required resources are available within quota limits.
         
         Args:
             user_id: User ID
-            required_resources: Dict specifying required resources, e.g.:
+            required_resources: Dict specifying required resources:
                 {
-                    'instances': int,  # Number of VMs
-                    'cores': int,      # Number of vCPUs
-                    'ram': int,        # RAM in MB
-                    'volumes': int,    # Number of volumes
-                    'gigabytes': int,  # Storage in GB
-                    'networks': int,   # Number of networks
-                    'ports': int,      # Number of ports
-                    'floatingips': int, # Number of floating IPs
-                    'security_groups': int, # Number of security groups
+                    'instances': int,
+                    'cores': int,
+                    'ram': int (MB),
+                    'volumes': int,
+                    'gigabytes': int (GB)
                 }
             project_id: Optional specific project ID
             
         Returns:
-            Dict with availability check results:
+            Dict with availability status and reasons:
             {
                 'available': bool,
-                'checks': {
-                    'instances': {'required': int, 'available': int, 'sufficient': bool},
-                    ...
-                },
-                'insufficient_resources': [str],  # List of resource types that are insufficient
+                'reasons': list[str],  # Empty if available
+                'quotas': dict  # Current quota info
             }
-            
-        Raises:
-            NotFoundException: If no project found
-            BadRequestException: If OpenStack API call fails
         """
-        try:
-            # Get current quotas
-            quotas = self.get_quotas(user_id, project_id)
+        quotas = self.get_quotas(user_id, project_id)
+        
+        available = True
+        reasons = []
+        
+        # Check compute resources
+        if 'compute' in quotas and quotas['compute'] is not None:
+            compute = quotas['compute']
             
-            checks = {}
-            insufficient_resources = []
-            all_available = True
-            
-            # Check compute resources
             if 'instances' in required_resources:
-                required = required_resources['instances']
-                available = quotas.get('compute', {}).get('instances', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['instances'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_available = False
-                    insufficient_resources.append('instances')
+                req = required_resources['instances']
+                avail = compute.get('instances', {}).get('available', 0)
+                if req > avail:
+                    available = False
+                    reasons.append(f"Insufficient instances quota: need {req}, available {avail}")
             
             if 'cores' in required_resources:
-                required = required_resources['cores']
-                available = quotas.get('compute', {}).get('cores', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['cores'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_available = False
-                    insufficient_resources.append('cores')
+                req = required_resources['cores']
+                avail = compute.get('cores', {}).get('available', 0)
+                if req > avail:
+                    available = False
+                    reasons.append(f"Insufficient CPU cores: need {req}, available {avail}")
             
             if 'ram' in required_resources:
-                required = required_resources['ram']
-                available = quotas.get('compute', {}).get('ram', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['ram'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_available = False
-                    insufficient_resources.append('ram')
-            
-            # Check block storage resources
-            if 'volumes' in required_resources:
-                required = required_resources['volumes']
-                available = quotas.get('block_storage', {}).get('volumes', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['volumes'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_available = False
-                    insufficient_resources.append('volumes')
-            
-            if 'gigabytes' in required_resources:
-                required = required_resources['gigabytes']
-                available = quotas.get('block_storage', {}).get('gigabytes', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['gigabytes'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_available = False
-                    insufficient_resources.append('gigabytes')
-            
-            # Check network resources
-            if 'networks' in required_resources:
-                required = required_resources['networks']
-                available = quotas.get('network', {}).get('network', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['networks'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_available = False
-                    insufficient_resources.append('networks')
-            
-            if 'ports' in required_resources:
-                required = required_resources['ports']
-                available = quotas.get('network', {}).get('port', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['ports'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_available = False
-                    insufficient_resources.append('ports')
-            
-            if 'floatingips' in required_resources:
-                required = required_resources['floatingips']
-                available = quotas.get('network', {}).get('floatingip', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['floatingips'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_available = False
-                    insufficient_resources.append('floatingips')
-            
-            if 'security_groups' in required_resources:
-                required = required_resources['security_groups']
-                available = quotas.get('network', {}).get('security_group', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['security_groups'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_available = False
-                    insufficient_resources.append('security_groups')
-            
-            result = {
-                'available': all_available,
-                'checks': checks,
-                'insufficient_resources': insufficient_resources,
-                'project_id': quotas.get('project_id'),
-            }
-            
-            logger.info(
-                f"Availability check for user {user_id}: {'available' if all_available else 'insufficient'}",
-                extra={
-                    "user_id": user_id,
-                    "available": all_available,
-                    "insufficient_resources": insufficient_resources
-                }
-            )
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error checking resource availability: {e}")
-            raise BadRequestException(f"Failed to check resource availability: {str(e)}")
- 
-    def validate_deployment_resources(
-        self,
-        user_id: str,
-        required_resources: Dict[str, Any],
-        project_id: Optional[str] = None
-    ) -> dict:
-        """Validate resources for deployment - final check before deployment starts.
+                req = required_resources['ram']
+                avail = compute.get('ram', {}).get('available', 0)
+                if req > avail:
+                    available = False
+                    reasons.append(f"Insufficient RAM: need {req}MB, available {avail}MB")
         
-        This method performs a fresh check (bypasses cache) to ensure resources
-        are still available at deployment time. Should be called immediately before
-        starting a deployment.
-        
-        Args:
-            user_id: User ID
-            required_resources: Dict specifying required resources, e.g.:
-                {
-                    'instances': int,  # Number of VMs
-                    'cores': int,      # Number of vCPUs
-                    'ram': int,        # RAM in MB
-                    'volumes': int,    # Number of volumes
-                    'gigabytes': int,  # Storage in GB
-                    'networks': int,   # Number of networks
-                    'ports': int,      # Number of ports
-                    'floatingips': int, # Number of floating IPs
-                    'security_groups': int, # Number of security groups
-                }
-            project_id: Optional specific project ID
-            
-        Returns:
-            Dict with validation results:
-            {
-                'valid': bool,  # True if deployment can proceed
-                'checks': {
-                    'instances': {'required': int, 'available': int, 'sufficient': bool},
-                    ...
-                },
-                'insufficient_resources': [str],  # List of resource types that are insufficient
-                'project_id': str,
-            }
-            
-        Raises:
-            NotFoundException: If no project found
-            BadRequestException: If OpenStack API call fails or resources insufficient
-        """
-        try:
-            # Force refresh to get latest quota data (bypass cache)
-            quotas = self.get_quotas(user_id, project_id, use_cache=True, force_refresh=True)
-            
-            checks = {}
-            insufficient_resources = []
-            all_valid = True
-            
-            # Check compute resources
-            if 'instances' in required_resources:
-                required = required_resources['instances']
-                available = quotas.get('compute', {}).get('instances', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['instances'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_valid = False
-                    insufficient_resources.append('instances')
-            
-            if 'cores' in required_resources:
-                required = required_resources['cores']
-                available = quotas.get('compute', {}).get('cores', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['cores'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_valid = False
-                    insufficient_resources.append('cores')
-            
-            if 'ram' in required_resources:
-                required = required_resources['ram']
-                available = quotas.get('compute', {}).get('ram', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['ram'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_valid = False
-                    insufficient_resources.append('ram')
-            
-            # Check block storage resources
+        # Check volume resources
+        if 'volume' in quotas and quotas['volume'] is not None:
+            volume = quotas['volume']
             if 'volumes' in required_resources:
-                required = required_resources['volumes']
-                available = quotas.get('block_storage', {}).get('volumes', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['volumes'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_valid = False
-                    insufficient_resources.append('volumes')
-            
+                req = required_resources['volumes']
+                avail = volume.get('volumes', {}).get('available', 0)
+                if req > avail:
+                    available = False
+                    reasons.append(f"Insufficient volume quota: need {req}, available {avail}")
             if 'gigabytes' in required_resources:
-                required = required_resources['gigabytes']
-                available = quotas.get('block_storage', {}).get('gigabytes', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['gigabytes'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_valid = False
-                    insufficient_resources.append('gigabytes')
-            
-            # Check network resources
-            if 'networks' in required_resources:
-                required = required_resources['networks']
-                available = quotas.get('network', {}).get('network', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['networks'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_valid = False
-                    insufficient_resources.append('networks')
-            
-            if 'ports' in required_resources:
-                required = required_resources['ports']
-                available = quotas.get('network', {}).get('port', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['ports'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_valid = False
-                    insufficient_resources.append('ports')
-            
-            if 'floatingips' in required_resources:
-                required = required_resources['floatingips']
-                available = quotas.get('network', {}).get('floatingip', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['floatingips'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_valid = False
-                    insufficient_resources.append('floatingips')
-            
-            if 'security_groups' in required_resources:
-                required = required_resources['security_groups']
-                available = quotas.get('network', {}).get('security_group', {}).get('available', -1)
-                sufficient = available == -1 or available >= required
-                checks['security_groups'] = {
-                    'required': required,
-                    'available': available,
-                    'sufficient': sufficient
-                }
-                if not sufficient:
-                    all_valid = False
-                    insufficient_resources.append('security_groups')
-            
-            result = {
-                'valid': all_valid,
-                'checks': checks,
-                'insufficient_resources': insufficient_resources,
-                'project_id': quotas.get('project_id'),
-            }
-            
-            if not all_valid:
-                error_msg = f"Insufficient resources for deployment: {', '.join(insufficient_resources)}"
-                logger.warning(
-                    f"Deployment validation failed for user {user_id}: {error_msg}",
-                    extra={
-                        "user_id": user_id,
-                        "insufficient_resources": insufficient_resources,
-                        "required_resources": required_resources
-                    }
-                )
-                raise BadRequestException(error_msg)
-            
-            logger.info(
-                f"Deployment validation passed for user {user_id}",
-                extra={
-                    "user_id": user_id,
-                    "project_id": quotas.get('project_id'),
-                    "required_resources": required_resources
-                }
-            )
-            
-            return result
-            
-        except BadRequestException:
-            # Re-raise BadRequestException (e.g., insufficient resources)
-            raise
-        except Exception as e:
-            logger.error(f"Error validating deployment resources: {e}")
-            raise BadRequestException(f"Failed to validate deployment resources: {str(e)}")
+                req = required_resources['gigabytes']
+                avail = volume.get('gigabytes', {}).get('available', 0)
+                if req > avail:
+                    available = False
+                    reasons.append(f"Insufficient storage: need {req}GB, available {avail}GB")
+        
+
+        return {
+            'available': available,
+            'reasons': reasons,
+            'quotas': quotas
+        }

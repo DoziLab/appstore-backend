@@ -135,8 +135,8 @@ class OpenstackCacheService:
             Dictionary with quota data or None if not cached:
             {
                 'compute': {...},
+                'volume': {...},
                 'network': {...},
-                'block_storage': {...},
                 'fetched_at': str (ISO timestamp)
             }
         """
@@ -209,4 +209,5 @@ class OpenstackCacheService:
         """
         usage_deleted = self.delete_usage(project_id)
         quotas_deleted = self.delete_quotas(project_id)
-        return usage_deleted or quotas_deleted  # Return True if at least one was deleted
+        # Return True only if both deletions succeeded (or both were already missing)
+        return usage_deleted and quotas_deleted

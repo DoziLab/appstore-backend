@@ -1,0 +1,73 @@
+meta {
+  name: Get Quotas
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{base_url}}/api/v1/quotas
+  body: none
+  auth: bearer
+  params:query {
+    lecturer_id: {{lecturer_id}}
+    project_id: {{project_id}}
+    force_refresh: {{force_refresh}}
+  }
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # Get OpenStack Project Quotas
+  
+  Retrieves quota limits, current usage, and available resources for an OpenStack project.
+  
+  **Required Role:** Admin or Lecturer
+  
+  **Access Control:**
+  - **LECTURER:** Can only view quotas for their own project
+  - **ADMIN:** Can view quotas for any project by specifying `project_id`, or any lecturer by specifying `lecturer_id`
+  
+  **Query Parameters:**
+  - `lecturer_id` (optional, admin only): Lecturer user ID. If specified, returns quotas for that lecturer's project. Takes precedence over `project_id`.
+  - `project_id` (optional): Project ID. If not specified, uses the user's own project. Admins can specify any project ID.
+  - `force_refresh` (optional, default: false): If true, bypasses cache and fetches fresh data from OpenStack
+  
+  **Returns:**
+  - Compute quotas (instances, cores, RAM, etc.)
+  - Network quotas (floating IPs, networks, ports, security groups, etc.)
+  - Volume quotas (volumes, snapshots, storage, etc.)
+  
+  Each quota includes:
+  - `limit`: Maximum allowed (or -1 for unlimited)
+  - `used`: Currently used amount
+  - `available`: Available amount (limit - used)
+  
+  **Example Response:**
+  ```json
+  {
+    "success": true,
+    "message": "Quotas retrieved successfully",
+    "data": {
+      "project_id": "abc123",
+      "project_name": "my_project",
+      "compute": {
+        "instances": {"limit": 10, "used": 3, "available": 7},
+        "cores": {"limit": 20, "used": 6, "available": 14},
+        "ram": {"limit": 40960, "used": 12288, "available": 28672}
+      },
+      "volume": {
+        "volumes": {"limit": 10, "used": 2, "available": 8},
+        "gigabytes": {"limit": 1000, "used": 200, "available": 800}
+      }
+      "network": {
+        "floatingip": {"limit": 5, "used": 2, "available": 3}
+      }
+    }
+  }
+  ```
+  
+  **Note:** Each lecturer has exactly one OpenStack project.
+}

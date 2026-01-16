@@ -2,6 +2,7 @@
 from typing import Optional
 from sqlalchemy.orm import Session
 from src.models.openstack_project import OpenstackProject
+from src.models.user import User
 from src.repositories.base_repository import BaseRepository
 
 
@@ -35,3 +36,14 @@ class OpenstackProjectRepository(BaseRepository[OpenstackProject]):
             OpenstackProject.owner_user_id == user_id,
             OpenstackProject.openstack_project_id == openstack_project_id
         ).count() > 0
+    
+    def user_exists(self, user_id: str) -> bool:
+        """Check if a user exists in the database.
+        
+        Args:
+            user_id: User ID to check
+            
+        Returns:
+            True if user exists, False otherwise
+        """
+        return self.db.query(User).filter(User.id == user_id).first() is not None
