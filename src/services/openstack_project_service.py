@@ -1,5 +1,6 @@
 """Service for OpenStack Project operations."""
 import logging
+from typing import NoReturn
 from uuid import UUID
 from sqlalchemy.orm import Session
 from src.core.dependencies import RequestID
@@ -47,7 +48,7 @@ class OpenstackProjectService:
         owner_user_id: str,
         openstack_project_id: str,
         request_id: RequestID,
-    ) -> None:
+    ) -> NoReturn:
         """Handle IntegrityError and convert to ConflictException if appropriate.
         
         Args:
@@ -88,7 +89,7 @@ class OpenstackProjectService:
                 raise ConflictException(
                     f"An OpenStack project with ID '{openstack_project_id}' already exists for this user."
                 )
-        raise
+        raise e
     
     def create_credentials(
         self,
@@ -166,6 +167,7 @@ class OpenstackProjectService:
             )
             return project
         except Exception as e:
+            # _handle_integrity_error always raises an exception, never returns
             self._handle_integrity_error(
                 e, project_id, owner_user_id, credentials.openstack_project_id, request_id
             )

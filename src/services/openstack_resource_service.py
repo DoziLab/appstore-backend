@@ -299,7 +299,7 @@ class OpenstackResourceService:
         try:
             conn = self._get_connection(project)
             
-            quotas = {
+            quotas: Dict[str, Any] = {
                 'project_id': openstack_project_id,
                 'project_name': project.openstack_project_name,
                 'owner_user_id': project.owner_user_id,

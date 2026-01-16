@@ -54,11 +54,14 @@ async def get_quotas(
         QuotaResponse with quota limits, usage, and available resources
     """
     user_id = user.get("user_id")
+    if not user_id:
+        raise ForbiddenException("User ID not found in authentication token")
+    
     user_roles = user.get("roles", [])
     is_admin = UserRole.ADMIN.value in user_roles
     
     # Determine target user and project
-    target_user_id = user_id
+    target_user_id: str = user_id
     project_id_str = None
     
     # Priority: lecturer_id > project_id > user's project
