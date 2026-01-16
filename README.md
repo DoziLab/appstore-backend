@@ -35,6 +35,9 @@ This starts:
 - **PostgreSQL** at localhost:5432
 - **Redis** at localhost:6379
 - **Celery Worker** for async tasks
+- **Loki** at localhost:3100 (log aggregation)
+- **Grafana** at http://localhost:3000 (monitoring dashboards)
+- **Promtail** (log collection)
 
 ### 4. Verify Installation
 
@@ -69,47 +72,6 @@ Make sure PostgreSQL and Redis are running locally, then:
 uvicorn src.main:app --reload
 ```
 
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check |
-| GET | `/docs` | Swagger UI |
-| GET | `/api/v1/deployments` | List deployments |
-| POST | `/api/v1/deployments` | Create deployment |
-
-## Project Structure
-
-```
-src/
-├── main.py                # FastAPI Entrypoint
-├── celery_app.py          # Celery Configuration
-│
-├── api/                   # API Routes
-│   └── deployments.py     # Deployment endpoints
-│
-├── core/                  # Core Configuration
-│   ├── config.py          # Environment Settings
-│   ├── database.py        # DB Session Management
-│   └── dependencies.py    # FastAPI Dependencies
-│
-├── models/                # SQLAlchemy Models
-│   └── deployment.py      # Deployment Model
-│
-├── schemas/               # Pydantic Schemas
-│   └── deployment.py      # Request/Response Validation
-│
-├── services/              # Business Logic
-│   └── deployment_service.py
-│
-├── repositories/          # Database Access Layer
-│   └── deployment_repository.py
-│
-└── tasks/                 # Celery Tasks
-    ├── deploy_tasks.py
-    └── sync_tasks.py
-```
-
 ## Useful Commands
 
 ```bash
@@ -125,3 +87,7 @@ docker compose down
 # Reset database (deletes all data!)
 docker compose down -v
 ```
+
+## Monitoring & Observability
+
+Access Grafana at http://localhost:3000

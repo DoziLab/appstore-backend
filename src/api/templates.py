@@ -5,13 +5,17 @@ from uuid import UUID
 from fastapi import APIRouter, status, Query, Depends
 
 from src.core.response_builder import ResponseBuilder
-from src.core.dependencies import DBSession, RequestID, Pagination, require_roles
+from src.core.dependencies import DBSession, RequestID, Pagination, require_roles, CurrentUser
 from src.schemas.template import TemplateCreate, TemplateUpdate, TemplateResponse
 from src.services.template_service import TemplateService
 from src.models.user import UserRole
 
 
-router = APIRouter(prefix="/templates", tags=["templates"])
+router = APIRouter(
+    prefix="/templates",
+    tags=["templates"],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER))],  # All endpoints require at least LECTURER role
+)
 
 
 @router.get("", response_model=None)
@@ -19,7 +23,7 @@ async def list_templates(
     pagination: Pagination,
     db: DBSession,
     request_id: RequestID,
-    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
+    current_user: CurrentUser,
     status_filter: Optional[str] = Query(None, description="Filter by approval status (pending/approved/rejected/deprecated)", alias="status"),
     visibility: Optional[str] = Query(None, description="Filter by visibility (private/public)"),
     owner_id: Optional[str] = Query(None, description="Filter by owner ID"),
@@ -73,7 +77,7 @@ async def get_template(
     template_id: UUID,
     db: DBSession,
     request_id: RequestID,
-    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
+    current_user: CurrentUser,
 ):
     """Get a single template by ID.
     
@@ -98,7 +102,7 @@ async def create_template(
     template_data: TemplateCreate,
     db: DBSession,
     request_id: RequestID,
-    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
+    current_user: CurrentUser,
 ):
     """Create a new template.
     
@@ -126,7 +130,7 @@ async def update_template(
     template_data: TemplateUpdate,
     db: DBSession,
     request_id: RequestID,
-    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
+    current_user: CurrentUser,
 ):
     """Update an existing template.
     
@@ -161,7 +165,7 @@ async def delete_template(
     template_id: UUID,
     db: DBSession,
     request_id: RequestID,
-    current_user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
+    current_user: CurrentUser,
 ):
     """Delete a template.
     
@@ -184,12 +188,16 @@ async def delete_template(
     return None
 
 
-@router.post("/{template_id}/approve", response_model=None)
+@router.post(
+    "/{template_id}/approve",
+    response_model=None,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],  # Only ADMIN can approve
+)
 async def approve_template(
     template_id: UUID,
     db: DBSession,
     request_id: RequestID,
-    current_user: dict = Depends(require_roles(UserRole.ADMIN)),
+    current_user: CurrentUser,
 ):
     """Approve a template for public use.
     
@@ -211,12 +219,16 @@ async def approve_template(
     )
 
 
-@router.post("/{template_id}/reject", response_model=None)
+@router.post(
+    "/{template_id}/reject",
+    response_model=None,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],  # Only ADMIN can reject
+)
 async def reject_template(
     template_id: UUID,
     db: DBSession,
     request_id: RequestID,
-    current_user: dict = Depends(require_roles(UserRole.ADMIN)),
+    current_user: CurrentUser,
 ):
     """Reject a template.
     

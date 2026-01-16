@@ -14,7 +14,11 @@ from src.services.deployment_log_service import DeploymentLogService
 from src.services.openstack_heat_service import HeatStackService
 from src.schemas.deployment import DeploymentLogResponse
 
-router = APIRouter(prefix="/deployments", tags=["deployments"])
+router = APIRouter(
+    prefix="/deployments",
+    tags=["deployments"],
+    dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER))],  # All endpoints require at least LECTURER role
+)
 
 @router.get("")
 async def list_deployments(
@@ -41,7 +45,7 @@ async def create_deployment(
     deployment_data: DeploymentCreate,
     db: DBSession,
     request_id: RequestID,
-    user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
+    user: CurrentUser,
 ):
     """Create a new deployment (One-Click Deployment).
     
@@ -76,7 +80,7 @@ async def get_deployment_logs(
     deployment_id: str,
     db: DBSession,
     request_id: RequestID,
-    user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
+    user: CurrentUser,
 ):
     """
     Get all logs for a specific deployment.

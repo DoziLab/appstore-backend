@@ -1,0 +1,29 @@
+# Grafana Datasource Provisioning for Loki and Prometheus
+# This file automatically configures datasources when Grafana starts
+
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    editable: true
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        # Extract request_id and make it clickable to filter logs
+        - datasourceUid: loki
+          matcherRegex: '"request_id":"([^"]+)"'
+          name: request_id
+          url: $${__value.raw}
+
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: false
+    editable: true
+    jsonData:
+      timeInterval: "5s"

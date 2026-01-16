@@ -1,4 +1,5 @@
 """Template service for business logic."""
+import logging
 from typing import Optional
 from uuid import UUID
 
@@ -8,6 +9,8 @@ from src.models.template import Template, TemplateVisibility, TemplateApprovalSt
 from src.repositories.template_repository import TemplateRepository
 from src.schemas.template import TemplateCreate, TemplateUpdate
 from src.core.exceptions import NotFoundException, ForbiddenException, BadRequestException
+
+logger = logging.getLogger(__name__)
 
 
 class TemplateService:
@@ -39,15 +42,38 @@ class TemplateService:
         Returns:
             Created template
         """
-        template = self.template_repo.create(
-            name=template_data.name,
-            description=template_data.description,
-            repo_url=template_data.repo_url,
-            visibility=TemplateVisibility.PRIVATE,
-            owner_id=owner_id,
-            approval_status=TemplateApprovalStatus.PENDING
-        )
-        return template
+        try:
+            template = self.template_repo.create(
+                name=template_data.name,
+                description=template_data.description,
+                repo_url=template_data.repo_url,
+                visibility=TemplateVisibility.PRIVATE,
+                owner_id=owner_id,
+                approval_status=TemplateApprovalStatus.PENDING
+            )
+            
+            logger.info(
+                "Template created",
+                extra={
+                    "template_id": str(template.id),
+                    "template_name": template.name,
+                    "owner_id": owner_id,
+                    "visibility": template_data.visibility,
+                    "approval_status": TemplateApprovalStatus.PENDING.value
+                }
+            )
+            
+            return template
+        except Exception as e:
+            logger.error(
+                f"Error creating template: {e}",
+                extra={
+                    "template_name": template_data.name,
+                    "owner_id": owner_id
+                },
+                exc_info=True
+            )
+            raise
 
     def get_template(
         self,
@@ -185,6 +211,15 @@ class TemplateService:
         
         # Permission check: only owner or admin can update
         if template.owner_id != user_id and not is_admin:
+            logger.warning(
+                "Unauthorized template update attempt",
+                extra={
+                    "template_id": str(template_id),
+                    "owner_id": template.owner_id,
+                    "attempting_user_id": user_id,
+                    "is_admin": is_admin
+                }
+            )
             raise ForbiddenException("You do not have permission to update this template")
         
         # Prepare update data (only include fields that were provided)
@@ -193,23 +228,43 @@ class TemplateService:
         if not update_data:
             return template
         
-        # Check if visibility is being changed
-        if "visibility" in update_data:
-            if not is_admin:
-                raise ForbiddenException("Only admins can change template visibility")
+        try:
+            # Check if visibility is being changed
+            if "visibility" in update_data:
+                if not is_admin:
+                    raise ForbiddenException("Only admins can change template visibility")
+                
+                # Validate visibility value
+                try:
+                    TemplateVisibility(update_data["visibility"])
+                except ValueError:
+                    raise BadRequestException(f"Invalid visibility value: {update_data['visibility']}")
             
-            # Validate visibility value
-            try:
-                TemplateVisibility(update_data["visibility"])
-            except ValueError:
-                raise BadRequestException(f"Invalid visibility value: {update_data['visibility']}")
-        
-        uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
-        updated_template = self.template_repo.update(uuid_id, **update_data)
-        if not updated_template:
-            raise NotFoundException(f"Template with ID {template_id} not found")
-        
-        return updated_template
+            uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
+            updated_template = self.template_repo.update(uuid_id, **update_data)
+            if not updated_template:
+                raise NotFoundException(f"Template with ID {template_id} not found")
+            
+            logger.info(
+                "Template updated",
+                extra={
+                    "template_id": str(template_id),
+                    "updated_by": user_id,
+                    "updated_fields": list(update_data.keys())
+                }
+            )
+            
+            return updated_template
+        except Exception as e:
+            logger.error(
+                f"Error updating template: {e}",
+                extra={
+                    "template_id": str(template_id),
+                    "user_id": user_id
+                },
+                exc_info=True
+            )
+            raise
 
     def delete_template(
         self,
@@ -234,12 +289,41 @@ class TemplateService:
         
         # Permission check: only owner or admin can delete
         if template.owner_id != user_id and not is_admin:
+            logger.warning(
+                "Unauthorized template deletion attempt",
+                extra={
+                    "template_id": str(template_id),
+                    "owner_id": template.owner_id,
+                    "attempting_user_id": user_id,
+                    "is_admin": is_admin
+                }
+            )
             raise ForbiddenException("You do not have permission to delete this template")
         
-        uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
-        success = self.template_repo.delete(uuid_id)
-        if not success:
-            raise NotFoundException(f"Template with ID {template_id} not found")
+        try:
+            uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
+            success = self.template_repo.delete(uuid_id)
+            if not success:
+                raise NotFoundException(f"Template with ID {template_id} not found")
+            
+            logger.info(
+                "Template deleted",
+                extra={
+                    "template_id": str(template_id),
+                    "template_name": template.name,
+                    "deleted_by": user_id
+                }
+            )
+        except Exception as e:
+            logger.error(
+                f"Error deleting template: {e}",
+                extra={
+                    "template_id": str(template_id),
+                    "user_id": user_id
+                },
+                exc_info=True
+            )
+            raise
 
     def approve_template(self, template_id: str | UUID) -> Template:
         """Approve a template for public use.
@@ -255,18 +339,36 @@ class TemplateService:
         Raises:
             NotFoundException: If template not found
         """
-        uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
-        
-        # Update both approval status and visibility
-        updated = self.template_repo.update(
-            uuid_id,
-            approval_status=TemplateApprovalStatus.APPROVED,
-            visibility=TemplateVisibility.PUBLIC
-        )
-        
-        if not updated:
-            raise NotFoundException(f"Template with ID {template_id} not found")
-        return updated
+        try:
+            uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
+            
+            # Update both approval status and visibility
+            updated = self.template_repo.update(
+                uuid_id,
+                approval_status=TemplateApprovalStatus.APPROVED,
+                visibility=TemplateVisibility.PUBLIC
+            )
+            
+            if not updated:
+                raise NotFoundException(f"Template with ID {template_id} not found")
+            
+            logger.info(
+                "Template approved",
+                extra={
+                    "template_id": str(template_id),
+                    "template_name": updated.name,
+                    "approval_status": TemplateApprovalStatus.APPROVED.value
+                }
+            )
+            
+            return updated
+        except Exception as e:
+            logger.error(
+                f"Error approving template: {e}",
+                extra={"template_id": str(template_id)},
+                exc_info=True
+            )
+            raise
 
     def reject_template(self, template_id: str | UUID) -> Template:
         """Reject a template.
@@ -280,10 +382,28 @@ class TemplateService:
         Raises:
             NotFoundException: If template not found
         """
-        updated = self.template_repo.update_approval_status(
-            template_id,
-            TemplateApprovalStatus.REJECTED
-        )
-        if not updated:
-            raise NotFoundException(f"Template with ID {template_id} not found")
-        return updated
+        try:
+            updated = self.template_repo.update_approval_status(
+                template_id,
+                TemplateApprovalStatus.REJECTED
+            )
+            if not updated:
+                raise NotFoundException(f"Template with ID {template_id} not found")
+            
+            logger.info(
+                "Template rejected",
+                extra={
+                    "template_id": str(template_id),
+                    "template_name": updated.name,
+                    "approval_status": TemplateApprovalStatus.REJECTED.value
+                }
+            )
+            
+            return updated
+        except Exception as e:
+            logger.error(
+                f"Error rejecting template: {e}",
+                extra={"template_id": str(template_id)},
+                exc_info=True
+            )
+            raise

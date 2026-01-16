@@ -1,0 +1,446 @@
+{
+  "title": "API Metrics & Performance",
+  "tags": ["api", "metrics", "performance"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 0,
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 0},
+      "type": "stat",
+      "title": "Total Requests",
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "targets": [
+        {
+          "expr": "sum(http_requests_total)",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"}
+        }
+      }
+    },
+    {
+      "id": 2,
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 0},
+      "type": "stat",
+      "title": "Request Rate (1m)",
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total[1m]))",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2,
+          "color": {"mode": "thresholds"}
+        }
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 0},
+      "type": "stat",
+      "title": "Avg Response Time",
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "targets": [
+        {
+          "expr": "rate(http_request_duration_seconds_sum[1m]) / rate(http_request_duration_seconds_count[1m])",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 4,
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "steps": [
+              {"value": 0, "color": "green"},
+              {"value": 0.5, "color": "yellow"},
+              {"value": 1, "color": "red"}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 7},
+      "type": "graph",
+      "title": "Request Rate by Endpoint",
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "targets": [
+        {
+          "expr": "rate(http_requests_total[1m])",
+          "refId": "A",
+          "legendFormat": "{{handler}} - {{method}}"
+        }
+      ],
+      "yaxes": [
+        {"format": "reqps", "label": "requests/sec"},
+        {"format": "short"}
+      ],
+      "legend": {
+        "show": true,
+        "alignAsTable": true,
+        "rightSide": false,
+        "values": true,
+        "current": true,
+        "avg": true
+      }
+    },
+    {
+      "id": 5,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 7},
+      "type": "graph",
+      "title": "Response Time Percentiles",
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))",
+          "refId": "A",
+          "legendFormat": "p99"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+          "refId": "B",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.90, rate(http_request_duration_seconds_bucket[5m]))",
+          "refId": "C",
+          "legendFormat": "p90"
+        },
+        {
+          "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket[5m]))",
+          "refId": "D",
+          "legendFormat": "p50"
+        }
+      ],
+      "yaxes": [
+        {"format": "s", "label": "duration"},
+        {"format": "short"}
+      ],
+      "legend": {
+        "show": true,
+        "alignAsTable": true,
+        "rightSide": false,
+        "values": true,
+        "current": true,
+        "avg": true
+      }
+    },
+    {
+      "id": 6,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 15},
+      "type": "graph",
+      "title": "Request/Response Size",
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "targets": [
+        {
+          "expr": "rate(http_request_size_bytes_sum[1m]) / rate(http_request_size_bytes_count[1m])",
+          "refId": "A",
+          "legendFormat": "Request Size (avg)"
+        },
+        {
+          "expr": "rate(http_response_size_bytes_sum[1m]) / rate(http_response_size_bytes_count[1m])",
+          "refId": "B",
+          "legendFormat": "Response Size (avg)"
+        }
+      ],
+      "yaxes": [
+        {"format": "bytes", "label": "size"},
+        {"format": "short"}
+      ],
+      "legend": {
+        "show": true,
+        "alignAsTable": true,
+        "values": true,
+        "current": true,
+        "avg": true
+      }
+    },
+    {
+      "id": 7,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 15},
+      "type": "graph",
+      "title": "Process Resources",
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "targets": [
+        {
+          "expr": "process_resident_memory_bytes",
+          "refId": "A",
+          "legendFormat": "Memory (RSS)",
+          "yAxisIndex": 0
+        },
+        {
+          "expr": "rate(process_cpu_seconds_total[1m])",
+          "refId": "B",
+          "legendFormat": "CPU Usage",
+          "yAxisIndex": 1
+        },
+        {
+          "expr": "process_open_fds",
+          "refId": "C",
+          "legendFormat": "Open Files",
+          "yAxisIndex": 1
+        }
+      ],
+      "yaxes": [
+        {"format": "bytes", "label": "Memory", "logBase": 1},
+        {"format": "short", "label": "CPU / Files"}
+      ],
+      "legend": {
+        "show": true,
+        "alignAsTable": true,
+        "values": true,
+        "current": true,
+        "avg": true
+      }
+    },
+    {
+      "id": 8,
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 23},
+      "type": "graph",
+      "title": "Request Duration by Endpoint",
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "targets": [
+        {
+          "expr": "rate(http_request_duration_seconds_sum{handler!=\"/metrics\"}[1m]) / rate(http_request_duration_seconds_count{handler!=\"/metrics\"}[1m])",
+          "refId": "A",
+          "legendFormat": "{{handler}}"
+        }
+      ],
+      "yaxes": [
+        {"format": "s", "label": "avg duration"},
+        {"format": "short"}
+      ],
+      "legend": {
+        "show": true,
+        "alignAsTable": true,
+        "values": true,
+        "current": true,
+        "avg": true
+      }
+    },
+    {
+      "id": 9,
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 23},
+      "type": "graph",
+      "title": "Python Garbage Collection",
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "targets": [
+        {
+          "expr": "rate(python_gc_collections_total[1m])",
+          "refId": "A",
+          "legendFormat": "GC gen{{generation}}"
+        },
+        {
+          "expr": "rate(python_gc_objects_collected_total[1m])",
+          "refId": "B",
+          "legendFormat": "Objects collected gen{{generation}}"
+        }
+      ],
+      "yaxes": [
+        {"format": "ops", "label": "collections/sec"},
+        {"format": "short"}
+      ],
+      "legend": {
+        "show": true,
+        "alignAsTable": true,
+        "values": true,
+        "current": true
+      }
+    },
+    {
+      "id": 10,
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 30},
+      "type": "table",
+      "title": "Request Details (Last 50 Requests)",
+      "datasource": {"type": "loki", "uid": "P8E80F9AEF21F6940"},
+      "targets": [
+        {
+          "expr": "{compose_service=\"api\"} |= \"request_completed\" | json",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "frameIndex": 0,
+        "showTypeIcons": true
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "labels": true,
+              "tsNs": true,
+              "id": true,
+              "compose_service": true,
+              "container_id": true,
+              "job": true,
+              "logger": true,
+              "module": true,
+              "function": true,
+              "line": true,
+              "level": true,
+              "message": true,
+              "error_occurred": true,
+              "error_type": true,
+              "event": true
+            },
+            "indexByName": {
+              "Time": 0,
+              "http_method": 1,
+              "http_path": 2,
+              "http_status_code": 3,
+              "duration_ms": 4,
+              "user_email": 5,
+              "request_id": 6
+            },
+            "renameByName": {
+              "Time": "Timestamp",
+              "http_method": "Method",
+              "http_path": "Endpoint",
+              "http_status_code": "Status",
+              "duration_ms": "Duration (ms)",
+              "user_email": "User",
+              "request_id": "Request ID"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+      "type": "table",
+      "title": "Recent Errors & Warnings",
+      "datasource": {"type": "loki", "uid": "P8E80F9AEF21F6940"},
+      "targets": [
+        {
+          "expr": "{compose_service=\"api\"} |= \"http_exception\" | json",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "labels": true,
+              "tsNs": true,
+              "id": true,
+              "compose_service": true,
+              "container_id": true,
+              "job": true,
+              "logger": true,
+              "module": true,
+              "function": true,
+              "line": true,
+              "event": true
+            },
+            "indexByName": {
+              "Time": 0,
+              "level": 1,
+              "message": 2,
+              "http_path": 3,
+              "request_id": 4
+            },
+            "renameByName": {
+              "Time": "Timestamp",
+              "level": "Level",
+              "message": "Message",
+              "http_path": "Endpoint",
+              "request_id": "Request ID"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+      "type": "bargauge",
+      "title": "Requests by Status Code",
+      "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+      "targets": [
+        {
+          "expr": "sum by (status) (http_requests_total)",
+          "refId": "A",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "palette-classic"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": 0, "color": "green"},
+              {"value": 400, "color": "yellow"},
+              {"value": 500, "color": "red"}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 13,
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 48},
+      "type": "logs",
+      "title": "Raw Application Logs (JSON)",
+      "datasource": {"type": "loki", "uid": "P8E80F9AEF21F6940"},
+      "targets": [
+        {
+          "expr": "{compose_service=\"api\"} | json | line_format \"{{.timestamp}} {{.http_path}}\"",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    }
+  ]
+}

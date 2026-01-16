@@ -72,6 +72,16 @@ async def http_exception_handler(
     """
     request_id = getattr(request.state, "request_id", None)
     
+    # Extract user info if available
+    user_id = None
+    user_email = None
+    try:
+        if hasattr(request.state, 'user'):
+            user_id = str(request.state.user.id) if hasattr(request.state.user, 'id') else None
+            user_email = request.state.user.email if hasattr(request.state.user, 'email') else None
+    except Exception:
+        pass
+    
     logger.warning(
         f"HTTP {exc.status_code} exception on {request.method} {request.url.path}",
         extra={
@@ -79,6 +89,11 @@ async def http_exception_handler(
             "detail": str(exc.detail),
             "method": request.method,
             "path": request.url.path,
+            "query_params": dict(request.query_params) if request.query_params else None,
+            "user_id": user_id,
+            "user_email": user_email,
+            "client_host": request.client.host if request.client else None,
+            "user_agent": request.headers.get('user-agent'),
             "request_id": request_id,
             "event": "http_exception"
         }
@@ -108,6 +123,14 @@ async def validation_exception_handler(
     """
     request_id = getattr(request.state, "request_id", None)
     
+    # Extract user info if available
+    user_id = None
+    try:
+        if hasattr(request.state, 'user'):
+            user_id = str(request.state.user.id) if hasattr(request.state.user, 'id') else None
+    except Exception:
+        pass
+    
     # Format validation errors into structured list
     errors = []
     for error in exc.errors():
@@ -125,6 +148,8 @@ async def validation_exception_handler(
             "method": request.method,
             "path": request.url.path,
             "errors": errors,
+            "user_id": user_id,
+            "client_host": request.client.host if request.client else None,
             "request_id": request_id,
             "event": "validation_error"
         }
@@ -157,6 +182,9 @@ async def authentication_exception_handler(
         extra={
             "method": request.method,
             "path": request.url.path,
+            "client_host": request.client.host if request.client else None,
+            "user_agent": request.headers.get('user-agent'),
+            "authorization_header_present": 'authorization' in request.headers,
             "request_id": request_id,
             "event": "authentication_error"
         }
@@ -184,11 +212,23 @@ async def authorization_exception_handler(
     """
     request_id = getattr(request.state, "request_id", None)
     
+    # Extract user info if available
+    user_id = None
+    user_roles = None
+    try:
+        if hasattr(request.state, 'user'):
+            user_id = str(request.state.user.id) if hasattr(request.state.user, 'id') else None
+            user_roles = request.state.user.roles if hasattr(request.state.user, 'roles') else None
+    except Exception:
+        pass
+    
     logger.warning(
         f"Authorization error on {request.method} {request.url.path}: {str(exc)}",
         extra={
             "method": request.method,
             "path": request.url.path,
+            "user_id": user_id,
+            "user_roles": user_roles,
             "request_id": request_id,
             "event": "authorization_error"
         }
@@ -219,6 +259,16 @@ async def generic_exception_handler(
     """
     request_id = getattr(request.state, "request_id", None)
     
+    # Extract user info if available
+    user_id = None
+    user_email = None
+    try:
+        if hasattr(request.state, 'user'):
+            user_id = str(request.state.user.id) if hasattr(request.state.user, 'id') else None
+            user_email = request.state.user.email if hasattr(request.state.user, 'email') else None
+    except Exception:
+        pass
+    
     logger.error(
         f"Unhandled exception on {request.method} {request.url.path}: {type(exc).__name__}",
         extra={
@@ -226,6 +276,11 @@ async def generic_exception_handler(
             "exception_message": str(exc),
             "method": request.method,
             "path": request.url.path,
+            "query_params": dict(request.query_params) if request.query_params else None,
+            "user_id": user_id,
+            "user_email": user_email,
+            "client_host": request.client.host if request.client else None,
+            "user_agent": request.headers.get('user-agent'),
             "request_id": request_id,
             "event": "unhandled_exception"
         },
