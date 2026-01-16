@@ -10,8 +10,7 @@ from src.main import app
 from src.core.database import Base
 from src.core.dependencies import get_db, get_current_user
 from src.models.openstack_project import OpenstackProject
-from src.models.user import User
-from src.core.exceptions import NotFoundException, ForbiddenException
+from src.core.exceptions import NotFoundException
 
 
 # Create in-memory SQLite database for testing

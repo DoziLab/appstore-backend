@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from src.services.openstack_resource_service import OpenstackResourceService
 from src.models.openstack_project import OpenstackProject
 from src.core.exceptions import NotFoundException, BadRequestException, ForbiddenException
-from src.services.openstack_cache_service import OpenstackCacheService
 
 
 @pytest.fixture
@@ -102,7 +101,6 @@ class TestGetQuotas:
     
     def test_get_quotas_connection_failure(self, resource_service, mock_db_session, mock_openstack_project):
         """Test that BadRequestException is raised on connection failure."""
-        from src.core.exceptions import BadRequestException
         with patch.object(resource_service.repository, 'get_by_owner', return_value=[mock_openstack_project]):
             with patch.object(resource_service.cache_service, 'get_quotas', return_value=None):
                 with patch.object(resource_service, '_get_connection', side_effect=BadRequestException("Failed to connect to OpenStack: Connection failed")):
