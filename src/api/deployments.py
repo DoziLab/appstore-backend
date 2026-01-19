@@ -29,7 +29,8 @@ async def list_deployments(
     request_id: RequestID,
     user: CurrentUser,
     course_id: UUID | None = Query(None, description="Filter by course ID"),
-    status_filter: DeploymentStatus | None = Query(None, description="Filter by status", alias="status"),
+    template_id: UUID | None = Query(None, description="Filter by template ID"),
+    status_filter: str | None = Query(None, description="Filter by OpenStack stack status (e.g., CREATE_COMPLETE, DELETE_COMPLETE)", alias="status"),
 ):
     """List all OpenStack Heat stacks for the current user.
     
@@ -45,7 +46,8 @@ async def list_deployments(
     
     Optional filters:
     - Course ID: Only show stacks associated with a specific course
-    - Status: Filter by OpenStack stack status
+    - Template ID: Only show stacks associated with a specific template
+    - Status: Filter by OpenStack stack status (e.g., CREATE_COMPLETE, DELETE_COMPLETE)
     
     Returns paginated results with total count.
     """
@@ -67,11 +69,34 @@ async def list_deployments(
             if s.get('course_id') == str(course_id)
         ]
     
+    if template_id:
+        # Filter by template_id (requires deployment_id to fetch from DB)
+        deployment_ids = [s.get('deployment_id') for s in filtered_stacks if s.get('deployment_id')]
+        if deployment_ids:
+            # Fetch deployments from DB to check template_version_id -> template_id relationship
+            matching_deployment_ids = set()
+            
+            for deployment_id in deployment_ids:
+                if deployment_id is None:
+                    continue
+                deployment = service.deployment_repo.get_by_id(deployment_id)
+                if deployment and deployment.template_version:
+                    if deployment.template_version.template_id == template_id:
+                        matching_deployment_ids.add(str(deployment.id))
+            
+            filtered_stacks = [
+                s for s in filtered_stacks 
+                if s.get('deployment_id') in matching_deployment_ids
+            ]
+        else:
+            # No deployments with deployment_id, so template_id filter results in empty list
+            filtered_stacks = []
+    
     if status_filter:
-        # Filter by OpenStack stack status, not deployment status
+        # Filter by OpenStack stack status (case-insensitive)
         filtered_stacks = [
             s for s in filtered_stacks 
-            if s.get('status', '').upper() == status_filter.value.upper()
+            if s.get('status', '').upper() == status_filter.upper()
         ]
     
     # Apply pagination
