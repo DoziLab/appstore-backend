@@ -14,6 +14,7 @@ class DeploymentStatus(str, Enum):
     QUEUED = "queued"
     CREATING = "creating"
     RUNNING = "running"
+    RESTARTING = "restarting"
     DELETING = "deleting"
     FAILED = "failed"
     DELETED = "deleted"

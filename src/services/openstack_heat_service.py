@@ -158,6 +158,49 @@ class HeatStackService:
             logger.error(f"Error getting stack {stack_id}: {e}")
             raise
     
+    def update_stack(self, stack_id: str, template: str | None = None, parameters: dict | None = None) -> dict:
+        """Update a Heat stack to trigger a restart or configuration change.
+        
+        Args:
+            stack_id: Stack ID or name
+            template: New Heat template (optional, uses existing if not provided)
+            parameters: New parameters (optional, uses existing if not provided)
+            
+        Returns:
+            Updated stack information
+            
+        Raises:
+            HttpException: If API call fails
+        """
+        try:
+            conn = self._get_connection()
+            
+            logger.info(f"Updating Heat stack: {stack_id}")
+            
+            update_args: dict = {
+                "stack_id": stack_id,
+            }
+            
+            if template:
+                update_args["template"] = template
+            
+            if parameters:
+                update_args["parameters"] = parameters
+            
+            # Trigger stack update (this will restart resources)
+            conn.orchestration.update_stack(**update_args)
+            
+            logger.info(f"Heat stack update initiated: {stack_id}")
+            
+            return {
+                "stack_id": stack_id,
+                "status": "UPDATE_IN_PROGRESS",
+            }
+            
+        except Exception as e:
+            logger.error(f"Error updating stack {stack_id}: {e}")
+            raise
+    
     def delete_stack(self, stack_id: str) -> bool:
         """Delete a Heat stack.
         

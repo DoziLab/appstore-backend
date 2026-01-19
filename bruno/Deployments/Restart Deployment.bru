@@ -1,0 +1,95 @@
+meta {
+  name: Restart Deployment
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{base_url}}/deployments/{{deployment_id}}/restart
+  body: none
+  auth: inherit
+}
+
+params:path {
+  deployment_id: 
+}
+
+docs {
+  # Restart Deployment
+  
+  Triggers a restart of an existing deployment by updating the Heat stack.
+  This is useful for recovering from transient errors or applying updates.
+  
+  ## Authorization
+  - **Owner (Lecturer)** or **Admin** only
+  - Lecturers can only restart their own deployments
+  - Admins can restart any deployment
+  
+  ## Requirements
+  
+  The deployment must:
+  - Have an associated OpenStack Heat stack
+  - Not be in a transitional state (CREATING, DELETING, RESTARTING)
+  - Valid states for restart: RUNNING, FAILED
+  
+  ## Response
+  
+  Returns 202 Accepted with restart queued status.
+  The actual restart is performed asynchronously via Celery task.
+  
+  ## Example Response
+  
+  ```json
+  {
+    "success": true,
+    "data": {
+      "deployment_id": "deploy-123",
+      "status": "restart_queued"
+    },
+    "message": "Restart requested; operation is in progress",
+    "request_id": "req-456"
+  }
+  ```
+  
+  ## Error Responses
+  
+  **404 Not Found**
+  ```json
+  {
+    "success": false,
+    "message": "Deployment with ID xyz not found"
+  }
+  ```
+  
+  **403 Forbidden** (if trying to restart another lecturer's deployment)
+  ```json
+  {
+    "success": false,
+    "message": "You do not have permission to restart this deployment"
+  }
+  ```
+  
+  **400 Bad Request** (deployment in transitional state)
+  ```json
+  {
+    "success": false,
+    "message": "Cannot restart deployment in creating state. Please wait for current operation to complete."
+  }
+  ```
+  
+  **400 Bad Request** (no stack associated)
+  ```json
+  {
+    "success": false,
+    "message": "Deployment has no associated OpenStack stack to restart"
+  }
+  ```
+  
+  **500 Internal Server Error** (task enqueue failure)
+  ```json
+  {
+    "success": false,
+    "message": "Failed to enqueue restart task"
+  }
+  ```
+}

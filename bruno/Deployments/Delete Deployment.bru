@@ -1,0 +1,87 @@
+meta {
+  name: Delete Deployment
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{base_url}}/deployments/{{deployment_id}}
+  body: none
+  auth: inherit
+}
+
+params:path {
+  deployment_id: 
+}
+
+docs {
+  # Delete Deployment
+  
+  Requests deletion of a deployment and its associated OpenStack resources.
+  The deployment is marked for deletion and a Celery task is enqueued to perform
+  the actual cleanup asynchronously.
+  
+  ## Authorization
+  - **Owner (Lecturer)** or **Admin** only
+  - Lecturers can only delete their own deployments
+  - Admins can delete any deployment
+  
+  ## Process
+  
+  1. API validates permissions and logs the deletion request
+  2. Celery task is enqueued for asynchronous execution
+  3. Task sets deployment status to `DELETING`
+  4. Task deletes the OpenStack Heat stack (if exists)
+  5. Task removes the deployment record from database
+  
+  ## Response
+  
+  Returns 204 No Content on successful enqueue.
+  The actual deletion happens asynchronously.
+  
+  ## Example Response
+  
+  Status: 204 No Content
+  
+  Response body is empty, but includes request_id in headers.
+  
+  ## Error Responses
+  
+  **404 Not Found**
+  ```json
+  {
+    "success": false,
+    "message": "Deployment with ID xyz not found"
+  }
+  ```
+  
+  **403 Forbidden** (if trying to delete another lecturer's deployment)
+  ```json
+  {
+    "success": false,
+    "message": "You do not have permission to delete this deployment"
+  }
+  ```
+  
+  **500 Internal Server Error** (if task enqueue fails)
+  ```json
+  {
+    "success": false,
+    "message": "Failed to enqueue deletion task"
+  }
+  ```
+  
+  ## Tracking Deletion Progress
+  
+  After deletion is requested, you can:
+  - Check deployment logs: `GET /deployments/{id}/logs`
+  - Monitor deployment status in the list: `GET /deployments`
+  - Deleted deployments will eventually disappear from the list
+  
+  ## Notes
+  
+  - Deletion cannot be undone
+  - All instances and resources in the stack will be destroyed
+  - Deployment logs are preserved until the database record is deleted
+  - The operation is idempotent (safe to retry)
+}

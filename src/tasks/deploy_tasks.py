@@ -1,6 +1,7 @@
 """Deploy tasks for Celery."""
 import json
 import logging
+from uuid import UUID
 from src.celery_app import celery_app
 from src.core.database import SessionLocal
 from src.models.deployment import DeploymentStatus
@@ -413,7 +414,7 @@ def delete_deployment(self, deployment_id: str) -> dict:
 
         # Finally delete DB record
         try:
-            deleted = repo.delete(deployment_id)
+            deleted = repo.delete(UUID(deployment_id))
             if deleted:
                 log_service.log(
                     deployment_id=deployment_id,
@@ -437,6 +438,128 @@ def delete_deployment(self, deployment_id: str) -> dict:
 
     except Exception as e:
         logger.exception(f"Error during delete task for deployment {deployment_id}: {e}")
+        return {"status": "failed", "deployment_id": deployment_id, "error": str(e)}
+    finally:
+        db.close()
+
+
+@celery_app.task(bind=True)
+def restart_deployment(self, deployment_id: str) -> dict:
+    """Restart a deployment by updating the Heat stack.
+    
+    This task restarts an existing deployment by triggering a Heat stack update,
+    which can restart VMs or refresh the stack configuration.
+    
+    Args:
+        deployment_id: ID of the deployment to restart
+        
+    Returns:
+        Result dictionary with status and task information
+    """
+    task_id = self.request.id
+    logger.info(f"Starting restart task for deployment_id={deployment_id}, task_id={task_id}")
+    
+    db = SessionLocal()
+    try:
+        repo = DeploymentRepository(db)
+        log_service = DeploymentLogService(db)
+        
+        deployment = repo.get_by_id(deployment_id)
+        
+        if not deployment:
+            logger.error(f"Deployment not found: {deployment_id}")
+            return {"status": "failed", "error": "Deployment not found"}
+        
+        # Update status to RESTARTING
+        repo.update_status(deployment_id, DeploymentStatus.RESTARTING)
+        
+        log_service.log(
+            deployment_id=deployment_id,
+            event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
+            message=f"Restart requested (task_id: {task_id})",
+            level=DeploymentLogLevel.INFO,
+            details={"task_id": task_id}
+        )
+        
+        # Verify deployment has a stack
+        if not deployment.openstack_stack_id:
+            error_msg = "No OpenStack stack associated with this deployment"
+            logger.error(error_msg)
+            log_service.log(
+                deployment_id=deployment_id,
+                event_type=DeploymentLogEventType.FAILED,
+                message=error_msg,
+                level=DeploymentLogLevel.ERROR
+            )
+            repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            return {"status": "failed", "error": error_msg}
+        
+        # Get OpenStack project credentials
+        openstack_repo = OpenstackProjectRepository(db)
+        lecturer_id = deployment.course.lecturer_id
+        openstack_projects = openstack_repo.get_by_owner(lecturer_id)
+        
+        if not openstack_projects:
+            error_msg = f"No OpenStack project found for lecturer {lecturer_id}"
+            logger.error(error_msg)
+            log_service.log(
+                deployment_id=deployment_id,
+                event_type=DeploymentLogEventType.FAILED,
+                message=error_msg,
+                level=DeploymentLogLevel.ERROR
+            )
+            repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            return {"status": "failed", "error": error_msg}
+        
+        openstack_project = openstack_projects[0]
+        
+        try:
+            heat_service = HeatStackService(openstack_project)
+            
+            # Trigger stack update to restart resources
+            logger.info(f"Updating Heat stack {deployment.openstack_stack_id} to trigger restart")
+            heat_service.update_stack(deployment.openstack_stack_id)
+            
+            log_service.log(
+                deployment_id=deployment_id,
+                event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
+                message=f"Heat stack update initiated for restart: {deployment.openstack_stack_id}",
+                level=DeploymentLogLevel.INFO,
+                details={"stack_id": deployment.openstack_stack_id}
+            )
+            
+            # Update status back to RUNNING (stack update is async in OpenStack)
+            repo.update_status(deployment_id, DeploymentStatus.RUNNING)
+            
+            log_service.log(
+                deployment_id=deployment_id,
+                event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
+                message="Restart completed successfully",
+                level=DeploymentLogLevel.INFO
+            )
+            
+            return {
+                "status": "restarted",
+                "deployment_id": deployment_id,
+                "stack_id": deployment.openstack_stack_id,
+                "task_id": task_id
+            }
+            
+        except Exception as e:
+            error_msg = f"Failed to restart deployment: {str(e)}"
+            logger.exception(error_msg)
+            log_service.log(
+                deployment_id=deployment_id,
+                event_type=DeploymentLogEventType.FAILED,
+                message=error_msg,
+                level=DeploymentLogLevel.ERROR,
+                details={"error": str(e)}
+            )
+            repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            return {"status": "failed", "deployment_id": deployment_id, "error": str(e)}
+            
+    except Exception as e:
+        logger.exception(f"Error during restart task for deployment {deployment_id}: {e}")
         return {"status": "failed", "deployment_id": deployment_id, "error": str(e)}
     finally:
         db.close()
