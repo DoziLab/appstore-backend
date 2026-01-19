@@ -219,7 +219,7 @@ class DeploymentService:
             if not openstack_projects:
                 settings = get_settings()
                 if settings.openstack_auth_url:
-                    logger.info(f"No user-specific OpenStack credentials found, using fallback from .env")
+                    logger.info("No user-specific OpenStack credentials found, using fallback from .env")
                     # Create temporary OpenstackProject object from config
                     fallback_project = OpenstackProject(
                         id="fallback",
@@ -234,7 +234,7 @@ class DeploymentService:
                     )
                     openstack_projects = [fallback_project]
                 else:
-                    logger.info(f"No OpenStack credentials found (neither user-specific nor fallback)")
+                    logger.info("No OpenStack credentials found (neither user-specific nor fallback)")
                     return []
         else:
             # Admin mode: Get all projects from database

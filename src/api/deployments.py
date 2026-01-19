@@ -14,7 +14,6 @@ from src.services.openstack_heat_service import HeatStackService
 from src.schemas.deployment import DeploymentLogResponse
 from src.tasks.deploy_tasks import delete_deployment as delete_deployment_task
 from src.tasks.deploy_tasks import restart_deployment as restart_deployment_task
-from src.models.deployment_log import DeploymentLogEventType, DeploymentLogLevel
 from src.models.deployment import DeploymentStatus
 
 router = APIRouter(
