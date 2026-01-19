@@ -134,7 +134,7 @@ class DeploymentService:
         Returns:
             Dictionary with deployment data enriched with OpenStack information
         """
-        deployment_dict = {
+        deployment_dict: dict = {
             "id": str(deployment.id),
             "template_version_id": str(deployment.template_version_id),
             "course_id": str(deployment.course_id),
