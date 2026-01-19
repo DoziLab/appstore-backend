@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import String, DateTime, ForeignKey
+from sqlalchemy import String, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
@@ -14,13 +14,19 @@ class OpenstackProject(Base):
     
     IMPORTANT: username and password fields are automatically encrypted/decrypted using EncryptedString type.
     Never log these credential values.
+    
+    Each user can have exactly one OpenStack project. The combination of (owner_user_id, openstack_project_id)
+    must be unique.
     """
     
     __tablename__ = "openstack_projects"
+    __table_args__ = (
+        UniqueConstraint('owner_user_id', 'openstack_project_id', name='uq_openstack_project_user'),
+    )
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     owner_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
-    openstack_project_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    openstack_project_id: Mapped[str] = mapped_column(String(255), nullable=False)
     openstack_project_name: Mapped[str] = mapped_column(String(255), nullable=False)
     
     # OpenStack authentication and connection details

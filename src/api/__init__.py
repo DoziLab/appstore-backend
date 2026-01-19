@@ -6,6 +6,7 @@ from src.api.template_versions import router as template_versions_router
 from src.api.openstack_projects import router as openstack_projects_router
 from src.api.template_version_files import router as template_version_files_router
 from src.api.courses import router as courses_router
+from src.api.quotas import router as quotas_router
 
 # Create main API router
 api_router = APIRouter(prefix="/api/v1")
@@ -16,6 +17,7 @@ api_router.include_router(template_versions_router)
 api_router.include_router(openstack_projects_router)
 api_router.include_router(template_version_files_router)
 api_router.include_router(courses_router)
+api_router.include_router(quotas_router)
 
 __all__ = [
     "api_router",
