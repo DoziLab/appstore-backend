@@ -14,7 +14,6 @@ from src.models.template_version import TemplateVersion
 from src.models.course import Course
 from src.models.openstack_project import OpenstackProject
 from src.core.exceptions import NotFoundException
-from src.core.config import get_settings
 from src.tasks.deploy_tasks import deploy_stack
 
 
@@ -215,47 +214,16 @@ class DeploymentService:
             # Lecturer mode: Get only user's projects
             openstack_projects = self.openstack_repo.get_by_owner(user_id)
             
-            # Fallback: Use global credentials from .env if no user credentials
             if not openstack_projects:
-                settings = get_settings()
-                if settings.openstack_auth_url:
-                    logger.info("No user-specific OpenStack credentials found, using fallback from .env")
-                    # Create temporary OpenstackProject object from config
-                    fallback_project = OpenstackProject(
-                        id="fallback",
-                        owner_user_id=user_id,
-                        openstack_project_id="fallback",
-                        openstack_project_name=settings.openstack_project_name or "Fallback",
-                        auth_url=settings.openstack_auth_url,
-                        username=settings.openstack_username or "",
-                        password=settings.openstack_password or "",
-                        user_domain_name=settings.openstack_user_domain_name or "Default",
-                        region_name=settings.openstack_region_name or "RegionOne"
-                    )
-                    openstack_projects = [fallback_project]
-                else:
-                    logger.info("No OpenStack credentials found (neither user-specific nor fallback)")
-                    return []
+                logger.info("No OpenStack credentials found for user")
+                return []
         else:
             # Admin mode: Get all projects from database
             openstack_projects = self.db.query(OpenstackProject).all()
             
-            # Add fallback project if configured and no DB projects
-            settings = get_settings()
-            if settings.openstack_auth_url and not openstack_projects:
-                logger.info("No database projects found, using fallback from .env")
-                fallback_project = OpenstackProject(
-                    id="fallback",
-                    owner_user_id="system",
-                    openstack_project_id="fallback",
-                    openstack_project_name=settings.openstack_project_name or "Fallback",
-                    auth_url=settings.openstack_auth_url,
-                    username=settings.openstack_username or "",
-                    password=settings.openstack_password or "",
-                    user_domain_name=settings.openstack_user_domain_name or "Default",
-                    region_name=settings.openstack_region_name or "RegionOne"
-                )
-                openstack_projects = [fallback_project]
+            if not openstack_projects:
+                logger.info("No OpenStack projects found in database")
+                return []
         
         all_stacks = []
         

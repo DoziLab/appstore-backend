@@ -30,16 +30,6 @@ class Settings(BaseSettings):
     # Encryption key for secrets (Fernet key)
     encryption_key: str | None = None
     
-    # OpenStack fallback credentials (optional - used when no user credentials exist)
-    openstack_auth_url: str | None = None
-    openstack_project_name: str | None = None
-    openstack_username: str | None = None
-    openstack_password: str | None = None
-    openstack_user_domain_name: str | None = None
-    openstack_project_domain_name: str | None = None
-    openstack_region_name: str | None = None
-    openstack_identity_api_version: str = "3"
-    
     @property
     def database_url(self) -> str:
         """Build database URL from components."""
