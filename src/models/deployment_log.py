@@ -24,6 +24,8 @@ class DeploymentLogEventType(str, Enum):
     TEMPLATE_CREATE = "template_create"
     VM_READY = "vm_ready"
     FAILED = "failed"
+    DEPLOYMENT_DELETION_REQUESTED = "deployment_deletion_requested"
+    DEPLOYMENT_DELETED = "deployment_deleted"
 
 
 class DeploymentLog(Base):

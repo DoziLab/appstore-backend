@@ -1,6 +1,7 @@
 """Repository for Deployment model."""
 import logging
 from typing import List, Optional
+from uuid import UUID
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -76,6 +77,63 @@ class DeploymentRepository(BaseRepository[Deployment]):
                 extra={
                     "deployment_id": deployment_id,
                     "target_status": status.value
+                },
+                exc_info=True
+            )
+            raise
+    
+    def get_all_filtered(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        course_id: Optional[UUID] = None,
+        status: Optional[DeploymentStatus] = None,
+    ) -> tuple[List[Deployment], int]:
+        """Get deployments with optional filters and pagination.
+        
+        Args:
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+            course_id: Filter by course ID
+            status: Filter by deployment status
+            
+        Returns:
+            Tuple of (list of deployments, total count)
+        """
+        try:
+            query = self.db.query(Deployment)
+            
+            if course_id:
+                query = query.filter(Deployment.course_id == str(course_id))
+            
+            if status:
+                query = query.filter(Deployment.status == status)
+            
+            # Get total count before pagination
+            total = query.count()
+            
+            # Apply pagination and sorting (newest first)
+            deployments = query.order_by(Deployment.created_at.desc()).offset(skip).limit(limit).all()
+            
+            logger.debug(
+                "Retrieved deployments with filters",
+                extra={
+                    "course_id": str(course_id) if course_id else None,
+                    "status": status.value if status else None,
+                    "count": len(deployments),
+                    "total": total,
+                    "skip": skip,
+                    "limit": limit
+                }
+            )
+            
+            return deployments, total
+        except SQLAlchemyError as e:
+            logger.error(
+                f"Error retrieving filtered deployments: {e}",
+                extra={
+                    "course_id": str(course_id) if course_id else None,
+                    "status": status.value if status else None
                 },
                 exc_info=True
             )
