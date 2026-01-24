@@ -1,14 +1,20 @@
 """Template Version service for business logic."""
 from typing import Optional
 from uuid import UUID
+import logging
 
 from sqlalchemy.orm import Session
 
 from src.models.template_version import TemplateVersion
+from src.models.template_version_file import FileType
 from src.repositories.template_version_repository import TemplateVersionRepository
 from src.repositories.template_repository import TemplateRepository
+from src.repositories.template_version_file_repository import TemplateVersionFileRepository
 from src.schemas.template_version import TemplateVersionCreate, TemplateVersionUpdate
 from src.core.exceptions import NotFoundException, BadRequestException, ForbiddenException
+from src.utils.app_manifest_parser import AppManifestParser
+
+logger = logging.getLogger(__name__)
 
 
 class TemplateVersionService:
@@ -23,6 +29,7 @@ class TemplateVersionService:
         self.db = db
         self.version_repo = TemplateVersionRepository(db)
         self.template_repo = TemplateRepository(db)
+        self.file_repo = TemplateVersionFileRepository(db)
 
     def create_version(
         self,
@@ -67,6 +74,7 @@ class TemplateVersionService:
         
         version = self.version_repo.create(
             template_id=version_data.template_id,
+            version=version_data.version,
             git_commit_sha=version_data.git_commit_sha,
             is_active=version_data.is_active
         )
@@ -291,3 +299,70 @@ class TemplateVersionService:
             raise NotFoundException(f"Template version with ID {version_id} not found after activation")
         
         return updated_version
+    
+    def get_version_with_parameters(
+        self,
+        version_id: str | UUID,
+        with_file_count: bool = False
+    ) -> dict:
+        """Get a template version with parsed parameters from app.yaml.
+        
+        Args:
+            version_id: Version ID
+            with_file_count: Whether to include file count
+            
+        Returns:
+            Dictionary with version data and parameters
+            
+        Raises:
+            NotFoundException: If version not found
+        """
+        # Get the base version data
+        if with_file_count:
+            result = self.version_repo.get_with_file_count(version_id)
+            if not result:
+                raise NotFoundException(f"Template version with ID {version_id} not found")
+            version = result["version"]
+            file_count = result["file_count"]
+        else:
+            version = self.version_repo.get_by_id(version_id)
+            if not version:
+                raise NotFoundException(f"Template version with ID {version_id} not found")
+            file_count = None
+        
+        # Try to find and parse app.yaml
+        parameters = []
+        
+        try:
+            # Get app manifest file
+            files = self.file_repo.get_by_version_id(version_id, include_content=True)
+            app_manifest_file = None
+            
+            for file in files:
+                if file.file_type == FileType.APP_MANIFEST or file.file_name.lower() == "app.yaml":
+                    app_manifest_file = file
+                    break
+            
+            if app_manifest_file and app_manifest_file.content:
+                # Parse the app.yaml content and extract only parameters
+                parsed_manifest = AppManifestParser.parse(app_manifest_file.content)
+                parameters = parsed_manifest.get("parameters", [])
+                
+                logger.info(
+                    f"Loaded {len(parameters)} parameters for version {version_id}"
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to parse app manifest for version {version_id}: {e}"
+            )
+        
+        # Build result dictionary with only parameters
+        result_dict = {
+            "version": version,
+            "parameters": parameters
+        }
+        
+        if file_count is not None:
+            result_dict["file_count"] = file_count
+        
+        return result_dict

@@ -111,6 +111,7 @@ def sample_version(db_session, sample_template):
     """Create a sample template version for testing."""
     version = TemplateVersion(
         template_id=sample_template.id,
+        version="0.1.0",
         git_commit_sha="abc123def456",
         is_active=True,
     )
@@ -146,11 +147,13 @@ class TestListTemplateVersions:
         """Test filtering for active versions only."""
         active_version = TemplateVersion(
             template_id=sample_template.id,
+            version="1.0.0",
             git_commit_sha="active123",
             is_active=True,
         )
         inactive_version = TemplateVersion(
             template_id=sample_template.id,
+            version="0.9.0",
             git_commit_sha="inactive456",
             is_active=False,
         )
@@ -226,6 +229,7 @@ class TestCreateTemplateVersion:
         """Test creating a new version."""
         version_data = {
             "template_id": sample_template.id,
+            "version": "0.2.0",
             "git_commit_sha": "new789commit",
             "is_active": True,
         }
@@ -242,6 +246,7 @@ class TestCreateTemplateVersion:
         """Test creating version with minimal required fields."""
         version_data = {
             "template_id": sample_template.id,
+            "version": "0.3.0",
             "git_commit_sha": "minimal123",
         }
         
@@ -297,11 +302,13 @@ class TestActivateTemplateVersion:
         # Create two versions, one inactive
         active_v1 = TemplateVersion(
             template_id=sample_template.id,
+            version="1.1.0",
             git_commit_sha="active_v1",
             is_active=True,
         )
         inactive_v2 = TemplateVersion(
             template_id=sample_template.id,
+            version="1.2.0",
             git_commit_sha="inactive_v2",
             is_active=False,
         )
@@ -337,6 +344,7 @@ class TestDeleteTemplateVersion:
         """Test deleting a non-active version."""
         inactive_version = TemplateVersion(
             template_id=sample_template.id,
+            version="0.0.1",
             git_commit_sha="to_delete",
             is_active=False,
         )
