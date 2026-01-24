@@ -11,13 +11,14 @@ from src.core.database import Base
 
 class FileType(str, Enum):
     """File type values for template version files."""
-    HEAT_TEMPLATE = "heat_template"
-    CLOUD_INIT = "cloud_init"
-    ANSIBLE_PLAYBOOK = "ansible_playbook"
-    HELM_CHART = "helm_chart"
-    SHELL_SCRIPT = "shell_script"
-    CONFIG_FILE = "config_file"
-    OTHER = "other"
+    APP_MANIFEST = "APP_MANIFEST"
+    HEAT_TEMPLATE = "HEAT_TEMPLATE"
+    CLOUD_INIT = "CLOUD_INIT"
+    ANSIBLE_PLAYBOOK = "ANSIBLE_PLAYBOOK"
+    HELM_CHART = "HELM_CHART"
+    SHELL_SCRIPT = "SHELL_SCRIPT"
+    CONFIG_FILE = "CONFIG_FILE"
+    OTHER = "OTHER"
 
 
 class TemplateVersionFile(Base):

@@ -61,34 +61,57 @@ async def get_version(
     db: DBSession,
     request_id: RequestID,
     with_file_count: bool = Query(False, description="Include file count in response"),
+    include_parameters: bool = Query(True, description="Include parameters from app.yaml"),
 ):
     """Get a single template version by ID.
     
     Optionally includes the count of files associated with this version.
+    By default, includes parameters parsed from app.yaml manifest.
     """
     service = TemplateVersionService(db)
-    result = service.get_version(str(version_id), with_file_count=with_file_count)
     
-    if with_file_count:
-        # Type guard: result should be dict when with_file_count=True
-        if not isinstance(result, dict):
-            raise ValueError("Expected dict result when with_file_count=True")
+    if include_parameters:
+        # Get version with parameters
+        result = service.get_version_with_parameters(str(version_id), with_file_count=with_file_count)
         version = result["version"]
-        version_data = TemplateVersionWithFilesResponse.model_validate(version).model_dump(mode="json")
-        version_data["file_count"] = result["file_count"]
+        parameters = result.get("parameters", [])
+        
+        if with_file_count:
+            version_data = TemplateVersionWithFilesResponse.model_validate(version).model_dump(mode="json")
+            version_data["file_count"] = result["file_count"]
+            version_data["parameters"] = parameters
+        else:
+            version_data = TemplateVersionResponse.model_validate(version).model_dump(mode="json")
+            version_data["parameters"] = parameters
+        
         return ResponseBuilder.success(
             data=version_data,
             message="Template version retrieved successfully",
             request_id=request_id,
         )
-    
-    version_response = TemplateVersionResponse.model_validate(result)
-    
-    return ResponseBuilder.success(
-        data=version_response.model_dump(mode="json"),
-        message="Template version retrieved successfully",
-        request_id=request_id,
-    )
+    else:
+        # Original behavior without parameters
+        result = service.get_version(str(version_id), with_file_count=with_file_count)
+        
+        if with_file_count:
+            if not isinstance(result, dict):
+                raise ValueError("Expected dict result when with_file_count=True")
+            version = result["version"]
+            version_data = TemplateVersionWithFilesResponse.model_validate(version).model_dump(mode="json")
+            version_data["file_count"] = result["file_count"]
+            return ResponseBuilder.success(
+                data=version_data,
+                message="Template version retrieved successfully",
+                request_id=request_id,
+            )
+        
+        version_response = TemplateVersionResponse.model_validate(result)
+        
+        return ResponseBuilder.success(
+            data=version_response.model_dump(mode="json"),
+            message="Template version retrieved successfully",
+            request_id=request_id,
+        )
 
 
 @router.get("/template/{template_id}", response_model=None)
@@ -97,19 +120,30 @@ async def list_template_versions(
     db: DBSession,
     request_id: RequestID,
     active_only: bool = Query(False, description="Return only active versions"),
+    include_parameters: bool = Query(False, description="Include parameters from app.yaml for each version"),
 ):
     """List all versions for a specific template.
     
     Returns versions ordered by creation date (newest first).
     Can be filtered to show only active versions.
+    Optionally includes parameters parsed from app.yaml for each version.
     """
     service = TemplateVersionService(db)
     versions = service.list_template_versions(str(template_id), active_only=active_only)
     
-    version_responses = [
-        TemplateVersionResponse.model_validate(version).model_dump(mode="json")
-        for version in versions
-    ]
+    if include_parameters:
+        # Include parameters for each version
+        version_responses = []
+        for version in versions:
+            result = service.get_version_with_parameters(str(version.id))
+            version_data = TemplateVersionResponse.model_validate(result["version"]).model_dump(mode="json")
+            version_data["parameters"] = result.get("parameters", [])
+            version_responses.append(version_data)
+    else:
+        version_responses = [
+            TemplateVersionResponse.model_validate(version).model_dump(mode="json")
+            for version in versions
+        ]
     
     return ResponseBuilder.success(
         data=version_responses,
@@ -123,10 +157,12 @@ async def get_active_version(
     template_id: UUID,
     db: DBSession,
     request_id: RequestID,
+    include_parameters: bool = Query(True, description="Include parameters from app.yaml"),
 ):
     """Get the active version for a specific template.
     
     Returns the currently active version or 404 if no active version exists.
+    By default, includes parameters parsed from app.yaml manifest.
     """
     service = TemplateVersionService(db)
     version = service.get_active_version(str(template_id))
@@ -138,13 +174,25 @@ async def get_active_version(
             request_id=request_id,
         )
     
-    version_response = TemplateVersionResponse.model_validate(version)
-    
-    return ResponseBuilder.success(
-        data=version_response.model_dump(mode="json"),
-        message="Active template version retrieved successfully",
-        request_id=request_id,
-    )
+    if include_parameters:
+        # Get version with parameters
+        result = service.get_version_with_parameters(str(version.id))
+        version_data = TemplateVersionResponse.model_validate(result["version"]).model_dump(mode="json")
+        version_data["parameters"] = result.get("parameters", [])
+        
+        return ResponseBuilder.success(
+            data=version_data,
+            message="Active template version retrieved successfully",
+            request_id=request_id,
+        )
+    else:
+        version_response = TemplateVersionResponse.model_validate(version)
+        
+        return ResponseBuilder.success(
+            data=version_response.model_dump(mode="json"),
+            message="Active template version retrieved successfully",
+            request_id=request_id,
+        )
 
 
 @router.patch("/{version_id}", response_model=None)
