@@ -1,4 +1,5 @@
 """Deployment database model."""
+from typing import Optional
 from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
@@ -42,8 +43,9 @@ class Deployment(Base):
         SQLEnum(DeploymentStatus), 
         default=DeploymentStatus.QUEUED
     )
-    openstack_stack_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    config_json: Mapped[str | None] = mapped_column(String, nullable=True)
+    openstack_stack_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    config_json: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    deployment_parameters: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     access_types_json: Mapped[str] = mapped_column(String, nullable=False, default='["ssh"]')
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

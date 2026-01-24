@@ -1,0 +1,64 @@
+meta {
+  name: Get Template Version Parameters
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{base_url}}/api/v1/template-version-files/version/{{version_id}}/parameters
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # Get Template Version Parameters
+  
+  Retrieves all Heat template parameters defined in the template version's app.yaml file.
+  These parameters must be provided by the user when creating a deployment.
+  
+  **Path Parameters:**
+  - `version_id`: UUID of the template version
+  
+  **Returns:** 
+  - `template_version_id`: Template version ID
+  - `parameters`: Array of parameter definitions with:
+    - `name`: Parameter name (e.g., 'instance_name', 'flavor')
+    - `type`: Parameter type (string, int, number, boolean)
+    - `required`: Whether parameter is mandatory
+    - `default`: Default value if not required
+    - `description`: Human-readable description for UI
+  
+  **Use Case:**
+  Use this endpoint to build deployment forms in the frontend.
+  The parameters returned here should be collected from the user and 
+  included in the `heat_parameters` field when creating a deployment.
+  
+  **Example Response:**
+  ```json
+  {
+    "data": {
+      "template_version_id": "abc-123",
+      "parameters": [
+        {
+          "name": "instance_name",
+          "type": "string",
+          "required": true,
+          "default": null,
+          "description": "Eindeutiger Name der Instanz/Stacks (z.B. kursX-grp1-db)."
+        },
+        {
+          "name": "flavor",
+          "type": "string",
+          "required": true,
+          "default": "gp1.small",
+          "description": "OpenStack Flavor."
+        }
+      ]
+    }
+  }
+  ```
+}

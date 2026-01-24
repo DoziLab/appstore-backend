@@ -130,16 +130,39 @@ def deploy_stack(self, deployment_id: str) -> dict:
             }
         )
         
-        # Build Heat stack parameters from config_json
+        # Build Heat stack parameters from deployment_parameters (priority) or config_json (legacy)
         stack_params = {}
-        if deployment.config_json:
+        
+        if deployment.deployment_parameters:
             try:
-                config = json.loads(deployment.config_json)
-                logger.info(f"Parsed deployment config: {config}")
+                stack_params = json.loads(deployment.deployment_parameters)
+                logger.info(f"Using Heat template parameters from deployment: {stack_params}")
                 log_service.log(
                     deployment_id=deployment_id,
                     event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
-                    message="Deployment configuration parsed",
+                    message="Heat template parameters loaded from deployment_parameters",
+                    level=DeploymentLogLevel.INFO,
+                    details={"parameters": stack_params}
+                )
+            except json.JSONDecodeError as e:
+                error_msg = f"Invalid deployment_parameters JSON: {e}"
+                logger.error(error_msg)
+                log_service.log(
+                    deployment_id=deployment_id,
+                    event_type=DeploymentLogEventType.FAILED,
+                    message=error_msg,
+                    level=DeploymentLogLevel.ERROR
+                )
+                repo.update_status(deployment_id, DeploymentStatus.FAILED)
+                return {"status": "failed", "error": error_msg}
+        elif deployment.config_json:
+            try:
+                config = json.loads(deployment.config_json)
+                logger.info(f"Parsed deployment config (legacy): {config}")
+                log_service.log(
+                    deployment_id=deployment_id,
+                    event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
+                    message="Deployment configuration parsed from config_json (legacy)",
                     level=DeploymentLogLevel.INFO,
                     details=config
                 )

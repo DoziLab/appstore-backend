@@ -11,6 +11,12 @@ class DeploymentCreate(BaseModel):
     deployment_mode: str = Field(..., description="Deployment mode (per_course, per_group, per_student)")
     config_json: Optional[str] = Field(None, description="Deployment configuration as JSON string")
     
+    # Heat template parameters (from template config.yaml)
+    heat_parameters: Optional[dict[str, Any]] = Field(
+        None,
+        description="Heat template parameters as dict (e.g., {'instance_name': 'vm1', 'flavor': 'gp1.small'})"
+    )
+    
     # Target groups/students (required depending on mode)
     group_ids: Optional[list[str]] = Field(None, description="Group IDs (required for per_group mode)")
     course_member_ids: Optional[list[str]] = Field(None, description="Course member IDs (required for per_student mode)")
@@ -50,7 +56,13 @@ class DeploymentCreate(BaseModel):
                 "group_ids": ["group-789", "group-abc"],
                 "course_member_ids": None,
                 "access_types": ["ssh", "web_url"],
-                "config_json": '{"cpu": 2, "ram": 4096}'
+                "config_json": '{"cpu": 2, "ram": 4096}',
+                "heat_parameters": {
+                    "instance_name": "kursX-grp1-db",
+                    "flavor": "gp1.small",
+                    "group_login": "group1",
+                    "db_name": "mydb"
+                }
             }
         }
     )
@@ -65,6 +77,7 @@ class DeploymentResponse(BaseModel):
     status: str = Field(..., description="Current status")
     openstack_stack_id: Optional[str] = Field(None, description="OpenStack Heat stack ID")
     config_json: Optional[str] = Field(None, description="Deployment configuration")
+    deployment_parameters: Optional[str] = Field(None, description="Heat template parameters as JSON string")
     access_types_json: str = Field(..., description="Requested access types as JSON array")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
@@ -80,6 +93,7 @@ class DeploymentResponse(BaseModel):
                 "status": "queued",
                 "openstack_stack_id": None,
                 "config_json": '{"cpu": 2, "ram": 4096}',
+                "deployment_parameters": '{"instance_name": "vm1", "flavor": "gp1.small"}',
                 "access_types_json": '["ssh", "web_url"]',
                 "created_at": "2024-11-27T10:00:00Z",
                 "updated_at": "2024-11-27T10:00:00Z"

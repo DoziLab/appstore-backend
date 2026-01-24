@@ -1,5 +1,5 @@
 import json
-from typing import Optional
+from typing import Optional, Union
 from uuid import UUID
 from sqlalchemy.orm import Session
 
@@ -27,7 +27,7 @@ class DeploymentService:
         self.openstack_repo = OpenstackProjectRepository(db)
         self.log_service = DeploymentLogService(db)
     
-    def create_deployment(self, deployment_data: DeploymentCreate, request_id: str | None = None) -> Deployment:
+    def create_deployment(self, deployment_data: DeploymentCreate, request_id: Union[str, None] = None) -> Deployment:
         """Create a new deployment and trigger async deployment task.
         
         Args:
@@ -63,6 +63,11 @@ class DeploymentService:
         # Convert access_types list to JSON string
         access_types_json = json.dumps(deployment_data.access_types or ["ssh"])
         
+        # Serialize heat_parameters to JSON if provided
+        deployment_parameters = None
+        if deployment_data.heat_parameters:
+            deployment_parameters = json.dumps(deployment_data.heat_parameters)
+        
         # Parse deployment_mode string to enum (case-insensitive)
         deployment_mode = DeploymentMode(deployment_data.deployment_mode.lower())
         
@@ -73,6 +78,7 @@ class DeploymentService:
             deployment_mode=deployment_mode,
             status=DeploymentStatus.QUEUED,
             config_json=deployment_data.config_json,
+            deployment_parameters=deployment_parameters,
             access_types_json=access_types_json,
         )
         
@@ -86,7 +92,8 @@ class DeploymentService:
                 "template_version_id": deployment_data.template_version_id,
                 "course_id": deployment_data.course_id,
                 "deployment_mode": deployment_data.deployment_mode,
-                "access_types": deployment_data.access_types
+                "access_types": deployment_data.access_types,
+                "has_heat_parameters": deployment_data.heat_parameters is not None
             },
             request_id=request_id
         )

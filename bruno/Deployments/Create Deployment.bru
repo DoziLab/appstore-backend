@@ -20,6 +20,20 @@ body:json {
     "course_id": "{{course_id}}",
     "deployment_mode": "per_course",
     "config_json": "{}",
+    "heat_parameters": {
+      "instance_name": "kursX-grp1-db",
+      "image": "Ubuntu 22.04 2025-01",
+      "flavor": "gp1.small",
+      "network": "NAT",
+      "external_network": "DHBW",
+      "group_login": "group1",
+      "group_public_key": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC...",
+      "ssh_cidr": "0.0.0.0/0",
+      "db_name": "mydb",
+      "db_user": "dbuser",
+      "db_password": "securepassword123",
+      "postgres_version": 14
+    },
     "access_types": ["ssh", "web"]
   }
 }
@@ -47,8 +61,28 @@ docs {
   - `template_version_id`: ID of the template version to deploy
   - `course_id`: ID of the course to deploy to
   - `deployment_mode`: Target mode (per_course, per_group, per_student)
-  - `config_json`: Configuration parameters as JSON string (optional)
+  - `heat_parameters`: Heat template parameters as dict (see example below)
+  - `config_json`: Legacy configuration parameters as JSON string (optional)
   - `access_types`: Array of access types (e.g., ["ssh", "web", "rdp"])
+  
+  **Heat Parameters:**
+  Use the `/template-versions/{version_id}/parameters` endpoint to get the list of
+  required and optional parameters for the template. All required parameters must be
+  provided, optional parameters will use their defaults if not specified.
+  
+  **Example Heat Parameters (PostgreSQL Group DB):**
+  ```json
+  {
+    "instance_name": "kursX-grp1-db",
+    "flavor": "gp1.small",
+    "group_login": "group1",
+    "group_public_key": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC...",
+    "db_name": "mydb",
+    "db_user": "dbuser",
+    "db_password": "securepassword123",
+    "postgres_version": 14
+  }
+  ```
   
   **Returns:** Created deployment with status QUEUED
   
