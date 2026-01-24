@@ -72,13 +72,13 @@ async def get_version(
     
     if include_parameters:
         # Get version with parameters
-        result = service.get_version_with_parameters(str(version_id), with_file_count=with_file_count)
-        version = result["version"]
-        parameters = result.get("parameters", [])
-        
+        result_with_params = service.get_version_with_parameters(str(version_id), with_file_count=with_file_count)
+        version = result_with_params["version"]
+        parameters = result_with_params.get("parameters", [])
+
         if with_file_count:
             version_data = TemplateVersionWithFilesResponse.model_validate(version).model_dump(mode="json")
-            version_data["file_count"] = result["file_count"]
+            version_data["file_count"] = result_with_params["file_count"]
             version_data["parameters"] = parameters
         else:
             version_data = TemplateVersionResponse.model_validate(version).model_dump(mode="json")
@@ -91,27 +91,25 @@ async def get_version(
         )
     else:
         # Original behavior without parameters
-        result = service.get_version(str(version_id), with_file_count=with_file_count)
-        
+        result_with_no_params = service.get_version(str(version_id), with_file_count=with_file_count)
         if with_file_count:
-            if not isinstance(result, dict):
+            if not isinstance(result_with_no_params, dict):
                 raise ValueError("Expected dict result when with_file_count=True")
-            version = result["version"]
+            version = result_with_no_params["version"]
             version_data = TemplateVersionWithFilesResponse.model_validate(version).model_dump(mode="json")
-            version_data["file_count"] = result["file_count"]
+            version_data["file_count"] = result_with_no_params["file_count"]
             return ResponseBuilder.success(
                 data=version_data,
                 message="Template version retrieved successfully",
                 request_id=request_id,
             )
-        
-        version_response = TemplateVersionResponse.model_validate(result)
-        
-        return ResponseBuilder.success(
-            data=version_response.model_dump(mode="json"),
-            message="Template version retrieved successfully",
-            request_id=request_id,
-        )
+        else:
+            version_response = TemplateVersionResponse.model_validate(result_with_no_params)
+            return ResponseBuilder.success(
+                data=version_response.model_dump(mode="json"),
+                message="Template version retrieved successfully",
+                request_id=request_id,
+            )
 
 
 @router.get("/template/{template_id}", response_model=None)

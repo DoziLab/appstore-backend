@@ -74,6 +74,7 @@ class TemplateVersionService:
         
         version = self.version_repo.create(
             template_id=version_data.template_id,
+            version=version_data.version,
             git_commit_sha=version_data.git_commit_sha,
             is_active=version_data.is_active
         )
