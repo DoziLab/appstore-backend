@@ -32,6 +32,7 @@ class Deployment(Base):
     __tablename__ = "deployments"
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    name: Mapped[str] = mapped_column(String(255), nullable=False, comment="Deployment name for identification")
     template_version_id: Mapped[str] = mapped_column(String(36), ForeignKey("template_versions.id"), nullable=False)
     course_id: Mapped[str] = mapped_column(String(36), ForeignKey("courses.id"), nullable=False)
     deployment_mode: Mapped[DeploymentMode] = mapped_column(

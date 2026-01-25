@@ -299,6 +299,7 @@ def main():
         # Create Template Version
         version = TemplateVersion(
             template_id=template.id,
+            version="1.0.0",
             git_commit_sha="v1.0.0-initial",
             is_active=True
         )

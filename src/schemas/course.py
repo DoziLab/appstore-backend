@@ -6,6 +6,7 @@ from typing import Optional
 class DeploymentSummary(BaseModel):
     """Minimal deployment info for embedding in course response."""
     id: str = Field(..., description="Deployment ID")
+    name: str = Field(..., description="Deployment name")
     template_version_id: str = Field(..., description="Template version ID")
     deployment_mode: str = Field(..., description="Deployment mode")
     status: str = Field(..., description="Current status")
