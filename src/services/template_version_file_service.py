@@ -267,6 +267,8 @@ class TemplateVersionFileService:
         Parses the app.yaml file for a template version and extracts parameter definitions
         that users must provide when creating deployments.
         
+        Supports both list format (new) and dictionary format (legacy) for parameters.
+        
         Args:
             template_version_id: Template version UUID
             
@@ -290,38 +292,80 @@ class TemplateVersionFileService:
         if not app_yaml_file.content:
             raise BadRequestException("app.yaml file has no content")
         
-        # Parse YAML
+        # Use AppManifestParser which supports list format
         try:
-            yaml_data = yaml.safe_load(app_yaml_file.content)
-        except yaml.YAMLError as e:
-            logger.error(f"Failed to parse app.yaml: {e}")
-            raise BadRequestException(f"Invalid YAML in app.yaml: {str(e)}")
+            from src.utils.app_manifest_parser import AppManifestParser
+            parsed_manifest = AppManifestParser.parse(app_yaml_file.content)
+            parameters_list = parsed_manifest.get("parameters", [])
+            logger.debug(f"Successfully parsed {len(parameters_list)} parameters using AppManifestParser")
+        except Exception as e:
+            logger.warning(f"Failed to parse app.yaml with AppManifestParser: {e}, falling back to legacy format")
+            import traceback
+            logger.debug(traceback.format_exc())
+            # Fallback to old dictionary format for backward compatibility
+            try:
+                yaml_data = yaml.safe_load(app_yaml_file.content)
+                if not isinstance(yaml_data, dict):
+                    raise BadRequestException("app.yaml must contain a YAML dictionary")
+                
+                parameters_section = yaml_data.get("parameters")
+                if not parameters_section:
+                    raise BadRequestException("app.yaml missing 'parameters' section")
+                
+                # Support both list and dict formats
+                if isinstance(parameters_section, list):
+                    # List format - convert to TemplateParameterSchema
+                    parameters_list = []
+                    for param_def in parameters_section:
+                        if not isinstance(param_def, dict):
+                            continue
+                        parameters_list.append({
+                            "name": param_def.get("name"),
+                            "type": param_def.get("type", "string"),
+                            "required": param_def.get("required", False),
+                            "default": param_def.get("default"),
+                            "description": param_def.get("description", ""),
+                            "label": param_def.get("label"),
+                            "step": param_def.get("step"),
+                            "enum": param_def.get("enum"),
+                            "hidden": param_def.get("hidden", False)
+                        })
+                elif isinstance(parameters_section, dict):
+                    # Dictionary format (legacy)
+                    parameters_list = []
+                    for param_name, param_def in parameters_section.items():
+                        if not isinstance(param_def, dict):
+                            continue
+                        parameters_list.append({
+                            "name": param_name,
+                            "type": param_def.get("type", "string"),
+                            "required": param_def.get("required", False),
+                            "default": param_def.get("default"),
+                            "description": param_def.get("description", "")
+                        })
+                else:
+                    raise BadRequestException("parameters section must be a list or dictionary")
+            except yaml.YAMLError as e:
+                logger.error(f"Failed to parse app.yaml: {e}")
+                raise BadRequestException(f"Invalid YAML in app.yaml: {str(e)}")
         
-        if not isinstance(yaml_data, dict):
-            raise BadRequestException("app.yaml must contain a YAML dictionary")
-        
-        # Extract parameters section
-        parameters_section = yaml_data.get("parameters")
-        if not parameters_section:
-            raise BadRequestException("app.yaml missing 'parameters' section")
-        
-        if not isinstance(parameters_section, dict):
-            raise BadRequestException("parameters section must be a dictionary")
-        
-        # Parse each parameter definition
+        # Convert to TemplateParameterSchema objects
         parameters = []
-        for param_name, param_def in parameters_section.items():
-            if not isinstance(param_def, dict):
-                logger.warning(f"Skipping invalid parameter '{param_name}': definition must be a dict")
+        for param_dict in parameters_list:
+            if not isinstance(param_dict, dict) or not param_dict.get("name"):
                 continue
             
             parameters.append(
                 TemplateParameterSchema(
-                    name=param_name,
-                    type=param_def.get("type", "string"),
-                    required=param_def.get("required", False),
-                    default=param_def.get("default"),
-                    description=param_def.get("description", "")
+                    name=param_dict.get("name"),
+                    type=param_dict.get("type", "string"),
+                    required=param_dict.get("required", False),
+                    default=param_dict.get("default"),
+                    description=param_dict.get("description", ""),
+                    label=param_dict.get("label"),
+                    step=param_dict.get("step"),
+                    enum=param_dict.get("enum"),
+                    hidden=param_dict.get("hidden", False)
                 )
             )
         
