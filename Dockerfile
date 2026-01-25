@@ -13,8 +13,8 @@ COPY alembic.ini .
 COPY alembic/ ./alembic/
 COPY src/ ./src/
 
-# Install Python dependencies
-RUN pip install --no-cache-dir .
+# Install Python dependencies (including dev extras for running tests inside container)
+RUN pip install --no-cache-dir ".[dev]"
 
 # Expose port
 EXPOSE 8000

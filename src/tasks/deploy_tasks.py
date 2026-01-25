@@ -6,6 +6,7 @@ from src.celery_app import celery_app
 from src.core.database import SessionLocal
 from src.models.deployment import DeploymentStatus
 from src.models.deployment_log import DeploymentLogLevel, DeploymentLogEventType
+from src.models.template_version_file import FileType
 from src.repositories.deployment_repository import DeploymentRepository
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
 from src.services.template_version_file_service import TemplateVersionFileService
@@ -130,16 +131,39 @@ def deploy_stack(self, deployment_id: str) -> dict:
             }
         )
         
-        # Build Heat stack parameters from config_json
+        # Build Heat stack parameters from deployment_parameters (priority) or config_json (legacy)
         stack_params = {}
-        if deployment.config_json:
+        
+        if deployment.deployment_parameters:
             try:
-                config = json.loads(deployment.config_json)
-                logger.info(f"Parsed deployment config: {config}")
+                stack_params = json.loads(deployment.deployment_parameters)
+                logger.info(f"Using Heat template parameters from deployment: {stack_params}")
                 log_service.log(
                     deployment_id=deployment_id,
                     event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
-                    message="Deployment configuration parsed",
+                    message="Heat template parameters loaded from deployment_parameters",
+                    level=DeploymentLogLevel.INFO,
+                    details={"parameters": stack_params}
+                )
+            except json.JSONDecodeError as e:
+                error_msg = f"Invalid deployment_parameters JSON: {e}"
+                logger.error(error_msg)
+                log_service.log(
+                    deployment_id=deployment_id,
+                    event_type=DeploymentLogEventType.FAILED,
+                    message=error_msg,
+                    level=DeploymentLogLevel.ERROR
+                )
+                repo.update_status(deployment_id, DeploymentStatus.FAILED)
+                return {"status": "failed", "error": error_msg}
+        elif deployment.config_json:
+            try:
+                config = json.loads(deployment.config_json)
+                logger.info(f"Parsed deployment config (legacy): {config}")
+                log_service.log(
+                    deployment_id=deployment_id,
+                    event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
+                    message="Deployment configuration parsed from config_json (legacy)",
                     level=DeploymentLogLevel.INFO,
                     details=config
                 )
@@ -209,11 +233,21 @@ def deploy_stack(self, deployment_id: str) -> dict:
             
             logger.info(f"Creating Heat stack: {stack_name}")
             
+            # Prepare files dictionary for get_file references in template
+            # Heat expects relative paths as used in get_file
+            files_dict = {}
+            for template_file in files:
+                if template_file.file_type == FileType.CLOUD_INIT and template_file.content:
+                    # Use path as referenced in template (e.g., ../cloud-init/user-data.yaml)
+                    files_dict['../cloud-init/user-data.yaml'] = template_file.content
+                    logger.info("Including cloud-init file in stack files")
+            
             # Create stack via OpenStack Heat API
             stack_result = heat_service.create_stack(
                 stack_name=stack_name,
                 template=heat_file.content,
                 parameters=stack_params,
+                files=files_dict if files_dict else None,
                 tags=tags,
                 timeout_mins=60
             )

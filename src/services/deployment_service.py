@@ -1,5 +1,5 @@
 import json
-from typing import Optional
+from typing import Optional, Union
 from uuid import UUID
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,8 @@ from src.models.template_version import TemplateVersion
 from src.models.course import Course
 from src.models.openstack_project import OpenstackProject
 from src.core.exceptions import NotFoundException
+from src.core.exceptions import BadRequestException
+from src.services.template_version_file_service import TemplateVersionFileService
 from src.tasks.deploy_tasks import deploy_stack
 
 
@@ -27,7 +29,7 @@ class DeploymentService:
         self.openstack_repo = OpenstackProjectRepository(db)
         self.log_service = DeploymentLogService(db)
     
-    def create_deployment(self, deployment_data: DeploymentCreate, request_id: str | None = None) -> Deployment:
+    def create_deployment(self, deployment_data: DeploymentCreate, request_id: Union[str, None] = None) -> Deployment:
         """Create a new deployment and trigger async deployment task.
         
         Args:
@@ -38,7 +40,8 @@ class DeploymentService:
             Created Deployment with status set to QUEUED
             
         Raises:
-            NotFoundException: If template_version_id or course_id does not exist
+            NotFoundException: If template_version_id or course_id does not exist, or app.yaml not found
+            BadRequestException: If required heat_parameters are missing or have invalid types
         """
         # Validate template_version_id exists
         template_version = self.db.query(TemplateVersion).filter(
@@ -63,16 +66,68 @@ class DeploymentService:
         # Convert access_types list to JSON string
         access_types_json = json.dumps(deployment_data.access_types or ["ssh"])
         
+        # Serialize heat_parameters to JSON if provided
+        deployment_parameters = None
+        # Validate template parameters required by the template version
+        template_file_service = TemplateVersionFileService(self.db)
+        try:
+            template_params_resp = template_file_service.get_template_parameters(str(template_version.id))
+            template_params_map = {p.name: p for p in template_params_resp.parameters}
+            required_params = [p.name for p in template_params_resp.parameters if p.required]
+        except NotFoundException:
+            # If app.yaml not found, bubble up as NotFoundException
+            raise
+        except Exception as e:
+            # Any parsing/validation error is translated to BadRequest
+            raise BadRequestException(f"Failed to read template parameters: {e}")
+
+        provided = deployment_data.heat_parameters or {}
+        
+        # Check for missing required parameters
+        if required_params:
+            missing = [p for p in required_params if p not in provided or provided.get(p) is None]
+            if missing:
+                raise BadRequestException(f"Missing required template parameters: {', '.join(missing)}")
+        
+        # Type validation for provided parameters
+        type_errors = []
+        for param_name, param_value in provided.items():
+            if param_name not in template_params_map:
+                # Allow extra parameters (Heat will ignore them)
+                continue
+            
+            expected_type = template_params_map[param_name].type.lower()
+            actual_value = param_value
+            
+            # Type checking based on declared parameter type
+            if expected_type == "boolean":
+                if not isinstance(actual_value, bool):
+                    type_errors.append(f"{param_name}: expected boolean, got {type(actual_value).__name__}")
+            elif expected_type in ["number", "int", "integer"]:
+                if not isinstance(actual_value, (int, float)):
+                    type_errors.append(f"{param_name}: expected number, got {type(actual_value).__name__}")
+            elif expected_type == "string":
+                if not isinstance(actual_value, str):
+                    type_errors.append(f"{param_name}: expected string, got {type(actual_value).__name__}")
+        
+        if type_errors:
+            raise BadRequestException(f"Type validation errors: {'; '.join(type_errors)}")
+
+        if deployment_data.heat_parameters:
+            deployment_parameters = json.dumps(deployment_data.heat_parameters)
+        
         # Parse deployment_mode string to enum (case-insensitive)
         deployment_mode = DeploymentMode(deployment_data.deployment_mode.lower())
         
         # Create deployment record with initial status QUEUED
         deployment = self.deployment_repo.create(
+            name=deployment_data.name,
             template_version_id=deployment_data.template_version_id,
             course_id=deployment_data.course_id,
             deployment_mode=deployment_mode,
             status=DeploymentStatus.QUEUED,
             config_json=deployment_data.config_json,
+            deployment_parameters=deployment_parameters,
             access_types_json=access_types_json,
         )
         
@@ -86,7 +141,8 @@ class DeploymentService:
                 "template_version_id": deployment_data.template_version_id,
                 "course_id": deployment_data.course_id,
                 "deployment_mode": deployment_data.deployment_mode,
-                "access_types": deployment_data.access_types
+                "access_types": deployment_data.access_types,
+                "has_heat_parameters": deployment_data.heat_parameters is not None
             },
             request_id=request_id
         )

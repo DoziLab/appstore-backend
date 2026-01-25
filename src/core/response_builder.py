@@ -132,8 +132,12 @@ class ResponseBuilder:
             timestamp=datetime.utcnow(),
             request_id=request_id,
         )
+        content = response_data.model_dump(mode="json")
+        # Provide legacy `detail` key for compatibility with tests and clients
+        if "detail" not in content:
+            content["detail"] = message
         return JSONResponse(
-            content=response_data.model_dump(mode="json"),
+            content=content,
             status_code=status_code,
         )
     
