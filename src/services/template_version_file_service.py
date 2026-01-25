@@ -282,7 +282,7 @@ class TemplateVersionFileService:
         app_yaml_file = next((f for f in files if f.file_name == "app.yaml"), None)
         
         if not app_yaml_file:
-            raise NotFoundException(f"No app.yaml file found for template version {template_version_id}")
+            raise NotFoundException(f"app.yaml file not found for template version {template_version_id}")
         
         if not app_yaml_file.content:
             raise BadRequestException("app.yaml file has no content")
