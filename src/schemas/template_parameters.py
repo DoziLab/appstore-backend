@@ -6,13 +6,17 @@ from typing import Any
 class TemplateParameterSchema(BaseModel):
     """Schema for a single Heat template parameter definition.
     
-    Extracted from template config.yaml parameters section.
+    Extracted from template app.yaml parameters section.
     """
     name: str = Field(..., description="Parameter name (e.g., 'instance_name', 'flavor')")
     type: str = Field(..., description="Parameter type (string, int, number, boolean)")
     required: bool = Field(..., description="Whether this parameter is required")
     default: Any = Field(None, description="Default value if not required")
     description: str = Field(..., description="Human-readable description for UI")
+    label: str | None = Field(None, description="Display label for the parameter in UI")
+    step: str | None = Field(None, description="Step/group name for organizing parameters in UI")
+    enum: list[Any] | None = Field(None, description="List of allowed values for this parameter")
+    hidden: bool = Field(False, description="Whether this parameter should be hidden in UI")
     
     model_config = ConfigDict(
         json_schema_extra={
@@ -21,7 +25,10 @@ class TemplateParameterSchema(BaseModel):
                 "type": "string",
                 "required": True,
                 "default": None,
-                "description": "Eindeutiger Name der Instanz/Stacks (z.B. kursX-grp1-db)."
+                "description": "Eindeutiger Name der Instanz/Stacks (z.B. kursX-grp1-db).",
+                "label": "Instanz Name",
+                "step": "template",
+                "hidden": False
             }
         }
     )
