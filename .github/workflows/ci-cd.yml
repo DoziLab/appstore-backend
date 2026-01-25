@@ -92,7 +92,7 @@ jobs:
             
             docker compose pull
             
-            docker compose up -d --force-recreate --remove-orphans
+            docker compose up api celery-worker -d --force-recreate --remove-orphans
             
             docker compose exec -T api alembic upgrade head
             
