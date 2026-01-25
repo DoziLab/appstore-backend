@@ -6,7 +6,7 @@ from typing import Optional, Any
 
 class DeploymentCreate(BaseModel):
     """Schema for creating a deployment."""
-    name: str = Field(..., description="Deployment name for identification", max_length=255)
+    name: Optional[str] = Field(None, description="Deployment name for identification", max_length=255)
     template_version_id: str = Field(..., description="Template version ID to deploy")
     course_id: str = Field(..., description="Course ID")
     deployment_mode: str = Field(..., description="Deployment mode (per_course, per_group, per_student)")

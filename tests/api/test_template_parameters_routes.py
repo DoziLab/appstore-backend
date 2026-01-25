@@ -111,6 +111,7 @@ def sample_version(db_session, sample_template):
     """Create a sample template version for testing."""
     version = TemplateVersion(
         template_id=sample_template.id,
+        version="1.0.0",
         git_commit_sha="abc123def456",
         is_active=True,
     )
