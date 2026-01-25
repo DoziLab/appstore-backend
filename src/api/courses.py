@@ -107,6 +107,29 @@ async def list_my_courses(
     )
 
 
+@router.get("/{course_id}", response_model=None)
+async def get_course(
+    course_id: UUID,
+    db: DBSession,
+    request_id: RequestID,
+    current_user: CurrentUser,
+):
+    """Get a single course by ID.
+    
+    Returns complete course details including metadata and timestamps.
+    """
+    service = CourseService(db)
+    course = service.get_course(str(course_id))
+    
+    course_response = CourseResponse.model_validate(course)
+    
+    return ResponseBuilder.success(
+        data=course_response.model_dump(mode="json"),
+        message="Course retrieved successfully",
+        request_id=request_id,
+    )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=None)
 async def create_course(
     course_data: CourseCreate,
@@ -235,29 +258,6 @@ async def list_course_members(
     return ResponseBuilder.success(
         data=member_responses,
         message="Course members retrieved successfully",
-        request_id=request_id,
-    )
-
-
-@router.get("/{course_id}", response_model=None)
-async def get_course(
-    course_id: UUID,
-    db: DBSession,
-    request_id: RequestID,
-    current_user: CurrentUser,
-):
-    """Get a single course by ID.
-    
-    Returns complete course details including metadata and timestamps.
-    """
-    service = CourseService(db)
-    course = service.get_course(str(course_id))
-    
-    course_response = CourseResponse.model_validate(course)
-    
-    return ResponseBuilder.success(
-        data=course_response.model_dump(mode="json"),
-        message="Course retrieved successfully",
         request_id=request_id,
     )
 

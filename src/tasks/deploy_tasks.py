@@ -1,12 +1,15 @@
 """Deploy tasks for Celery."""
 import json
 import logging
+import secrets
+import string
 from uuid import UUID
 from src.celery_app import celery_app
 from src.core.database import SessionLocal
-from src.models.deployment import DeploymentStatus
+from src.models.deployment import DeploymentStatus, DeploymentMode
 from src.models.deployment_log import DeploymentLogLevel, DeploymentLogEventType
 from src.models.template_version_file import FileType
+from src.models.course_member import CourseMember
 from src.repositories.deployment_repository import DeploymentRepository
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
 from src.services.template_version_file_service import TemplateVersionFileService
@@ -179,6 +182,69 @@ def deploy_stack(self, deployment_id: str) -> dict:
                 )
                 repo.update_status(deployment_id, DeploymentStatus.FAILED)
                 return {"status": "failed", "error": error_msg}
+        
+        # Generate students parameter for per_course mode if not already provided
+        if deployment.deployment_mode == DeploymentMode.PER_COURSE and "students" not in stack_params:
+            logger.info(f"Generating students parameter for per_course deployment")
+            
+            # Get all course members (students) for this course
+            course_members = (
+                db.query(CourseMember)
+                .filter(CourseMember.course_id == deployment.course_id)
+                .filter(CourseMember.left_at.is_(None))  # Only active members
+                .all()
+            )
+            
+            if not course_members:
+                error_msg = f"No active course members found for course {deployment.course_id}"
+                logger.error(error_msg)
+                log_service.log(
+                    deployment_id=deployment_id,
+                    event_type=DeploymentLogEventType.FAILED,
+                    message=error_msg,
+                    level=DeploymentLogLevel.ERROR
+                )
+                repo.update_status(deployment_id, DeploymentStatus.FAILED)
+                return {"status": "failed", "error": error_msg}
+            
+            # Generate students dict: username -> password
+            # Use course_member_id as username base for uniqueness
+            students_dict = {}
+            
+            def generate_password(length: int = 16) -> str:
+                """Generate a secure random password."""
+                alphabet = string.ascii_letters + string.digits + string.punctuation
+                # Ensure at least one of each required type
+                password = [
+                    secrets.choice(string.ascii_lowercase),
+                    secrets.choice(string.ascii_uppercase),
+                    secrets.choice(string.digits)
+                ]
+                # Fill the rest randomly
+                password.extend(secrets.choice(alphabet) for _ in range(length - 4))
+                # Shuffle to avoid predictable pattern
+                secrets.SystemRandom().shuffle(password)
+                return ''.join(password)
+            
+            for member in course_members:
+                # Generate username from course_member_id (first 8 chars for readability)
+                username = f"student-{member.id[:8]}"
+                # Generate secure password
+                password = generate_password(16)
+                students_dict[username] = password
+            
+            # Convert to JSON string as required by Heat template
+            students_json = json.dumps(students_dict)
+            stack_params["students"] = students_json
+            
+            logger.info(f"Generated students parameter for {len(course_members)} students")
+            log_service.log(
+                deployment_id=deployment_id,
+                event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
+                message=f"Generated students parameter for {len(course_members)} course members",
+                level=DeploymentLogLevel.INFO,
+                details={"student_count": len(course_members)}
+            )
         
         # Get lecturer's OpenStack project from database
         openstack_repo = OpenstackProjectRepository(db)
