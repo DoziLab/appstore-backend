@@ -117,13 +117,11 @@ class CourseMemberResponse(BaseModel):
 
 class CourseGroupCreate(BaseModel):
     """Schema for creating a course group."""
-    course_id: str = Field(..., description="Course ID")
     name: str = Field(..., description="Group name", max_length=255)
     
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "course_id": "course-123",
                 "name": "Group A"
             }
         }
@@ -147,6 +145,19 @@ class CourseGroupResponse(BaseModel):
                 "name": "Group A",
                 "created_at": "2024-11-27T10:00:00Z",
                 "updated_at": "2024-11-27T10:00:00Z"
+            }
+        }
+    )
+
+
+class GroupMemberAdd(BaseModel):
+    """Schema for adding members to a group."""
+    member_ids: list[str] = Field(..., description="List of course member IDs to add to the group")
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "member_ids": ["course_member_id_1", "course_member_id_2"]
             }
         }
     )
