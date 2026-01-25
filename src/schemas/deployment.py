@@ -50,18 +50,25 @@ class DeploymentCreate(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "template_version_id": "version-123",
+                "template_version_id": "53e20875-6143-4a08-8a42-76cbb5833e24",
                 "course_id": "course-456",
-                "deployment_mode": "per_group",
-                "group_ids": ["group-789", "group-abc"],
+                "deployment_mode": "per_course",
+                "group_ids": None,
                 "course_member_ids": None,
                 "access_types": ["ssh", "web_url"],
-                "config_json": '{"cpu": 2, "ram": 4096}',
+                "config_json": None,
                 "heat_parameters": {
-                    "instance_name": "kursX-grp1-db",
+                    "stack_label": "kurs-ws2024",
+                    "image": "Ubuntu 22.04 2025-01",
                     "flavor": "gp1.small",
-                    "group_login": "group1",
-                    "db_name": "mydb"
+                    "ssh_cidr": "141.72.0.0/16",
+                    "students": '{"alice":"SecureP@ss1","bob":"SecureP@ss2"}',
+                    "force_password_change": True,
+                    "workdir": "work",
+                    "pw_min_length": 12,
+                    "pw_require_digit": True,
+                    "pw_require_upper": True,
+                    "pw_require_special": True
                 }
             }
         }
