@@ -11,8 +11,9 @@ from src.models.openstack_project import OpenstackProject
 logger = logging.getLogger(__name__)
 
 
-MOCK_APP_YAML = """app:
-  name: dozilab-multistudent-ubuntu
+MULTISTUDENT_APP_YAML = """app:
+  name: multiuser-ubuntu
+  label: Multi-User Ubuntu
   version: 1.0.0
   description: >
     Deploy one Ubuntu VM for a course with multiple local student accounts (username/password),
@@ -27,70 +28,126 @@ artifacts:
 # Parameters exposed to the AppStore UI.
 # Keep only what is meaningful for users; platform-fixed settings are hidden or fixed via allowed_values in Heat.
 parameters:
-  stack_label:
+  # --- VM basics ---
+  - name: stack_label
+    label: Label
+    step: template
     type: string
     default: multistudent
     required: true
-    description: Short course/stack label used in VM name and metadata (e.g. kurs-01). Must match ^[a-z0-9][a-z0-9-]{0,30}$
+    description: >
+      Short course/stack label used in VM name and metadata (e.g. kurs-01).
+      Must match: ^[a-z0-9][a-z0-9-]{0,30}$
 
-  image:
+  - name: image
+    label: Image
+    step: konfiguration
     type: string
     default: "Ubuntu 22.04 2025-01"
+    enum:
+      - "Ubuntu 22.04 2025-01"
+      - "Ubuntu 24.04 2025-01"
+      - "Ubuntu 24.04 2026-01"
     required: true
     description: "Base image for the VM (restricted to known good images)."
 
-  flavor:
+  - name: flavor
+    label: Flavor
+    step: konfiguration
     type: string
     default: "gp1.small"
+    enum:
+      - "gp1.small"
+      - "gp1.medium"
     required: true
     description: "VM size. Keep small/medium for student workloads."
 
-  ssh_cidr:
+  # --- Access control / networking ---
+  - name: ssh_cidr
+    label: SSH erlaubtes Netz (CIDR)
+    step: netzwerk
     type: string
     default: "141.72.0.0/16"
     required: true
-    description: IPv4 CIDR allowed to SSH and ICMP (ping). Default is DHBW/VPN range. Examples 141.72.0.0/16 (VPN/Campus) or 1.2.3.4/32 (single IP).
+    description: >
+      IPv4 CIDR allowed to SSH and ICMP (ping). Default is DHBW/VPN range.
+      Examples: 141.72.0.0/16 (VPN/Campus) or 1.2.3.4/32 (single IP).
 
-  students:
-    type: string
-    required: true
-    description: JSON string mapping username to password. Example {"alice":"pw","bob":"pw2"} (must use double quotes).
 
-  force_password_change:
+  - name: force_password_change
+    label: Passwortwechsel beim ersten Login
+    step: zugriff
     type: boolean
     default: true
     required: true
     description: "If true, student users must change their password on first login."
 
-  workdir:
+  - name: workdir
+    label: Arbeitsordner
+    step: zugriff
     type: string
     default: "work"
     required: true
     description: "Directory created under each student's home and used as default login directory."
 
-  pw_min_length:
+  # --- Password policy (showcase / configurable in V1) ---
+  - name: pw_min_length
+    label: Minimale Passwortlänge
+    step: zugriff
     type: number
     default: 12
     required: true
     description: "Minimum password length enforced via PAM pwquality."
 
-  pw_require_digit:
+  - name: pw_require_digit
+    label: Ziffer erforderlich
+    step: zugriff
     type: boolean
     default: true
     required: true
     description: "Require at least one digit."
 
-  pw_require_upper:
+  - name: pw_require_upper
+    label: Großbuchstabe erforderlich
+    step: zugriff
     type: boolean
     default: true
     required: true
     description: "Require at least one uppercase letter."
 
-  pw_require_special:
+  - name: pw_require_special
+    label: Sonderzeichen erforderlich
+    step: zugriff
     type: boolean
     default: true
     required: true
     description: "Require at least one special character."
+
+  # --- Platform-fixed parameters (not shown in UI) ---
+  # Heat enforces allowed_values for these anyway. Keeping them hidden avoids confusion.
+  - name: network
+    label: Internes Netzwerk
+    step: netzwerk
+    type: string
+    default: "NAT"
+    hidden: true
+    description: "Internal network (fixed)."
+
+  - name: external_network
+    label: Externes Netzwerk (Floating IP)
+    step: netzwerk
+    type: string
+    default: "DHBW"
+    hidden: true
+    description: "External/FloatingIP network (fixed)."
+
+  - name: key_name
+    label: Admin SSH-Key
+    step: zugriff
+    type: string
+    default: "heat-bastion-key"
+    hidden: true
+    description: "Admin/support SSH keypair (fixed in v1)."
 
 outputs:
   - name: floating_ip
@@ -110,7 +167,82 @@ outputs:
     description: "Marker string that appears in Nova console log when provisioning is done. Also nach was müsst ihr im log ausschau halten dass ihr wisst dass die VM Ready ist"
 """
 
-MOCK_HEAT_TEMPLATE = """heat_template_version: 2018-08-31
+POSTGRES_APP_YAML = """
+id: postgres-group-db
+name: PostgreSQL Group Database
+version: 1.0.0
+description: "Provisioniert pro Gruppe eine Ubuntu-VM mit PostgreSQL. Zugriff erfolgt sicher via SSH-Tunnel (Postgres nur localhost)."
+
+parameters:
+  instance_name:
+    type: string
+    required: true
+    description: "Eindeutiger Name der Instanz/Stacks (z.B. kursX-grp1-db)."
+
+  image:
+    type: string
+    required: true
+    default: "Ubuntu 22.04 2025-01"
+    description: "OpenStack Image Name/ID."
+
+  flavor:
+    type: string
+    required: true
+    default: "gp1.small"
+    description: "OpenStack Flavor."
+
+  network:
+    type: string
+    required: true
+    default: "NAT"
+    description: "Internes Tenant-Netzwerk."
+
+  external_network:
+    type: string
+    required: true
+    default: "DHBW"
+    description: "Externes Netzwerk für Floating IPs."
+
+  group_login:
+    type: string
+    required: true
+    description: "Linux Username für Gruppen-Zugang (SSH)."
+
+  group_public_key:
+    type: string
+    required: true
+    description: "SSH Public Key der Gruppe."
+
+  ssh_cidr:
+    type: string
+    required: false
+    default: "0.0.0.0/0"
+    description: "CIDR, von dem aus SSH erreichbar ist (sicherer: deine IP/32)."
+
+  db_name:
+    type: string
+    required: true
+    description: "Name der PostgreSQL Datenbank."
+
+  db_user:
+    type: string
+    required: true
+    description: "Name des PostgreSQL Users."
+
+  db_password:
+    type: string
+    required: true
+    description: "Passwort für den PostgreSQL User (kommt vom Backend)."
+
+  postgres_version:
+    type: int
+    required: false
+    default: 14
+    description: "PostgreSQL Major-Version (Ubuntu repo)."
+
+"""
+
+MULTISTUDENT_HEAT_TEMPLATE = """heat_template_version: 2018-08-31
 
 description: >
   DoziLab Multi-Student VM: Ubuntu VM + Floating IP + password SSH for multiple users.
@@ -300,7 +432,157 @@ outputs:
           STACK: { get_param: stack_label }
 """
 
-MOCK_CLOUD_INIT = """#cloud-config
+POSTGRES_HEAT_TEMPLATE = """
+heat_template_version: 2018-08-31
+description: PostgreSQL Group DB (Floating IP + SSH tunnel; Postgres localhost only)
+
+parameters:
+  instance_name:
+    type: string
+
+  image:
+    type: string
+    default: "Ubuntu 22.04 2025-01"
+
+  flavor:
+    type: string
+    default: "gp1.small"
+
+  network:
+    type: string
+    default: "NAT"
+
+  external_network:
+    type: string
+    default: "DHBW"
+
+  group_login:
+    type: string
+    constraints:
+      - length: { min: 1, max: 32 }
+
+  group_public_key:
+    type: string
+
+  ssh_cidr:
+    type: string
+    default: "0.0.0.0/0"
+
+  db_name:
+    type: string
+
+  db_user:
+    type: string
+
+  db_password:
+    type: string
+    hidden: true
+
+  postgres_version:
+    type: number
+    default: 14
+
+resources:
+  secgroup:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      description: Allow SSH + ICMP (Postgres via SSH tunnel only)
+      rules:
+        - direction: ingress
+          ethertype: IPv4
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: { get_param: ssh_cidr }
+
+        - direction: ingress
+          ethertype: IPv4
+          protocol: icmp
+          remote_ip_prefix: 0.0.0.0/0
+
+  port:
+    type: OS::Neutron::Port
+    properties:
+      network: { get_param: network }
+      security_groups:
+        - { get_resource: secgroup }
+
+  server:
+    type: OS::Nova::Server
+    properties:
+      name: { get_param: instance_name }
+      image: { get_param: image }
+      flavor: { get_param: flavor }
+
+      user_data_format: RAW
+      user_data:
+        str_replace:
+          template: { get_file: ../cloud-init/user-data.yaml }
+          params:
+            __GROUP_LOGIN__: { get_param: group_login }
+            __GROUP_PUBKEY__: { get_param: group_public_key }
+            __DB_NAME__: { get_param: db_name }
+            __DB_USER__: { get_param: db_user }
+            __DB_PASS__: { get_param: db_password }
+            __PG_VERSION__: { get_param: postgres_version }
+
+      networks:
+        - port: { get_resource: port }
+
+  fip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: { get_param: external_network }
+
+  fip_assoc:
+    type: OS::Neutron::FloatingIPAssociation
+    properties:
+      floatingip_id: { get_resource: fip }
+      port_id: { get_resource: port }
+
+outputs:
+  floating_ip:
+    description: Public Floating IP
+    value: { get_attr: [fip, floating_ip_address] }
+
+  ssh_user:
+    description: SSH username for group access
+    value: { get_param: group_login }
+
+  ssh_port:
+    description: SSH port
+    value: 22
+
+  private_ip:
+    description: Private IP on tenant network
+    value: { get_attr: [port, fixed_ips, 0, ip_address] }
+
+  db_name:
+    description: PostgreSQL database name
+    value: { get_param: db_name }
+
+  db_user:
+    description: PostgreSQL username
+    value: { get_param: db_user }
+
+  server_id:
+    description: Nova server ID
+    value: { get_resource: server }
+
+  ssh_tunnel_hint:
+    description: How to access Postgres securely via SSH tunnel
+    value:
+      str_replace:
+        template: "ssh -i <private_key> -L 5432:localhost:5432 USER@FIP  # then: psql -h 127.0.0.1 -p 5432 -U DBUSER DBNAME"
+        params:
+          USER: { get_param: group_login }
+          FIP: { get_attr: [fip, floating_ip_address] }
+          DBUSER: { get_param: db_user }
+          DBNAME: { get_param: db_name }
+
+"""
+
+MULTISTUDENT_CLOUD_INIT = """#cloud-config
 package_update: true
 package_upgrade: false
 
@@ -482,15 +764,98 @@ runcmd:
 final_message: "DoziLab multi-user VM: cloud-init finished"
 """
 
+POSTGRES_CLOUD_INIT = """
+#cloud-config
+package_update: true
+package_upgrade: false
 
-def create_mock_user(db: Session) -> User:
+ssh_pwauth: false
+disable_root: true
+
+users:
+  - default
+  - name: __GROUP_LOGIN__
+    gecos: "Group Login"
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "__GROUP_PUBKEY__"
+
+write_files:
+  - path: /usr/local/bin/dozilab-postgres-init.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+
+      PG_VER="__PG_VERSION__"
+      DB_NAME="__DB_NAME__"
+      DB_USER="__DB_USER__"
+      DB_PASS="__DB_PASS__"
+
+      echo "Installing PostgreSQL ${PG_VER}..."
+      apt-get update -y
+      apt-get install -y "postgresql-${PG_VER}" "postgresql-client-${PG_VER}"
+
+      # Ensure Postgres listens only on localhost (safe default)
+      PG_CONF="/etc/postgresql/${PG_VER}/main/postgresql.conf"
+      HBA_CONF="/etc/postgresql/${PG_VER}/main/pg_hba.conf"
+
+      sed -i "s/^#\\?listen_addresses\\s*=.*$/listen_addresses = 'localhost'/" "${PG_CONF}"
+
+      # Ensure local auth is allowed
+      # Keep defaults, but we ensure password auth for local connections to the created user
+      if ! grep -qE "host\\s+${DB_NAME}\\s+${DB_USER}\\s+127\\.0\\.0\\.1/32\\s+scram-sha-256" "${HBA_CONF}"; then
+        echo "host ${DB_NAME} ${DB_USER} 127.0.0.1/32 scram-sha-256" >> "${HBA_CONF}"
+      fi
+
+      systemctl enable postgresql
+      systemctl restart postgresql
+
+      echo "Creating DB/User..."
+      # Create user (idempotent-ish)
+      sudo -u postgres psql -v ON_ERROR_STOP=1 <<SQL
+      DO \$\$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${DB_USER}') THEN
+          CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_PASS}';
+        ELSE
+          ALTER ROLE ${DB_USER} WITH PASSWORD '${DB_PASS}';
+        END IF;
+      END
+      \$\$
+      ;
+      SQL
+
+      # Create database owned by user if not exists
+      sudo -u postgres psql -v ON_ERROR_STOP=1 <<SQL
+      DO \$\$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}') THEN
+          CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};
+        END IF;
+      END
+      \$\$
+      ;
+      SQL
+
+      echo "PostgreSQL ready. Access via SSH tunnel only."
+
+runcmd:
+  - /usr/local/bin/dozilab-postgres-init.sh
+
+"""
+
+
+def create_lecturer_user(db: Session) -> User:
     """Create or get mock development user."""
-    existing_user = db.query(User).filter(User.external_id == "dev-user-mock").first()
+    existing_user = db.query(User).filter(User.external_id == "b2767751-c2d0-4d09-9400-ad520edbfe3c").first()
     if existing_user:
         return existing_user
     
     user = User(
-        external_id="dev-user-mock"
+        external_id="b2767751-c2d0-4d09-9400-ad520edbfe3c"
     )
     db.add(user)
     db.commit()
@@ -499,82 +864,44 @@ def create_mock_user(db: Session) -> User:
     return user
 
 
-def create_mock_openstack_project(db: Session, user_id: str) -> OpenstackProject:
-    """Create or get mock OpenStack project for development.
-    
-    Note: This uses placeholder credentials. In production, real credentials
-    must be provided via the API.
-    """
-    existing = db.query(OpenstackProject).filter(
-        OpenstackProject.owner_user_id == user_id
-    ).first()
-    
-    if existing:
-        logger.info(f"Mock OpenStack project already exists: {existing.openstack_project_name}")
-        return existing
-    
-    # Create with placeholder credentials (these won't work with real OpenStack)
-    openstack_project = OpenstackProject(
-        owner_user_id=user_id,
-        openstack_project_id="mock-project-id",
-        openstack_project_name="Mock Development Project",
-        auth_url="http://localhost:5000/v3",
-        username="mock-user",
-        password="mock-password",  # Will be encrypted automatically
-        user_domain_name="Default",
-        region_name="RegionOne"
-    )
-    db.add(openstack_project)
-    db.commit()
-    db.refresh(openstack_project)
-    logger.info(f"Created mock OpenStack project: {openstack_project.openstack_project_name}")
-    return openstack_project
-
-
 def create_mock_templates(db: Session, owner_id: str) -> list[Template]:
     """Create mock templates."""
     templates_data = [
         {
-            "name": "Ubuntu VM",
-            "description": "Simple Ubuntu 22.04 VM template for testing and development",
-            "repo_url": "https://github.com/example/ubuntu-vm-template",
+            "name": "Multi-User Ubuntu",
+            "description": "Deploy one Ubuntu VM for a course with multiple local student accounts (username/password), SSH allowed only from DHBW/VPN CIDR, and a Floating IP on DHBW. Backend can wait for DOZILAB_READY marker in the Nova console log.",
+            "repo_url": "https://github.com/dozilab/appstore-templates",
+            "icon_url": "mdi:server-network",
             "visibility": TemplateVisibility.PUBLIC,
             "approval_status": TemplateApprovalStatus.APPROVED,
         },
-        {
-            "name": "Docker Host",
-            "description": "Ubuntu VM pre-configured with Docker and Docker Compose",
-            "repo_url": "https://github.com/example/docker-host-template",
-            "visibility": TemplateVisibility.PUBLIC,
-            "approval_status": TemplateApprovalStatus.APPROVED,
-        },
-        {
-            "name": "Kubernetes Node",
-            "description": "K8s worker node template (private, pending approval)",
-            "repo_url": "https://github.com/example/k8s-node-template",
-            "visibility": TemplateVisibility.PRIVATE,
-            "approval_status": TemplateApprovalStatus.PENDING,
-        },
-    ]
+            ]
     
     templates = []
     for data in templates_data:
         # Check if template already exists
         existing = db.query(Template).filter(Template.name == data["name"]).first()
         if existing:
+            logger.info(f"Template '{data['name']}' already exists, skipping creation (ID: {existing.id})")
             templates.append(existing)
             continue
         
-        template = Template(
-            owner_id=owner_id,
-            **data
-        )
-        db.add(template)
-        db.commit()
-        db.refresh(template)
-        templates.append(template)
-        logger.info(f"Created template: {template.name}")
+        try:
+            template = Template(
+                owner_id=owner_id,
+                **data
+            )
+            db.add(template)
+            db.commit()
+            db.refresh(template)
+            templates.append(template)
+            logger.info(f"Created template: {template.name} (ID: {template.id})")
+        except Exception as e:
+            logger.error(f"Failed to create template '{data['name']}': {e}")
+            db.rollback()
+            raise
     
+    logger.info(f"Total templates: {len(templates)} (created or existing)")
     return templates
 
 
@@ -589,70 +916,121 @@ def create_mock_template_versions(db: Session, templates: list[Template]) -> lis
         ).first()
         
         if existing:
+            logger.info(f"Template version already exists for '{template.name}', skipping creation (Version ID: {existing.id})")
             versions.append(existing)
             continue
         
-        version = TemplateVersion(
-            template_id=template.id,
-            version="1.0.0",
-            git_commit_sha=f"abc123{template.id[:6]}",
-            is_active=True
-        )
-        db.add(version)
-        db.commit()
-        db.refresh(version)
-        versions.append(version)
-        logger.info(f"Created version for template: {template.name}")
+        try:
+            version = TemplateVersion(
+                template_id=template.id,
+                version="1.0.0",
+                git_commit_sha=f"v1.0.0-{template.name.lower().replace(' ', '-')}",
+                is_active=True
+            )
+            db.add(version)
+            db.commit()
+            db.refresh(version)
+            versions.append(version)
+            logger.info(f"Created version for template: {template.name} (Version ID: {version.id})")
+        except Exception as e:
+            logger.error(f"Failed to create version for template '{template.name}': {e}")
+            db.rollback()
+            raise
     
     return versions
 
 
 def create_mock_template_files(db: Session, versions: list[TemplateVersion]) -> None:
     """Create mock template version files."""
+    files_created = 0
+    files_skipped = 0
+    files_failed = 0
+    
     for version in versions:
-        # Check if files already exist
-        existing_files = db.query(TemplateVersionFile).filter(
-            TemplateVersionFile.template_version_id == version.id
-        ).count()
-        
-        if existing_files > 0:
-            continue
-        
-        # Create app.yaml
-        app_yaml = TemplateVersionFile(
-            template_version_id=version.id,
-            file_name="app.yaml",
-            file_type=FileType.CONFIG_FILE,
-            file_path="app.yaml",
-            content=MOCK_APP_YAML,
-            is_primary=False
-        )
-        db.add(app_yaml)
-        
-        # Create heat template
-        heat_template = TemplateVersionFile(
-            template_version_id=version.id,
-            file_name="template.yaml",
-            file_type=FileType.HEAT_TEMPLATE,
-            file_path="heat/template.yaml",
-            content=MOCK_HEAT_TEMPLATE,
-            is_primary=True
-        )
-        db.add(heat_template)
-        
-        # Create cloud-init user-data
-        cloud_init = TemplateVersionFile(
-            template_version_id=version.id,
-            file_name="user-data.yaml",
-            file_type=FileType.CLOUD_INIT,
-            file_path="cloud-init/user-data.yaml",
-            content=MOCK_CLOUD_INIT,
-            is_primary=False
-        )
-        db.add(cloud_init)
-        
-        db.commit()
-        logger.info(f"Created files for version: {version.id}")
+        try:
+            # Check if files already exist
+            existing_files = db.query(TemplateVersionFile).filter(
+                TemplateVersionFile.template_version_id == version.id
+            ).count()
+            
+            if existing_files > 0:
+                logger.info(f"Files already exist for version {version.id}, skipping (count: {existing_files})")
+                files_skipped += 1
+                continue
+            
+            # Get template to determine which files to create
+            template = db.query(Template).filter(Template.id == version.template_id).first()
+            if not template:
+                logger.warning(f"Template not found for version {version.id} (template_id: {version.template_id})")
+                files_failed += 1
+                continue
+            
+            logger.info(f"Creating files for version {version.id} (template: {template.name})")
+            
+            # Determine which template files to use based on template name
+            if template.name == "Multi-User Ubuntu":
+                app_yaml_content = MULTISTUDENT_APP_YAML
+                heat_template_content = MULTISTUDENT_HEAT_TEMPLATE
+                cloud_init_content = MULTISTUDENT_CLOUD_INIT
+                heat_file_name = "main.yaml"
+                heat_file_path = "heat/main.yaml"
+            elif template.name == "PostgreSQL Group Database":
+                app_yaml_content = POSTGRES_APP_YAML
+                heat_template_content = POSTGRES_HEAT_TEMPLATE
+                cloud_init_content = POSTGRES_CLOUD_INIT
+                heat_file_name = "main.yaml"
+                heat_file_path = "heat/main.yaml"
+            else:
+                logger.warning(f"Unknown template name '{template.name}' for version {version.id}, skipping file creation")
+                files_failed += 1
+                continue
+            
+            # Create app.yaml
+            app_yaml = TemplateVersionFile(
+                template_version_id=version.id,
+                file_name="app.yaml",
+                file_type=FileType.APP_MANIFEST,
+                file_path="app.yaml",
+                content=app_yaml_content,
+                is_primary=False
+            )
+            db.add(app_yaml)
+            logger.debug(f"Added app.yaml for version {version.id}")
+            
+            # Create heat template
+            heat_template = TemplateVersionFile(
+                template_version_id=version.id,
+                file_name=heat_file_name,
+                file_type=FileType.HEAT_TEMPLATE,
+                file_path=heat_file_path,
+                content=heat_template_content,
+                is_primary=True
+            )
+            db.add(heat_template)
+            logger.debug(f"Added heat template for version {version.id}")
+            
+            # Create cloud-init user-data
+            cloud_init = TemplateVersionFile(
+                template_version_id=version.id,
+                file_name="user-data.yaml",
+                file_type=FileType.CLOUD_INIT,
+                file_path="cloud-init/user-data.yaml",
+                content=cloud_init_content,
+                is_primary=False
+            )
+            db.add(cloud_init)
+            logger.debug(f"Added cloud-init for version {version.id}")
+            
+            db.commit()
+            files_created += 1
+            logger.info(f"✅ Created 3 files for version: {version.id} (template: {template.name})")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to create files for version {version.id}: {e}", exc_info=True)
+            db.rollback()
+            files_failed += 1
+    
+    logger.info(f"Template files summary: {files_created} created, {files_skipped} skipped, {files_failed} failed")
 
 
 def seed_mock_data(db: Session) -> None:
@@ -665,23 +1043,30 @@ def seed_mock_data(db: Session) -> None:
         logger.info("Starting mock data seeding...")
         
         # Create mock user
-        user = create_mock_user(db)
-        
-        # Create mock OpenStack project for deployments
-        create_mock_openstack_project(db, user.id)
+        user = create_lecturer_user(db)
+        logger.info(f"User ready: {user.id} (external_id: {user.external_id})")
         
         # Create templates
         templates = create_mock_templates(db, user.id)
+        if not templates:
+            logger.warning("No templates were created or found!")
+            return
+        logger.info(f"Templates ready: {len(templates)} templates")
         
         # Create versions
         versions = create_mock_template_versions(db, templates)
+        if not versions:
+            logger.warning("No template versions were created or found!")
+            return
+        logger.info(f"Template versions ready: {len(versions)} versions")
         
         # Create files
         create_mock_template_files(db, versions)
+        logger.info(f"Template files created for {len(versions)} versions")
         
         logger.info("Mock data seeding completed successfully!")
         
     except Exception as e:
-        logger.error(f"Failed to seed mock data: {e}")
+        logger.error(f"Failed to seed mock data: {e}", exc_info=True)
         db.rollback()
         raise
