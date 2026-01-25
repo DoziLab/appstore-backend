@@ -6,7 +6,6 @@ from src.models.template import Template, TemplateVisibility, TemplateApprovalSt
 from src.models.template_version import TemplateVersion
 from src.models.template_version_file import TemplateVersionFile, FileType
 from src.models.user import User
-from src.models.openstack_project import OpenstackProject
 
 logger = logging.getLogger(__name__)
 

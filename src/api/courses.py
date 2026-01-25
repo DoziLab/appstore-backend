@@ -510,13 +510,13 @@ async def add_group_members(
     # Build response
     member_responses = []
     for gm in new_members:
-        member_data = {
+        member_response_data = {
             "id": gm.id,
             "group_id": gm.group_id,
             "course_member_id": gm.course_member_id,
             "joined_at": gm.joined_at.isoformat() if gm.joined_at else None,
         }
-        member_responses.append(member_data)
+        member_responses.append(member_response_data)
     
     return ResponseBuilder.created(
         data=member_responses,

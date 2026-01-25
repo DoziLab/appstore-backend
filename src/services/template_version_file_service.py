@@ -293,6 +293,7 @@ class TemplateVersionFileService:
             raise BadRequestException("app.yaml file has no content")
         
         # Use AppManifestParser which supports list format
+        parameters_list = None
         try:
             from src.utils.app_manifest_parser import AppManifestParser
             parsed_manifest = AppManifestParser.parse(app_yaml_file.content)
@@ -302,7 +303,10 @@ class TemplateVersionFileService:
             logger.warning(f"Failed to parse app.yaml with AppManifestParser: {e}, falling back to legacy format")
             import traceback
             logger.debug(traceback.format_exc())
-            # Fallback to old dictionary format for backward compatibility
+        
+        # Fallback to old dictionary format if AppManifestParser failed or returned no parameters
+        if parameters_list is None or len(parameters_list) == 0:
+            logger.debug("Trying legacy format parsing (dictionary-based parameters)")
             try:
                 yaml_data = yaml.safe_load(app_yaml_file.content)
                 if not isinstance(yaml_data, dict):
@@ -315,6 +319,10 @@ class TemplateVersionFileService:
                 # Support both list and dict formats
                 if isinstance(parameters_section, list):
                     # List format - convert to TemplateParameterSchema
+                    # Validate that list contains dictionaries (not strings or other types)
+                    if parameters_section and not all(isinstance(item, dict) for item in parameters_section):
+                        raise BadRequestException("parameters section must be a dictionary")
+                    
                     parameters_list = []
                     for param_def in parameters_section:
                         if not isinstance(param_def, dict):
@@ -348,6 +356,16 @@ class TemplateVersionFileService:
             except yaml.YAMLError as e:
                 logger.error(f"Failed to parse app.yaml: {e}")
                 raise BadRequestException(f"Invalid YAML in app.yaml: {str(e)}")
+            except BadRequestException:
+                # Re-raise BadRequestException as-is
+                raise
+            except Exception as e:
+                logger.error(f"Unexpected error in fallback parsing: {e}")
+                raise BadRequestException(f"Failed to parse parameters: {str(e)}")
+        
+        # Ensure parameters_list is initialized
+        if parameters_list is None:
+            parameters_list = []
         
         # Convert to TemplateParameterSchema objects
         parameters = []

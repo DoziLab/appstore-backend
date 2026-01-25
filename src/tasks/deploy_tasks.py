@@ -185,7 +185,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
         
         # Generate students parameter for per_course mode if not already provided
         if deployment.deployment_mode == DeploymentMode.PER_COURSE and "students" not in stack_params:
-            logger.info(f"Generating students parameter for per_course deployment")
+            logger.info("Generating students parameter for per_course deployment")
             
             # Get all course members (students) for this course
             course_members = (
