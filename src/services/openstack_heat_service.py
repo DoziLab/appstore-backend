@@ -67,6 +67,7 @@ class HeatStackService:
         stack_name: str,
         template: str,
         parameters: dict | None = None,
+        files: dict | None = None,
         tags: dict | None = None,
         timeout_mins: int = 60
     ) -> dict:
@@ -76,6 +77,7 @@ class HeatStackService:
             stack_name: Name for the stack
             template: Heat template content (YAML string)
             parameters: Stack parameters
+            files: Dictionary of file contents for get_file references (path -> content)
             tags: Tags to apply to the stack
             timeout_mins: Stack creation timeout in minutes
             
@@ -96,6 +98,11 @@ class HeatStackService:
                 'parameters': parameters or {},
                 'timeout_mins': timeout_mins,
             }
+            
+            # Add files if provided (for get_file references in template)
+            if files:
+                stack_params['files'] = files
+                logger.debug(f"Including {len(files)} file(s) with stack: {list(files.keys())}")
             
             # Add tags if provided
             if tags:

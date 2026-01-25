@@ -6,6 +6,7 @@ from src.models.template import Template, TemplateVisibility, TemplateApprovalSt
 from src.models.template_version import TemplateVersion
 from src.models.template_version_file import TemplateVersionFile, FileType
 from src.models.user import User
+from src.models.openstack_project import OpenstackProject
 
 logger = logging.getLogger(__name__)
 
@@ -498,6 +499,38 @@ def create_mock_user(db: Session) -> User:
     return user
 
 
+def create_mock_openstack_project(db: Session, user_id: str) -> OpenstackProject:
+    """Create or get mock OpenStack project for development.
+    
+    Note: This uses placeholder credentials. In production, real credentials
+    must be provided via the API.
+    """
+    existing = db.query(OpenstackProject).filter(
+        OpenstackProject.owner_user_id == user_id
+    ).first()
+    
+    if existing:
+        logger.info(f"Mock OpenStack project already exists: {existing.openstack_project_name}")
+        return existing
+    
+    # Create with placeholder credentials (these won't work with real OpenStack)
+    openstack_project = OpenstackProject(
+        owner_user_id=user_id,
+        openstack_project_id="mock-project-id",
+        openstack_project_name="Mock Development Project",
+        auth_url="http://localhost:5000/v3",
+        username="mock-user",
+        password="mock-password",  # Will be encrypted automatically
+        user_domain_name="Default",
+        region_name="RegionOne"
+    )
+    db.add(openstack_project)
+    db.commit()
+    db.refresh(openstack_project)
+    logger.info(f"Created mock OpenStack project: {openstack_project.openstack_project_name}")
+    return openstack_project
+
+
 def create_mock_templates(db: Session, owner_id: str) -> list[Template]:
     """Create mock templates."""
     templates_data = [
@@ -561,6 +594,7 @@ def create_mock_template_versions(db: Session, templates: list[Template]) -> lis
         
         version = TemplateVersion(
             template_id=template.id,
+            version="1.0.0",
             git_commit_sha=f"abc123{template.id[:6]}",
             is_active=True
         )
@@ -632,6 +666,9 @@ def seed_mock_data(db: Session) -> None:
         
         # Create mock user
         user = create_mock_user(db)
+        
+        # Create mock OpenStack project for deployments
+        create_mock_openstack_project(db, user.id)
         
         # Create templates
         templates = create_mock_templates(db, user.id)

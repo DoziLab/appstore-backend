@@ -71,7 +71,7 @@ class DeploymentService:
         # Validate template parameters required by the template version
         template_file_service = TemplateVersionFileService(self.db)
         try:
-            template_params_resp = template_file_service.get_template_parameters(deployment_data.template_version_id)
+            template_params_resp = template_file_service.get_template_parameters(str(template_version.id))
             template_params_map = {p.name: p for p in template_params_resp.parameters}
             required_params = [p.name for p in template_params_resp.parameters if p.required]
         except NotFoundException:

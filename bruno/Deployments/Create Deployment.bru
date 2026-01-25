@@ -22,18 +22,19 @@ body:json {
     "deployment_mode": "per_course",
     "config_json": "{}",
     "heat_parameters": {
-      "instance_name": "kursX-grp1-db",
       "image": "Ubuntu 22.04 2025-01",
       "flavor": "gp1.small",
       "network": "NAT",
       "external_network": "DHBW",
-      "group_login": "group1",
-      "group_public_key": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC...",
       "ssh_cidr": "0.0.0.0/0",
-      "db_name": "mydb",
-      "db_user": "dbuser",
-      "db_password": "securepassword123",
-      "postgres_version": 14
+      "stack_label": "test",
+      "students": "{\"alice\":\"pw\",\"bob\":\"pw2\"}",
+      "force_password_change": false,
+      "workdir": "___WORKDIR___",
+      "pw_min_length": 5,
+      "pw_require_digit": false,
+      "pw_require_upper": false,
+      "pw_require_special": false
     },
     "access_types": ["ssh", "web"]
   }
@@ -74,10 +75,7 @@ docs {
   **Example Heat Parameters (PostgreSQL Group DB):**
   ```json
   {
-    "instance_name": "kursX-grp1-db",
     "flavor": "gp1.small",
-    "group_login": "group1",
-    "group_public_key": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC...",
     "db_name": "mydb",
     "db_user": "dbuser",
     "db_password": "securepassword123",

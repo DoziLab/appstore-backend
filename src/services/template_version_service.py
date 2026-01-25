@@ -330,30 +330,22 @@ class TemplateVersionService:
                 raise NotFoundException(f"Template version with ID {version_id} not found")
             file_count = None
         
-        # Try to find and parse app.yaml
+        # Load parameters using TemplateVersionFileService
         parameters = []
         
         try:
-            # Get app manifest file
-            files = self.file_repo.get_by_version_id(version_id, include_content=True)
-            app_manifest_file = None
+            from src.services.template_version_file_service import TemplateVersionFileService
+            file_service = TemplateVersionFileService(self.db)
+            params_response = file_service.get_template_parameters(str(version_id))
+            # Convert TemplateParameterSchema objects to dicts for response
+            parameters = [p.model_dump() for p in params_response.parameters]
             
-            for file in files:
-                if file.file_type == FileType.APP_MANIFEST or file.file_name.lower() == "app.yaml":
-                    app_manifest_file = file
-                    break
-            
-            if app_manifest_file and app_manifest_file.content:
-                # Parse the app.yaml content and extract only parameters
-                parsed_manifest = AppManifestParser.parse(app_manifest_file.content)
-                parameters = parsed_manifest.get("parameters", [])
-                
-                logger.info(
-                    f"Loaded {len(parameters)} parameters for version {version_id}"
-                )
+            logger.info(
+                f"Loaded {len(parameters)} parameters for version {version_id}"
+            )
         except Exception as e:
             logger.warning(
-                f"Failed to parse app manifest for version {version_id}: {e}"
+                f"Failed to load parameters for version {version_id}: {e}"
             )
         
         # Build result dictionary with only parameters
