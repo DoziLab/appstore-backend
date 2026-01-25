@@ -6,6 +6,7 @@ from typing import Optional, Any
 
 class DeploymentCreate(BaseModel):
     """Schema for creating a deployment."""
+    name: str = Field(..., description="Deployment name for identification", max_length=255)
     template_version_id: str = Field(..., description="Template version ID to deploy")
     course_id: str = Field(..., description="Course ID")
     deployment_mode: str = Field(..., description="Deployment mode (per_course, per_group, per_student)")
@@ -50,7 +51,8 @@ class DeploymentCreate(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "template_version_id": "53e20875-6143-4a08-8a42-76cbb5833e24",
+                "name": "Web Development Lab",
+                "template_version_id": "version-123",
                 "course_id": "course-456",
                 "deployment_mode": "per_course",
                 "group_ids": None,
@@ -78,6 +80,7 @@ class DeploymentCreate(BaseModel):
 class DeploymentResponse(BaseModel):
     """Schema for deployment response."""
     id: str = Field(..., description="Deployment ID")
+    name: str = Field(..., description="Deployment name")
     template_version_id: str = Field(..., description="Template version ID")
     course_id: str = Field(..., description="Course ID")
     deployment_mode: str = Field(..., description="Deployment mode")
@@ -94,6 +97,7 @@ class DeploymentResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "id": "deploy-123",
+                "name": "Web Development Lab",
                 "template_version_id": "version-123",
                 "course_id": "course-456",
                 "deployment_mode": "per_group",

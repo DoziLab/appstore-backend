@@ -9,6 +9,7 @@ class TemplateCreate(BaseModel):
     name: str = Field(..., description="Name of the template", max_length=255)
     description: Optional[str] = Field(None, description="Template description")
     repo_url: str = Field(..., description="Git repository URL", max_length=500)
+    icon_url: Optional[str] = Field(None, description="Icon URL or identifier (mdi:server, fa:server, 🚀, /icons/template.svg)", max_length=500)
     visibility: str = Field(default="private", description="Template visibility (private/public)")
     
     model_config = ConfigDict(
@@ -17,6 +18,7 @@ class TemplateCreate(BaseModel):
                 "name": "Python Flask Template",
                 "description": "A template for Flask web applications",
                 "repo_url": "https://github.com/example/flask-template",
+                "icon_url": "mdi:flask",
                 "visibility": "public"
             }
         }
@@ -28,13 +30,15 @@ class TemplateUpdate(BaseModel):
     name: Optional[str] = Field(None, description="Name of the template", max_length=255)
     description: Optional[str] = Field(None, description="Template description")
     repo_url: Optional[str] = Field(None, description="Git repository URL", max_length=500)
+    icon_url: Optional[str] = Field(None, description="Icon URL or identifier (mdi:server, fa:server, 🚀, /icons/template.svg)", max_length=500)
     visibility: Optional[str] = Field(None, description="Template visibility (private/public) - Only admins can change this")
     
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "name": "Updated Template Name",
-                "description": "Updated description"
+                "description": "Updated description",
+                "icon_url": "mdi:server"
             }
         }
     )
@@ -47,6 +51,7 @@ class TemplateResponse(BaseModel):
     description: Optional[str] = Field(None, description="Template description")
     owner_id: str = Field(..., description="Owner user ID")
     repo_url: str = Field(..., description="Git repository URL")
+    icon_url: Optional[str] = Field(None, description="Icon URL or identifier")
     visibility: str = Field(..., description="Template visibility")
     approval_status: str = Field(..., description="Approval status")
     versions: Optional[list[TemplateVersionResponse]] = Field(None, description="List of template versions")
@@ -62,6 +67,7 @@ class TemplateResponse(BaseModel):
                 "description": "A template for Flask web applications",
                 "owner_id": "user-456",
                 "repo_url": "https://github.com/example/flask-template",
+                "icon_url": "mdi:flask",
                 "visibility": "public",
                 "approval_status": "approved",
                 "versions": [],

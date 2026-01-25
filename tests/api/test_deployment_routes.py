@@ -293,6 +293,7 @@ def test_get_deployment_as_owner(mock_repo_class):
     # Mock deployment with related objects
     mock_deployment = MagicMock()
     mock_deployment.id = "deploy-123"
+    mock_deployment.name = "Test Deployment"
     mock_deployment.template_version_id = "version-456"
     mock_deployment.course_id = "course-789"
     mock_deployment.deployment_mode = "per_course"
@@ -356,6 +357,7 @@ def test_get_deployment_as_admin(mock_repo_class):
     # Mock deployment owned by another user
     mock_deployment = MagicMock()
     mock_deployment.id = "deploy-123"
+    mock_deployment.name = "Admin Test Deployment"
     mock_deployment.template_version_id = "version-456"
     mock_deployment.course_id = "course-789"
     mock_deployment.deployment_mode = "per_course"

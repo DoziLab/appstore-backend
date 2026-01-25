@@ -15,7 +15,8 @@ class TemplateVersion(Base):
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     template_id: Mapped[str] = mapped_column(String(36), ForeignKey("templates.id"), nullable=False)
-    git_commit_sha: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[str] = mapped_column(String(50), nullable=False, comment="Semantic version (e.g., 0.2.0)")
+    git_commit_sha: Mapped[str] = mapped_column(String(255), nullable=False, comment="Git commit SHA or tag")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     

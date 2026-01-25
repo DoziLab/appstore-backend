@@ -30,6 +30,7 @@ class MockDeployment:
     """Simple mock deployment object with proper attributes for Pydantic validation."""
     def __init__(self, deployment_parameters=None):
         self.id = "test-deployment-123"
+        self.name = "Test Deployment"
         self.template_version_id = "version-123"
         self.course_id = "course-456"
         self.deployment_mode = "per_course"
@@ -56,6 +57,7 @@ def test_create_deployment_success(mock_service_class, mock_deployment):
     
     # Test data
     payload = {
+        "name": "Test Deployment",
         "template_version_id": "version-123",
         "course_id": "course-456",
         "deployment_mode": "per_course",
