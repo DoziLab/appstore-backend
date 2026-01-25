@@ -68,6 +68,7 @@ class DeploymentService:
         
         # Create deployment record with initial status QUEUED
         deployment = self.deployment_repo.create(
+            name=deployment_data.name,
             template_version_id=deployment_data.template_version_id,
             course_id=deployment_data.course_id,
             deployment_mode=deployment_mode,
