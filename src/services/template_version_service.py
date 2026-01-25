@@ -6,13 +6,11 @@ import logging
 from sqlalchemy.orm import Session
 
 from src.models.template_version import TemplateVersion
-from src.models.template_version_file import FileType
 from src.repositories.template_version_repository import TemplateVersionRepository
 from src.repositories.template_repository import TemplateRepository
 from src.repositories.template_version_file_repository import TemplateVersionFileRepository
 from src.schemas.template_version import TemplateVersionCreate, TemplateVersionUpdate
 from src.core.exceptions import NotFoundException, BadRequestException, ForbiddenException
-from src.utils.app_manifest_parser import AppManifestParser
 
 logger = logging.getLogger(__name__)
 

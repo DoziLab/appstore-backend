@@ -240,7 +240,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
                 if template_file.file_type == FileType.CLOUD_INIT and template_file.content:
                     # Use path as referenced in template (e.g., ../cloud-init/user-data.yaml)
                     files_dict['../cloud-init/user-data.yaml'] = template_file.content
-                    logger.info(f"Including cloud-init file in stack files")
+                    logger.info("Including cloud-init file in stack files")
             
             # Create stack via OpenStack Heat API
             stack_result = heat_service.create_stack(
