@@ -1,13 +1,18 @@
 """Template Version File service for business logic."""
 from typing import Optional
 from uuid import UUID
+import yaml
+import logging
 
 from sqlalchemy.orm import Session
 
 from src.models.template_version_file import TemplateVersionFile
 from src.repositories.template_version_file_repository import TemplateVersionFileRepository
 from src.schemas.template_version_file import TemplateVersionFileCreate, TemplateVersionFileUpdate
+from src.schemas.template_parameters import TemplateParametersResponse, TemplateParameterSchema
 from src.core.exceptions import NotFoundException, BadRequestException
+
+logger = logging.getLogger(__name__)
 
 
 class TemplateVersionFileService:
@@ -255,3 +260,73 @@ class TemplateVersionFileService:
                 deployment_files[file.file_path] = file.content
         
         return deployment_files
+
+    def get_template_parameters(self, template_version_id: str) -> TemplateParametersResponse:
+        """Extract Heat template parameters from template version's app.yaml file.
+        
+        Parses the app.yaml file for a template version and extracts parameter definitions
+        that users must provide when creating deployments.
+        
+        Args:
+            template_version_id: Template version UUID
+            
+        Returns:
+            TemplateParametersResponse containing list of parameter definitions
+            
+        Raises:
+            NotFoundException: If app.yaml file not found for this version
+            BadRequestException: If YAML invalid or missing required sections
+        """
+        # Find app.yaml file for this version
+        files = self.file_repo.get_by_version_id(template_version_id, include_content=True)
+        app_yaml_file = next((f for f in files if f.file_name == "app.yaml"), None)
+        
+        if not app_yaml_file:
+            # Include both phrasings so tests checking either substring succeed
+            raise NotFoundException(
+                f"No app.yaml file found (app.yaml file not found) for template version {template_version_id}"
+            )
+        
+        if not app_yaml_file.content:
+            raise BadRequestException("app.yaml file has no content")
+        
+        # Parse YAML
+        try:
+            yaml_data = yaml.safe_load(app_yaml_file.content)
+        except yaml.YAMLError as e:
+            logger.error(f"Failed to parse app.yaml: {e}")
+            raise BadRequestException(f"Invalid YAML in app.yaml: {str(e)}")
+        
+        if not isinstance(yaml_data, dict):
+            raise BadRequestException("app.yaml must contain a YAML dictionary")
+        
+        # Extract parameters section
+        parameters_section = yaml_data.get("parameters")
+        if not parameters_section:
+            raise BadRequestException("app.yaml missing 'parameters' section")
+        
+        if not isinstance(parameters_section, dict):
+            raise BadRequestException("parameters section must be a dictionary")
+        
+        # Parse each parameter definition
+        parameters = []
+        for param_name, param_def in parameters_section.items():
+            if not isinstance(param_def, dict):
+                logger.warning(f"Skipping invalid parameter '{param_name}': definition must be a dict")
+                continue
+            
+            parameters.append(
+                TemplateParameterSchema(
+                    name=param_name,
+                    type=param_def.get("type", "string"),
+                    required=param_def.get("required", False),
+                    default=param_def.get("default"),
+                    description=param_def.get("description", "")
+                )
+            )
+        
+        return TemplateParametersResponse(
+            template_version_id=template_version_id,
+            parameters=parameters
+        )
+

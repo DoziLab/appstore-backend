@@ -303,21 +303,25 @@ def test_get_deployment_as_owner(mock_repo_class):
     mock_deployment.access_types_json = '["ssh", "web_url"]'
     mock_deployment.created_at = "2024-11-27T10:00:00"
     mock_deployment.updated_at = "2024-11-27T10:00:00"
-    
+    mock_deployment.deployment_parameters = None  # Ensure this is a string or None
+
     # Mock course (owner check)
-    mock_deployment.course = MagicMock()
-    mock_deployment.course.id = "course-789"
-    mock_deployment.course.name = "Test Course"
-    mock_deployment.course.lecturer_id = 1  # Same as mock_lecturer_user
-    
+    mock_course = MagicMock()
+    mock_course.id = "course-789"
+    mock_course.name = "Test Course"
+    mock_course.lecturer_id = 1  # Same as mock_lecturer_user
+    mock_deployment.course = mock_course
+
     # Mock template version
-    mock_deployment.template_version = MagicMock()
-    mock_deployment.template_version.id = "version-456"
-    mock_deployment.template_version.version = "1.0"
-    mock_deployment.template_version.template_id = "template-abc"
-    mock_deployment.template_version.template = MagicMock()
-    mock_deployment.template_version.template.name = "Test Template"
-    
+    mock_template_version = MagicMock()
+    mock_template_version.id = "version-456"
+    mock_template_version.version = "1.0"
+    mock_template_version.template_id = "template-abc"
+    mock_template = MagicMock()
+    mock_template.name = "Test Template"
+    mock_template_version.template = mock_template
+    mock_deployment.template_version = mock_template_version
+
     # Mock instances
     mock_instance = MagicMock()
     mock_instance.id = "instance-123"
@@ -367,21 +371,25 @@ def test_get_deployment_as_admin(mock_repo_class):
     mock_deployment.access_types_json = '["ssh"]'
     mock_deployment.created_at = "2024-11-27T10:00:00"
     mock_deployment.updated_at = "2024-11-27T10:00:00"
-    
+    mock_deployment.deployment_parameters = None  # Ensure this is a string or None
+
     # Mock course (different owner)
-    mock_deployment.course = MagicMock()
-    mock_deployment.course.id = "course-789"
-    mock_deployment.course.name = "Other Course"
-    mock_deployment.course.lecturer_id = 999  # Different from admin user_id
-    
+    mock_course = MagicMock()
+    mock_course.id = "course-789"
+    mock_course.name = "Other Course"
+    mock_course.lecturer_id = 999  # Different from admin user_id
+    mock_deployment.course = mock_course
+
     # Mock template version
-    mock_deployment.template_version = MagicMock()
-    mock_deployment.template_version.id = "version-456"
-    mock_deployment.template_version.version = "1.0"
-    mock_deployment.template_version.template_id = "template-abc"
-    mock_deployment.template_version.template = MagicMock()
-    mock_deployment.template_version.template.name = "Test Template"
-    
+    mock_template_version = MagicMock()
+    mock_template_version.id = "version-456"
+    mock_template_version.version = "1.0"
+    mock_template_version.template_id = "template-abc"
+    mock_template = MagicMock()
+    mock_template.name = "Test Template"
+    mock_template_version.template = mock_template
+    mock_deployment.template_version = mock_template_version
+
     mock_deployment.instances = []
     
     mock_repo_instance = MagicMock()

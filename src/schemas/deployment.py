@@ -6,11 +6,17 @@ from typing import Optional, Any
 
 class DeploymentCreate(BaseModel):
     """Schema for creating a deployment."""
-    name: str = Field(..., description="Deployment name for identification", max_length=255)
+    name: Optional[str] = Field(None, description="Deployment name for identification", max_length=255)
     template_version_id: str = Field(..., description="Template version ID to deploy")
     course_id: str = Field(..., description="Course ID")
     deployment_mode: str = Field(..., description="Deployment mode (per_course, per_group, per_student)")
     config_json: Optional[str] = Field(None, description="Deployment configuration as JSON string")
+    
+    # Heat template parameters (from template config.yaml)
+    heat_parameters: Optional[dict[str, Any]] = Field(
+        None,
+        description="Heat template parameters as dict (e.g., {'instance_name': 'vm1', 'flavor': 'gp1.small'})"
+    )
     
     # Target groups/students (required depending on mode)
     group_ids: Optional[list[str]] = Field(None, description="Group IDs (required for per_group mode)")
@@ -48,11 +54,24 @@ class DeploymentCreate(BaseModel):
                 "name": "Web Development Lab",
                 "template_version_id": "version-123",
                 "course_id": "course-456",
-                "deployment_mode": "per_group",
-                "group_ids": ["group-789", "group-abc"],
+                "deployment_mode": "per_course",
+                "group_ids": None,
                 "course_member_ids": None,
                 "access_types": ["ssh", "web_url"],
-                "config_json": '{"cpu": 2, "ram": 4096}'
+                "config_json": None,
+                "heat_parameters": {
+                    "stack_label": "kurs-ws2024",
+                    "image": "Ubuntu 22.04 2025-01",
+                    "flavor": "gp1.small",
+                    "ssh_cidr": "141.72.0.0/16",
+                    "students": '{"alice":"SecureP@ss1","bob":"SecureP@ss2"}',
+                    "force_password_change": True,
+                    "workdir": "work",
+                    "pw_min_length": 12,
+                    "pw_require_digit": True,
+                    "pw_require_upper": True,
+                    "pw_require_special": True
+                }
             }
         }
     )
@@ -68,6 +87,7 @@ class DeploymentResponse(BaseModel):
     status: str = Field(..., description="Current status")
     openstack_stack_id: Optional[str] = Field(None, description="OpenStack Heat stack ID")
     config_json: Optional[str] = Field(None, description="Deployment configuration")
+    deployment_parameters: Optional[str] = Field(None, description="Heat template parameters as JSON string")
     access_types_json: str = Field(..., description="Requested access types as JSON array")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
@@ -84,6 +104,7 @@ class DeploymentResponse(BaseModel):
                 "status": "queued",
                 "openstack_stack_id": None,
                 "config_json": '{"cpu": 2, "ram": 4096}',
+                "deployment_parameters": '{"instance_name": "vm1", "flavor": "gp1.small"}',
                 "access_types_json": '["ssh", "web_url"]',
                 "created_at": "2024-11-27T10:00:00Z",
                 "updated_at": "2024-11-27T10:00:00Z"

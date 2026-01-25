@@ -43,6 +43,20 @@ async def lifespan(app: FastAPI):
    )
    init_db()
    logger.info("Database initialized", extra={'event': 'database_initialized'})
+   
+   # Seed mock data in development mode (always enabled for local development)
+   from src.core.seed_data import seed_mock_data
+   from src.core.database import get_db
+   
+   db = next(get_db())
+   try:
+       seed_mock_data(db)
+       logger.info("Mock data seeded", extra={'event': 'mock_data_seeded'})
+   except Exception as e:
+       logger.error(f"Failed to seed mock data: {e}", extra={'event': 'mock_data_failed', 'error': str(e)})
+   finally:
+       db.close()
+   
    yield
 
    #shutdown

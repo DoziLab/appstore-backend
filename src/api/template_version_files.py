@@ -195,6 +195,49 @@ async def get_primary_file(
     )
 
 
+@router.get(
+    "/version/{version_id}/parameters",
+    response_model=dict
+)
+async def get_version_parameters(
+    version_id: str,
+    db: DBSession,
+    request_id: RequestID,
+    current_user: CurrentUser,
+):
+    """Get Heat template parameters for a template version.
+    
+    Extracts and returns all parameters defined in the template version's app.yaml file.
+    These parameters must be provided by the user when creating a deployment.
+    
+    Returns parameter definitions including:
+    - name: Parameter name (e.g., 'instance_name', 'flavor')
+    - type: Parameter type (string, int, number, boolean)
+    - required: Whether parameter is mandatory
+    - default: Default value if not required
+    - description: Human-readable description for UI
+    
+    Use this endpoint to build deployment forms in the frontend.
+    
+    Args:
+        version_id: Template version ID
+        db: Database session
+        request_id: Request ID for tracking
+        current_user: Current authenticated user
+        
+    Returns:
+        Template parameters response with list of parameter definitions
+    """
+    service = TemplateVersionFileService(db)
+    parameters_response = service.get_template_parameters(version_id)
+    
+    return ResponseBuilder.success(
+        data=parameters_response.model_dump(mode="json"),
+        message=f"Retrieved {len(parameters_response.parameters)} template parameters",
+        request_id=request_id,
+    )
+
+
 @router.patch(
     "/{file_id}",
     response_model=dict
