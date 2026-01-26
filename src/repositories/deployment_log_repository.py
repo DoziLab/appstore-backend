@@ -31,3 +31,20 @@ class DeploymentLogRepository(BaseRepository[DeploymentLog]):
             .order_by(self.model.created_at.asc())
             .all()
         )
+    
+    def delete_by_deployment_id(self, deployment_id: str) -> int:
+        """Delete all logs for a specific deployment.
+        
+        Args:
+            deployment_id: ID of the deployment
+            
+        Returns:
+            Number of deleted log entries
+        """
+        count = (
+            self.db.query(self.model)
+            .filter(self.model.deployment_id == deployment_id)
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+        return count
