@@ -1,0 +1,36 @@
+meta {
+  name: Non-Owner View Private Template (403)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/api/v1/templates/{{private_template_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{other_access_token}}
+}
+
+docs {
+  # Non-Owner View Private Template
+
+  Test that non-owner users cannot view private templates.
+
+  **Expected:** 403 Forbidden
+
+  **Setup:**
+  - Use non-owner user credentials
+  - Template is owned by different user
+  - Template visibility = private
+
+  **Verifies:**
+  - Private templates are hidden from non-owners
+  - Access control prevents unauthorized access
+}
+
+assert {
+  res.status: eq 403
+}

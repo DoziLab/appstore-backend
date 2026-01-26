@@ -77,7 +77,13 @@ async def get_file(
         File response
     """
     service = TemplateVersionFileService(db)
-    file = service.get_file(file_id, include_content=include_content)
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
+    file = service.get_file(
+        file_id,
+        include_content=include_content,
+        user_id=current_user["user_id"],
+        is_admin=is_admin
+    )
     
     response_schema = TemplateVersionFileResponse if include_content else TemplateVersionFileListResponse
     
@@ -110,7 +116,12 @@ async def get_file_content(
         File content
     """
     service = TemplateVersionFileService(db)
-    content = service.get_file_content(file_id)
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
+    content = service.get_file_content(
+        file_id,
+        user_id=current_user["user_id"],
+        is_admin=is_admin
+    )
     
     return ResponseBuilder.success(
         data={"content": content},
@@ -145,7 +156,14 @@ async def list_version_files(
         List of files
     """
     service = TemplateVersionFileService(db)
-    files = service.get_version_files(version_id, include_content=include_content, file_type=file_type)
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
+    files = service.get_version_files(
+        version_id,
+        include_content=include_content,
+        file_type=file_type,
+        user_id=current_user["user_id"],
+        is_admin=is_admin
+    )
     
     response_schema = TemplateVersionFileResponse if include_content else TemplateVersionFileListResponse
     file_responses = [response_schema.model_validate(f) for f in files]
@@ -179,7 +197,12 @@ async def get_primary_file(
         Primary file or error if not found
     """
     service = TemplateVersionFileService(db)
-    file = service.get_primary_file(version_id)
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
+    file = service.get_primary_file(
+        version_id,
+        user_id=current_user["user_id"],
+        is_admin=is_admin
+    )
     
     if not file:
         return ResponseBuilder.success(
@@ -229,7 +252,12 @@ async def get_version_parameters(
         Template parameters response with list of parameter definitions
     """
     service = TemplateVersionFileService(db)
-    parameters_response = service.get_template_parameters(version_id)
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
+    parameters_response = service.get_template_parameters(
+        version_id,
+        user_id=current_user["user_id"],
+        is_admin=is_admin
+    )
     
     return ResponseBuilder.success(
         data=parameters_response.model_dump(mode="json"),

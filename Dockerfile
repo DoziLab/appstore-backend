@@ -12,6 +12,7 @@ COPY pyproject.toml .
 COPY alembic.ini .
 COPY alembic/ ./alembic/
 COPY src/ ./src/
+COPY tests/ ./tests/
 
 # Install Python dependencies (including dev extras for running tests inside container)
 RUN pip install --no-cache-dir ".[dev]"

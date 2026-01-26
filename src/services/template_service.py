@@ -25,6 +25,45 @@ class TemplateService:
         self.db = db
         self.template_repo = TemplateRepository(db)
 
+    def _can_access_template(
+        self,
+        template: Template,
+        user_id: Optional[str] = None,
+        is_admin: bool = False
+    ) -> bool:
+        """Check if a user can access a template.
+        
+        Access rules:
+        - Admins can access any template
+        - Lecturers can access:
+          1. Their own private templates
+          2. Any approved public templates
+        
+        Args:
+            template: Template to check access for
+            user_id: ID of the requesting user
+            is_admin: Whether the requesting user is an admin
+            
+        Returns:
+            True if user can access the template, False otherwise
+        """
+        if is_admin:
+            return True
+        
+        if not user_id:
+            return False
+        
+        # Owner can access their own templates
+        if template.owner_id == user_id:
+            return True
+        
+        # Non-owners can only access approved public templates
+        if (template.visibility == TemplateVisibility.PUBLIC and
+            template.approval_status == TemplateApprovalStatus.APPROVED):
+            return True
+        
+        return False
+
     def create_template(
         self,
         template_data: TemplateCreate,
@@ -103,19 +142,9 @@ class TemplateService:
         if not template:
             raise NotFoundException(f"Template with ID {template_id} not found")
         
-        # Permission check for non-admins
-        if not is_admin and user_id:
-            # Non-admins can only see:
-            # 1. Their own templates (any status)
-            # 2. Approved public templates
-            is_owner = template.owner_id == user_id
-            is_public_approved = (
-                template.visibility == TemplateVisibility.PUBLIC and
-                template.approval_status == TemplateApprovalStatus.APPROVED
-            )
-            
-            if not is_owner and not is_public_approved:
-                raise ForbiddenException("You do not have permission to view this template")
+        # Permission check using helper method
+        if not self._can_access_template(template, user_id, is_admin):
+            raise ForbiddenException("You do not have permission to view this template")
         
         return template
 
@@ -166,16 +195,7 @@ class TemplateService:
         if not is_admin and user_id:
             filtered_templates = []
             for template in templates:
-                # Lecturers can see:
-                # 1. Their own templates (any status, any visibility)
-                # 2. Approved public templates
-                is_owner = template.owner_id == user_id
-                is_public_approved = (
-                    template.visibility == TemplateVisibility.PUBLIC and
-                    template.approval_status == TemplateApprovalStatus.APPROVED
-                )
-                
-                if is_owner or is_public_approved:
+                if self._can_access_template(template, user_id, is_admin):
                     filtered_templates.append(template)
             
             templates = filtered_templates

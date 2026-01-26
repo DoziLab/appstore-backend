@@ -1,0 +1,35 @@
+meta {
+  name: Owner View Private Version (200)
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{base_url}}/api/v1/template-versions/{{private_version_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{owner_access_token}}
+}
+
+docs {
+  # Owner View Private Template Version
+
+  Test that owner can view versions of their private templates.
+
+  **Expected:** 200 OK with version data
+
+  **Setup:**
+  - Use owner user credentials
+  - Version belongs to private template owned by this user
+
+  **Verifies:**
+  - Owners can access all their template versions
+  - Parent template ownership grants version access
+}
+
+assert {
+  res.status: eq 200
+}

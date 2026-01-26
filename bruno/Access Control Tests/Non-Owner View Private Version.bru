@@ -1,0 +1,35 @@
+meta {
+  name: Non-Owner View Private Version (403)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{base_url}}/api/v1/template-versions/{{private_version_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{other_access_token}}
+}
+
+docs {
+  # Non-Owner View Private Template Version
+
+  Test that non-owner cannot view versions of private templates.
+
+  **Expected:** 403 Forbidden
+
+  **Setup:**
+  - Use non-owner user credentials
+  - Version belongs to private template owned by different user
+
+  **Verifies:**
+  - Version access inherits parent template access control
+  - Cascade protection works for versions
+}
+
+assert {
+  res.status: eq 403
+}

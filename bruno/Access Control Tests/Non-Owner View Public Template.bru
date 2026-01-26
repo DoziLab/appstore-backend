@@ -1,0 +1,36 @@
+meta {
+  name: Non-Owner View Public Template (200)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{base_url}}/api/v1/templates/{{public_template_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{other_access_token}}
+}
+
+docs {
+  # Non-Owner View Public Template
+
+  Test that any user can view public approved templates.
+
+  **Expected:** 200 OK with template data
+
+  **Setup:**
+  - Use non-owner user credentials
+  - Template visibility = public
+  - Template approval_status = approved
+
+  **Verifies:**
+  - Public approved templates are accessible to all users
+  - Visibility and approval status work together
+}
+
+assert {
+  res.status: eq 200
+}

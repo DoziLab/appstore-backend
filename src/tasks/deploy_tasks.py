@@ -74,9 +74,12 @@ def deploy_stack(self, deployment_id: str) -> dict:
             level=DeploymentLogLevel.INFO
         )
         
+        # Skip access check: deployment already validated in creation,
+        # and lecturer may deploy templates they don't own if they know the ID
         files = file_service.get_version_files(
             deployment.template_version_id,
-            include_content=True
+            include_content=True,
+            skip_access_check=True
         )
         
         if not files:

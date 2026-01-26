@@ -92,7 +92,7 @@ def test_get_template_parameters_success(service, mock_app_yaml_file):
     """Test successful parameter extraction from app.yaml."""
     service.file_repo.get_by_version_id = Mock(return_value=[mock_app_yaml_file])
     
-    result = service.get_template_parameters("version-123")
+    result = service.get_template_parameters("version-123", skip_access_check=True)
     
     assert isinstance(result, TemplateParametersResponse)
     assert result.template_version_id == "version-123"
@@ -134,7 +134,7 @@ def test_get_template_parameters_no_app_yaml(service):
     service.file_repo.get_by_version_id = Mock(return_value=[other_file])
     
     with pytest.raises(NotFoundException) as exc_info:
-        service.get_template_parameters("version-123")
+        service.get_template_parameters("version-123", skip_access_check=True)
     
     assert "app.yaml file not found" in str(exc_info.value)
 
@@ -155,7 +155,7 @@ def test_get_template_parameters_empty_content(service):
     service.file_repo.get_by_version_id = Mock(return_value=[empty_file])
     
     with pytest.raises(BadRequestException) as exc_info:
-        service.get_template_parameters("version-123")
+        service.get_template_parameters("version-123", skip_access_check=True)
     
     assert "has no content" in str(exc_info.value)
 
@@ -176,7 +176,7 @@ def test_get_template_parameters_invalid_yaml(service):
     service.file_repo.get_by_version_id = Mock(return_value=[invalid_file])
     
     with pytest.raises(BadRequestException) as exc_info:
-        service.get_template_parameters("version-123")
+        service.get_template_parameters("version-123", skip_access_check=True)
     
     assert "Invalid YAML" in str(exc_info.value)
 
@@ -197,7 +197,7 @@ def test_get_template_parameters_not_dict(service):
     service.file_repo.get_by_version_id = Mock(return_value=[invalid_file])
     
     with pytest.raises(BadRequestException) as exc_info:
-        service.get_template_parameters("version-123")
+        service.get_template_parameters("version-123", skip_access_check=True)
     
     assert "must contain a YAML dictionary" in str(exc_info.value)
 
@@ -218,7 +218,7 @@ def test_get_template_parameters_missing_parameters_section(service):
     service.file_repo.get_by_version_id = Mock(return_value=[no_params_file])
     
     with pytest.raises(BadRequestException) as exc_info:
-        service.get_template_parameters("version-123")
+        service.get_template_parameters("version-123", skip_access_check=True)
     
     assert "missing 'parameters' section" in str(exc_info.value)
 
@@ -239,7 +239,7 @@ def test_get_template_parameters_parameters_not_dict(service):
     service.file_repo.get_by_version_id = Mock(return_value=[invalid_params_file])
     
     with pytest.raises(BadRequestException) as exc_info:
-        service.get_template_parameters("version-123")
+        service.get_template_parameters("version-123", skip_access_check=True)
     
     assert "must be a dictionary" in str(exc_info.value)
 
@@ -272,7 +272,7 @@ parameters:
     )
     service.file_repo.get_by_version_id = Mock(return_value=[mixed_file])
     
-    result = service.get_template_parameters("version-123")
+    result = service.get_template_parameters("version-123", skip_access_check=True)
     
     # Should have 2 valid parameters, invalid one skipped
     assert len(result.parameters) == 2
@@ -303,7 +303,7 @@ parameters:
     )
     service.file_repo.get_by_version_id = Mock(return_value=[minimal_file])
     
-    result = service.get_template_parameters("version-123")
+    result = service.get_template_parameters("version-123", skip_access_check=True)
     
     assert len(result.parameters) == 1
     param = result.parameters[0]

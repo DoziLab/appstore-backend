@@ -1,0 +1,40 @@
+meta {
+  name: Access Control Tests
+  type: folder
+}
+
+docs {
+  # Access Control Tests
+
+  This folder contains test requests to verify access control for template resources.
+
+  ## Test Scenarios:
+
+  ### Templates
+  - Owner can view their private template
+  - Non-owner cannot view private template
+  - Admin can view any template
+  - Non-owner can view public approved template
+  - List templates filters correctly by user
+
+  ### Template Versions
+  - Owner can view versions of their private template
+  - Non-owner cannot view versions of private template
+  - Admin can view versions of any template
+
+  ### Template Version Files
+  - Owner can view files of their private template
+  - Non-owner cannot view files of private template
+  - Admin can view files of any template
+
+  ## Setup:
+  1. Create two users (owner and other)
+  2. Create a private template owned by owner
+  3. Create a public approved template
+  4. Create versions and files for testing
+
+  ## Expected Results:
+  - 200 OK for authorized access
+  - 403 Forbidden for unauthorized access
+  - Proper filtering in list endpoints
+}

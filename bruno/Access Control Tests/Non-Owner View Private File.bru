@@ -1,0 +1,35 @@
+meta {
+  name: Non-Owner View Private File (403)
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{base_url}}/api/v1/template-version-files/{{private_file_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{other_access_token}}
+}
+
+docs {
+  # Non-Owner View Private Template File
+
+  Test that non-owner cannot view files of private templates.
+
+  **Expected:** 403 Forbidden
+
+  **Setup:**
+  - Use non-owner user credentials
+  - File belongs to version of private template owned by different user
+
+  **Verifies:**
+  - File access inherits parent template access control
+  - Cascade protection works through version to file
+}
+
+assert {
+  res.status: eq 403
+}

@@ -7,10 +7,13 @@ import logging
 from sqlalchemy.orm import Session
 
 from src.models.template_version_file import TemplateVersionFile
+from src.models.template import Template, TemplateVisibility, TemplateApprovalStatus
 from src.repositories.template_version_file_repository import TemplateVersionFileRepository
+from src.repositories.template_version_repository import TemplateVersionRepository
+from src.repositories.template_repository import TemplateRepository
 from src.schemas.template_version_file import TemplateVersionFileCreate, TemplateVersionFileUpdate
 from src.schemas.template_parameters import TemplateParametersResponse, TemplateParameterSchema
-from src.core.exceptions import NotFoundException, BadRequestException
+from src.core.exceptions import NotFoundException, BadRequestException, ForbiddenException
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,80 @@ class TemplateVersionFileService:
         """
         self.db = db
         self.file_repo = TemplateVersionFileRepository(db)
+        self.version_repo = TemplateVersionRepository(db)
+        self.template_repo = TemplateRepository(db)
+
+    def _can_access_template(
+        self,
+        template: Template,
+        user_id: Optional[str] = None,
+        is_admin: bool = False
+    ) -> bool:
+        """Check if a user can access a template.
+        
+        Access rules:
+        - Admins can access any template
+        - Lecturers can access:
+          1. Their own private templates
+          2. Any approved public templates
+        
+        Args:
+            template: Template to check access for
+            user_id: ID of the requesting user
+            is_admin: Whether the requesting user is an admin
+            
+        Returns:
+            True if user can access the template, False otherwise
+        """
+        if is_admin:
+            return True
+        
+        if not user_id:
+            return False
+        
+        # Owner can access their own templates
+        if template.owner_id == user_id:
+            return True
+        
+        # Non-owners can only access approved public templates
+        if (template.visibility == TemplateVisibility.PUBLIC and
+            template.approval_status == TemplateApprovalStatus.APPROVED):
+            return True
+        
+        return False
+
+    def _check_template_access(
+        self,
+        template_version_id: str | UUID,
+        user_id: Optional[str] = None,
+        is_admin: bool = False
+    ) -> Template:
+        """Check if user can access parent template via version and return template.
+        
+        Args:
+            template_version_id: Template version ID to check
+            user_id: ID of the requesting user
+            is_admin: Whether the requesting user is an admin
+            
+        Returns:
+            Template if accessible
+            
+        Raises:
+            NotFoundException: If version or template not found
+            ForbiddenException: If user lacks permission to view template
+        """
+        version = self.version_repo.get_by_id(template_version_id)
+        if not version:
+            raise NotFoundException(f"Template version with ID {template_version_id} not found")
+        
+        template = self.template_repo.get_by_id(version.template_id)
+        if not template:
+            raise NotFoundException(f"Template with ID {version.template_id} not found")
+        
+        if not self._can_access_template(template, user_id, is_admin):
+            raise ForbiddenException("You do not have permission to access this template")
+        
+        return template
 
     def create_file(
         self,
@@ -66,41 +143,67 @@ class TemplateVersionFileService:
     def get_file(
         self,
         file_id: str | UUID,
-        include_content: bool = True
+        include_content: bool = True,
+        user_id: Optional[str] = None,
+        is_admin: bool = False
     ) -> TemplateVersionFile:
         """Get a file by ID.
+        
+        Requires access to parent template.
         
         Args:
             file_id: File ID
             include_content: Whether to include file content
+            user_id: ID of the requesting user (for permission check)
+            is_admin: Whether the requesting user is an admin
             
         Returns:
             File instance
             
         Raises:
             NotFoundException: If file not found
+            ForbiddenException: If user lacks permission to access parent template
         """
         file = self.file_repo.get_by_id(file_id)
         if not file:
             raise NotFoundException(f"File with ID {file_id} not found")
+        
+        # Check access to parent template
+        self._check_template_access(file.template_version_id, user_id, is_admin)
+        
         return file
 
     def get_version_files(
         self,
         template_version_id: str | UUID,
         include_content: bool = False,
-        file_type: Optional[str] = None
+        file_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        is_admin: bool = False,
+        skip_access_check: bool = False
     ) -> list[TemplateVersionFile]:
         """Get all files for a template version.
+        
+        Requires access to parent template unless skip_access_check is True.
         
         Args:
             template_version_id: Template version ID
             include_content: Whether to include file content
             file_type: Optional filter by file type
+            user_id: ID of the requesting user (for permission check)
+            is_admin: Whether the requesting user is an admin
+            skip_access_check: Skip template access verification (for deployment tasks)
             
         Returns:
             List of files
+            
+        Raises:
+            ForbiddenException: If user lacks permission to access parent template (unless skipped)
         """
+        # Check access to parent template unless explicitly skipped
+        if not skip_access_check:
+            self._check_template_access(template_version_id, user_id, is_admin)
+        
         if file_type:
             try:
                 return self.file_repo.get_by_file_type(template_version_id, file_type)
@@ -111,37 +214,58 @@ class TemplateVersionFileService:
 
     def get_primary_file(
         self,
-        template_version_id: str | UUID
+        template_version_id: str | UUID,
+        user_id: Optional[str] = None,
+        is_admin: bool = False
     ) -> Optional[TemplateVersionFile]:
         """Get the primary deployment file for a template version.
         
+        Requires access to parent template.
+        
         Args:
             template_version_id: Template version ID
+            user_id: ID of the requesting user (for permission check)
+            is_admin: Whether the requesting user is an admin
             
         Returns:
             Primary file or None
+            
+        Raises:
+            ForbiddenException: If user lacks permission to access parent template
         """
+        # Check access to parent template
+        self._check_template_access(template_version_id, user_id, is_admin)
+        
         return self.file_repo.get_primary_file(template_version_id)
 
     def get_file_content(
         self,
-        file_id: str | UUID
+        file_id: str | UUID,
+        user_id: Optional[str] = None,
+        is_admin: bool = False
     ) -> str:
         """Get the content of a specific file.
         
+        Requires access to parent template.
+        
         Args:
             file_id: File ID
+            user_id: ID of the requesting user (for permission check)
+            is_admin: Whether the requesting user is an admin
             
         Returns:
             File content
             
         Raises:
             NotFoundException: If file not found or has no content
+            ForbiddenException: If user lacks permission to access parent template
         """
-        content = self.file_repo.get_file_content(file_id)
-        if content is None:
+        # get_file already checks template access
+        file = self.get_file(file_id, include_content=True, user_id=user_id, is_admin=is_admin)
+        
+        if file.content is None:
             raise NotFoundException(f"Content not found for file {file_id}")
-        return content
+        return file.content
 
     def update_file(
         self,
@@ -261,7 +385,13 @@ class TemplateVersionFileService:
         
         return deployment_files
 
-    def get_template_parameters(self, template_version_id: str) -> TemplateParametersResponse:
+    def get_template_parameters(
+        self,
+        template_version_id: str,
+        user_id: Optional[str] = None,
+        is_admin: bool = False,
+        skip_access_check: bool = False
+    ) -> TemplateParametersResponse:
         """Extract Heat template parameters from template version's app.yaml file.
         
         Parses the app.yaml file for a template version and extracts parameter definitions
@@ -271,6 +401,9 @@ class TemplateVersionFileService:
         
         Args:
             template_version_id: Template version UUID
+            user_id: ID of the requesting user (for permission check)
+            is_admin: Whether the requesting user is an admin
+            skip_access_check: Skip template access check (used for deployment creation)
             
         Returns:
             TemplateParametersResponse containing list of parameter definitions
@@ -278,7 +411,12 @@ class TemplateVersionFileService:
         Raises:
             NotFoundException: If app.yaml file not found for this version
             BadRequestException: If YAML invalid or missing required sections
+            ForbiddenException: If user lacks permission to access parent template
         """
+        # Check access to parent template unless explicitly skipped
+        if not skip_access_check:
+            self._check_template_access(template_version_id, user_id, is_admin)
+        
         # Find app.yaml file for this version
         files = self.file_repo.get_by_version_id(template_version_id, include_content=True)
         app_yaml_file = next((f for f in files if f.file_name == "app.yaml"), None)

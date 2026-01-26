@@ -1,0 +1,35 @@
+meta {
+  name: Owner List Private Files (200)
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{base_url}}/api/v1/template-version-files/version/{{private_version_id}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{owner_access_token}}
+}
+
+docs {
+  # Owner List Files of Private Template
+
+  Test that owner can list files of their private template versions.
+
+  **Expected:** 200 OK with list of files
+
+  **Setup:**
+  - Use owner user credentials
+  - Version belongs to private template owned by this user
+
+  **Verifies:**
+  - Owners can access all files of their template versions
+  - Parent template ownership cascades to files
+}
+
+assert {
+  res.status: eq 200
+}
