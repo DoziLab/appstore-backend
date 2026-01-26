@@ -5,9 +5,13 @@ meta {
 }
 
 delete {
-  url: {{base_url}}/deployments/{{deployment_id}}
+  url: {{base_url}}/api/v1/deployments/{{deployment_id}}
   body: none
-  auth: inherit
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
 }
 
 params:path {
