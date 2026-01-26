@@ -69,9 +69,15 @@ class DeploymentService:
         # Serialize heat_parameters to JSON if provided
         deployment_parameters = None
         # Validate template parameters required by the template version
+        # Skip access check since deployment creation should work with any template version
+        # (including private templates from other users when explicitly specified)
         template_file_service = TemplateVersionFileService(self.db)
         try:
-            template_params_resp = template_file_service.get_template_parameters(str(template_version.id))
+            template_params_resp = template_file_service.get_template_parameters(
+                str(template_version.id),
+                # if the lecturer was provided the exact ID, they are allowed to use (not read) that template. Collisions are extremely unlikely with UUIDs and not possible because of DB primary keys.
+                skip_access_check=True
+            )
             template_params_map = {p.name: p for p in template_params_resp.parameters}
             required_params = [p.name for p in template_params_resp.parameters if p.required]
         except NotFoundException:

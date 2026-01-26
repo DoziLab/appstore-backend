@@ -1,0 +1,413 @@
+"""Unit tests for template access control."""
+import pytest
+from unittest.mock import Mock, MagicMock
+from uuid import uuid4
+
+from src.services.template_service import TemplateService
+from src.services.template_version_service import TemplateVersionService
+from src.services.template_version_file_service import TemplateVersionFileService
+from src.models.template import Template, TemplateVisibility, TemplateApprovalStatus
+from src.models.template_version import TemplateVersion
+from src.models.template_version_file import TemplateVersionFile
+from src.core.exceptions import ForbiddenException, NotFoundException
+
+
+@pytest.fixture
+def mock_db():
+    """Create a mock database session."""
+    return MagicMock()
+
+
+@pytest.fixture
+def template_service(mock_db):
+    """Create TemplateService instance with mocked dependencies."""
+    return TemplateService(mock_db)
+
+
+@pytest.fixture
+def template_version_service(mock_db):
+    """Create TemplateVersionService instance with mocked dependencies."""
+    return TemplateVersionService(mock_db)
+
+
+@pytest.fixture
+def template_version_file_service(mock_db):
+    """Create TemplateVersionFileService instance with mocked dependencies."""
+    return TemplateVersionFileService(mock_db)
+
+
+@pytest.fixture
+def owner_user_id():
+    """Owner user ID."""
+    return str(uuid4())
+
+
+@pytest.fixture
+def other_user_id():
+    """Other user ID."""
+    return str(uuid4())
+
+
+@pytest.fixture
+def private_template(owner_user_id):
+    """Create a private template."""
+    template = Mock(spec=Template)
+    template.id = str(uuid4())
+    template.owner_id = owner_user_id
+    template.visibility = TemplateVisibility.PRIVATE
+    template.approval_status = TemplateApprovalStatus.PENDING
+    return template
+
+
+@pytest.fixture
+def public_approved_template(owner_user_id):
+    """Create a public approved template."""
+    template = Mock(spec=Template)
+    template.id = str(uuid4())
+    template.owner_id = owner_user_id
+    template.visibility = TemplateVisibility.PUBLIC
+    template.approval_status = TemplateApprovalStatus.APPROVED
+    return template
+
+
+@pytest.fixture
+def public_pending_template(owner_user_id):
+    """Create a public pending template."""
+    template = Mock(spec=Template)
+    template.id = str(uuid4())
+    template.owner_id = owner_user_id
+    template.visibility = TemplateVisibility.PUBLIC
+    template.approval_status = TemplateApprovalStatus.PENDING
+    return template
+
+
+class TestTemplateServiceAccessControl:
+    """Test access control in TemplateService."""
+
+    def test_can_access_template_admin_can_access_any(
+        self, template_service, private_template, other_user_id
+    ):
+        """Admin can access any template."""
+        assert template_service._can_access_template(
+            private_template, user_id=other_user_id, is_admin=True
+        )
+
+    def test_can_access_template_owner_can_access_own_private(
+        self, template_service, private_template, owner_user_id
+    ):
+        """Owner can access their own private template."""
+        assert template_service._can_access_template(
+            private_template, user_id=owner_user_id, is_admin=False
+        )
+
+    def test_can_access_template_non_owner_cannot_access_private(
+        self, template_service, private_template, other_user_id
+    ):
+        """Non-owner cannot access private template."""
+        assert not template_service._can_access_template(
+            private_template, user_id=other_user_id, is_admin=False
+        )
+
+    def test_can_access_template_anyone_can_access_public_approved(
+        self, template_service, public_approved_template, other_user_id
+    ):
+        """Anyone can access public approved template."""
+        assert template_service._can_access_template(
+            public_approved_template, user_id=other_user_id, is_admin=False
+        )
+
+    def test_can_access_template_non_owner_cannot_access_public_pending(
+        self, template_service, public_pending_template, other_user_id
+    ):
+        """Non-owner cannot access public pending template."""
+        assert not template_service._can_access_template(
+            public_pending_template, user_id=other_user_id, is_admin=False
+        )
+
+    def test_can_access_template_owner_can_access_public_pending(
+        self, template_service, public_pending_template, owner_user_id
+    ):
+        """Owner can access their own public pending template."""
+        assert template_service._can_access_template(
+            public_pending_template, user_id=owner_user_id, is_admin=False
+        )
+
+    def test_can_access_template_no_user_id_denies_access(
+        self, template_service, public_approved_template
+    ):
+        """No user_id denies access."""
+        assert not template_service._can_access_template(
+            public_approved_template, user_id=None, is_admin=False
+        )
+
+    def test_get_template_owner_can_view_private(
+        self, template_service, private_template, owner_user_id
+    ):
+        """Owner can view their private template."""
+        template_service.template_repo = Mock()
+        template_service.template_repo.get_by_id.return_value = private_template
+
+        result = template_service.get_template(
+            private_template.id, user_id=owner_user_id, is_admin=False
+        )
+
+        assert result == private_template
+
+    def test_get_template_non_owner_cannot_view_private(
+        self, template_service, private_template, other_user_id
+    ):
+        """Non-owner cannot view private template."""
+        template_service.template_repo = Mock()
+        template_service.template_repo.get_by_id.return_value = private_template
+
+        with pytest.raises(ForbiddenException) as exc_info:
+            template_service.get_template(
+                private_template.id, user_id=other_user_id, is_admin=False
+            )
+
+        assert "permission" in str(exc_info.value).lower()
+
+    def test_get_template_admin_can_view_any(
+        self, template_service, private_template, other_user_id
+    ):
+        """Admin can view any template."""
+        template_service.template_repo = Mock()
+        template_service.template_repo.get_by_id.return_value = private_template
+
+        result = template_service.get_template(
+            private_template.id, user_id=other_user_id, is_admin=True
+        )
+
+        assert result == private_template
+
+    def test_get_template_not_found(self, template_service, owner_user_id):
+        """Get template raises NotFoundException when template not found."""
+        template_service.template_repo = Mock()
+        template_service.template_repo.get_by_id.return_value = None
+
+        with pytest.raises(NotFoundException):
+            template_service.get_template(
+                str(uuid4()), user_id=owner_user_id, is_admin=False
+            )
+
+    def test_list_templates_filters_private_templates(
+        self, template_service, private_template, public_approved_template, owner_user_id, other_user_id
+    ):
+        """List templates filters private templates for non-owners."""
+        template_service.template_repo = Mock()
+        template_service.template_repo.get_all_filtered.return_value = (
+            [private_template, public_approved_template],
+            2
+        )
+
+        # Non-owner should only see public approved template
+        templates, total = template_service.list_templates(
+            user_id=other_user_id, is_admin=False
+        )
+
+        assert len(templates) == 1
+        assert templates[0] == public_approved_template
+        assert total == 1
+
+    def test_list_templates_admin_sees_all(
+        self, template_service, private_template, public_approved_template, other_user_id
+    ):
+        """Admin sees all templates."""
+        template_service.template_repo = Mock()
+        template_service.template_repo.get_all_filtered.return_value = (
+            [private_template, public_approved_template],
+            2
+        )
+
+        templates, total = template_service.list_templates(
+            user_id=other_user_id, is_admin=True
+        )
+
+        assert len(templates) == 2
+        assert total == 2
+
+
+class TestTemplateVersionServiceAccessControl:
+    """Test access control in TemplateVersionService."""
+
+    def test_check_template_access_raises_forbidden_for_private(
+        self, template_version_service, private_template, other_user_id
+    ):
+        """Check template access raises ForbiddenException for private template."""
+        template_version_service.template_repo = Mock()
+        template_version_service.template_repo.get_by_id.return_value = private_template
+
+        with pytest.raises(ForbiddenException):
+            template_version_service._check_template_access(
+                private_template.id, user_id=other_user_id, is_admin=False
+            )
+
+    def test_check_template_access_allows_owner(
+        self, template_version_service, private_template, owner_user_id
+    ):
+        """Check template access allows owner."""
+        template_version_service.template_repo = Mock()
+        template_version_service.template_repo.get_by_id.return_value = private_template
+
+        result = template_version_service._check_template_access(
+            private_template.id, user_id=owner_user_id, is_admin=False
+        )
+
+        assert result == private_template
+
+    def test_get_version_checks_parent_template_access(
+        self, template_version_service, private_template, other_user_id
+    ):
+        """Get version checks parent template access."""
+        version = Mock(spec=TemplateVersion)
+        version.id = str(uuid4())
+        version.template_id = private_template.id
+
+        template_version_service.version_repo = Mock()
+        template_version_service.version_repo.get_by_id.return_value = version
+        template_version_service.template_repo = Mock()
+        template_version_service.template_repo.get_by_id.return_value = private_template
+
+        with pytest.raises(ForbiddenException):
+            template_version_service.get_version(
+                version.id, user_id=other_user_id, is_admin=False
+            )
+
+    def test_list_template_versions_checks_parent_access(
+        self, template_version_service, private_template, other_user_id
+    ):
+        """List template versions checks parent template access."""
+        template_version_service.template_repo = Mock()
+        template_version_service.template_repo.get_by_id.return_value = private_template
+
+        with pytest.raises(ForbiddenException):
+            template_version_service.list_template_versions(
+                private_template.id, user_id=other_user_id, is_admin=False
+            )
+
+
+class TestTemplateVersionFileServiceAccessControl:
+    """Test access control in TemplateVersionFileService."""
+
+    def test_check_template_access_via_version(
+        self, template_version_file_service, private_template, other_user_id
+    ):
+        """Check template access via version ID."""
+        version = Mock(spec=TemplateVersion)
+        version.id = str(uuid4())
+        version.template_id = private_template.id
+
+        template_version_file_service.version_repo = Mock()
+        template_version_file_service.version_repo.get_by_id.return_value = version
+        template_version_file_service.template_repo = Mock()
+        template_version_file_service.template_repo.get_by_id.return_value = private_template
+
+        with pytest.raises(ForbiddenException):
+            template_version_file_service._check_template_access(
+                version.id, user_id=other_user_id, is_admin=False
+            )
+
+    def test_get_file_checks_parent_template_access(
+        self, template_version_file_service, private_template, other_user_id
+    ):
+        """Get file checks parent template access."""
+        version = Mock(spec=TemplateVersion)
+        version.id = str(uuid4())
+        version.template_id = private_template.id
+
+        file = Mock(spec=TemplateVersionFile)
+        file.id = str(uuid4())
+        file.template_version_id = version.id
+
+        template_version_file_service.file_repo = Mock()
+        template_version_file_service.file_repo.get_by_id.return_value = file
+        template_version_file_service.version_repo = Mock()
+        template_version_file_service.version_repo.get_by_id.return_value = version
+        template_version_file_service.template_repo = Mock()
+        template_version_file_service.template_repo.get_by_id.return_value = private_template
+
+        with pytest.raises(ForbiddenException):
+            template_version_file_service.get_file(
+                file.id, user_id=other_user_id, is_admin=False
+            )
+
+    def test_get_version_files_checks_parent_access(
+        self, template_version_file_service, private_template, other_user_id
+    ):
+        """Get version files checks parent template access."""
+        version = Mock(spec=TemplateVersion)
+        version.id = str(uuid4())
+        version.template_id = private_template.id
+
+        template_version_file_service.version_repo = Mock()
+        template_version_file_service.version_repo.get_by_id.return_value = version
+        template_version_file_service.template_repo = Mock()
+        template_version_file_service.template_repo.get_by_id.return_value = private_template
+
+        with pytest.raises(ForbiddenException):
+            template_version_file_service.get_version_files(
+                version.id, user_id=other_user_id, is_admin=False
+            )
+
+    def test_get_version_files_skip_access_check(
+        self, template_version_file_service, private_template, other_user_id
+    ):
+        """Get version files with skip_access_check bypasses access control."""
+        version = Mock(spec=TemplateVersion)
+        version.id = str(uuid4())
+        version.template_id = private_template.id
+
+        # Mock repos
+        template_version_file_service.file_repo = Mock()
+        template_version_file_service.file_repo.get_by_version_id.return_value = []
+        template_version_file_service.version_repo = Mock()
+        template_version_file_service.template_repo = Mock()
+
+        # Should succeed and return empty list without checking access
+        files = template_version_file_service.get_version_files(
+            version.id, user_id=other_user_id, is_admin=False, skip_access_check=True
+        )
+
+        assert files == []
+        # Verify access check repos were NOT called
+        template_version_file_service.version_repo.get_by_id.assert_not_called()
+        template_version_file_service.template_repo.get_by_id.assert_not_called()
+
+    def test_get_template_parameters_skip_access_check(
+        self, template_version_file_service, private_template, other_user_id
+    ):
+        """Get template parameters with skip_access_check bypasses access control."""
+        version = Mock(spec=TemplateVersion)
+        version.id = str(uuid4())
+        version.template_id = private_template.id
+
+        # Mock file repo to return no files (will raise NotFoundException)
+        template_version_file_service.file_repo = Mock()
+        template_version_file_service.file_repo.get_by_version_id.return_value = []
+
+        # Should raise NotFoundException (no app.yaml), not ForbiddenException
+        with pytest.raises(NotFoundException) as exc_info:
+            template_version_file_service.get_template_parameters(
+                version.id, user_id=other_user_id, is_admin=False, skip_access_check=True
+            )
+
+        assert "app.yaml" in str(exc_info.value).lower()
+
+    def test_get_template_parameters_checks_access_by_default(
+        self, template_version_file_service, private_template, other_user_id
+    ):
+        """Get template parameters checks access by default."""
+        version = Mock(spec=TemplateVersion)
+        version.id = str(uuid4())
+        version.template_id = private_template.id
+
+        template_version_file_service.version_repo = Mock()
+        template_version_file_service.version_repo.get_by_id.return_value = version
+        template_version_file_service.template_repo = Mock()
+        template_version_file_service.template_repo.get_by_id.return_value = private_template
+
+        # Should raise ForbiddenException before trying to get files
+        with pytest.raises(ForbiddenException):
+            template_version_file_service.get_template_parameters(
+                version.id, user_id=other_user_id, is_admin=False, skip_access_check=False
+            )

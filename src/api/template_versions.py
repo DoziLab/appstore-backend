@@ -60,6 +60,7 @@ async def get_version(
     version_id: UUID,
     db: DBSession,
     request_id: RequestID,
+    current_user: CurrentUser,
     with_file_count: bool = Query(False, description="Include file count in response"),
     include_parameters: bool = Query(True, description="Include parameters from app.yaml"),
 ):
@@ -67,12 +68,19 @@ async def get_version(
     
     Optionally includes the count of files associated with this version.
     By default, includes parameters parsed from app.yaml manifest.
+    Requires authentication. Access control checks parent template permissions.
     """
     service = TemplateVersionService(db)
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
     
     if include_parameters:
         # Get version with parameters
-        result_with_params = service.get_version_with_parameters(str(version_id), with_file_count=with_file_count)
+        result_with_params = service.get_version_with_parameters(
+            str(version_id),
+            with_file_count=with_file_count,
+            user_id=current_user["user_id"],
+            is_admin=is_admin
+        )
         version = result_with_params["version"]
         parameters = result_with_params.get("parameters", [])
 
@@ -91,7 +99,12 @@ async def get_version(
         )
     else:
         # Original behavior without parameters
-        result_with_no_params = service.get_version(str(version_id), with_file_count=with_file_count)
+        result_with_no_params = service.get_version(
+            str(version_id),
+            with_file_count=with_file_count,
+            user_id=current_user["user_id"],
+            is_admin=is_admin
+        )
         if with_file_count:
             if not isinstance(result_with_no_params, dict):
                 raise ValueError("Expected dict result when with_file_count=True")
@@ -117,6 +130,7 @@ async def list_template_versions(
     template_id: UUID,
     db: DBSession,
     request_id: RequestID,
+    current_user: CurrentUser,
     active_only: bool = Query(False, description="Return only active versions"),
     include_parameters: bool = Query(False, description="Include parameters from app.yaml for each version"),
 ):
@@ -125,15 +139,27 @@ async def list_template_versions(
     Returns versions ordered by creation date (newest first).
     Can be filtered to show only active versions.
     Optionally includes parameters parsed from app.yaml for each version.
+    Requires authentication. Access control checks parent template permissions.
     """
     service = TemplateVersionService(db)
-    versions = service.list_template_versions(str(template_id), active_only=active_only)
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
+    
+    versions = service.list_template_versions(
+        str(template_id),
+        active_only=active_only,
+        user_id=current_user["user_id"],
+        is_admin=is_admin
+    )
     
     if include_parameters:
         # Include parameters for each version
         version_responses = []
         for version in versions:
-            result = service.get_version_with_parameters(str(version.id))
+            result = service.get_version_with_parameters(
+                str(version.id),
+                user_id=current_user["user_id"],
+                is_admin=is_admin
+            )
             version_data = TemplateVersionResponse.model_validate(result["version"]).model_dump(mode="json")
             version_data["parameters"] = result.get("parameters", [])
             version_responses.append(version_data)
@@ -155,15 +181,23 @@ async def get_active_version(
     template_id: UUID,
     db: DBSession,
     request_id: RequestID,
+    current_user: CurrentUser,
     include_parameters: bool = Query(True, description="Include parameters from app.yaml"),
 ):
     """Get the active version for a specific template.
     
     Returns the currently active version or 404 if no active version exists.
     By default, includes parameters parsed from app.yaml manifest.
+    Requires authentication. Access control checks parent template permissions.
     """
     service = TemplateVersionService(db)
-    version = service.get_active_version(str(template_id))
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
+    
+    version = service.get_active_version(
+        str(template_id),
+        user_id=current_user["user_id"],
+        is_admin=is_admin
+    )
     
     if not version:
         return ResponseBuilder.success(
@@ -174,7 +208,11 @@ async def get_active_version(
     
     if include_parameters:
         # Get version with parameters
-        result = service.get_version_with_parameters(str(version.id))
+        result = service.get_version_with_parameters(
+            str(version.id),
+            user_id=current_user["user_id"],
+            is_admin=is_admin
+        )
         version_data = TemplateVersionResponse.model_validate(result["version"]).model_dump(mode="json")
         version_data["parameters"] = result.get("parameters", [])
         
