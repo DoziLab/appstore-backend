@@ -11,6 +11,7 @@ from src.models.deployment_log import DeploymentLogLevel, DeploymentLogEventType
 from src.models.template_version_file import FileType
 from src.models.course_member import CourseMember
 from src.repositories.deployment_repository import DeploymentRepository
+from src.repositories.deployment_log_repository import DeploymentLogRepository
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
 from src.services.template_version_file_service import TemplateVersionFileService
 from src.services.deployment_log_service import DeploymentLogService
@@ -515,27 +516,23 @@ def delete_deployment(self, deployment_id: str) -> dict:
                     details={"error": str(e)}
                 )
 
+        # Delete logs first (before deployment record)
+        try:
+            log_repo = DeploymentLogRepository(db)
+            logs_deleted = log_repo.delete_by_deployment_id(deployment_id)
+            logger.info(f"Deleted {logs_deleted} log entries for deployment {deployment_id}")
+        except Exception as e:
+            logger.warning(f"Failed to delete logs for deployment {deployment_id}: {e}")
+        
         # Finally delete DB record
         try:
             deleted = repo.delete(UUID(deployment_id))
             if deleted:
-                log_service.log(
-                    deployment_id=deployment_id,
-                    event_type=DeploymentLogEventType.DEPLOYMENT_DELETED,
-                    message="Deployment record deleted from database",
-                    level=DeploymentLogLevel.INFO,
-                )
+                logger.info(f"Deployment record deleted from database: {deployment_id}")
             else:
                 logger.warning(f"Deployment record not found when attempting delete: {deployment_id}")
         except Exception as e:
             logger.error(f"Failed to delete deployment record {deployment_id}: {e}", exc_info=True)
-            log_service.log(
-                deployment_id=deployment_id,
-                event_type=DeploymentLogEventType.FAILED,
-                message=f"Failed to delete deployment record: {str(e)}",
-                level=DeploymentLogLevel.ERROR,
-                details={"error": str(e)}
-            )
 
         return {"status": "deleted", "deployment_id": deployment_id, "task_id": task_id}
 
