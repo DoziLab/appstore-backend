@@ -30,9 +30,10 @@ docs {
   
   **Query Parameters:**
   - `page`: Page number (default: 1)
-  - `page_size`: Items per page (default: 10)
+  - `page_size`: Items per page (default: 10, max: 100)
   - `course_id`: Filter by course ID (optional)
-  - `status`: Filter by deployment status (optional: queued, creating, running, failed, deleted)
+  - `template_id`: Filter by template ID (optional)
+  - `status`: Filter by deployment status (optional)
   
   **Returns:** Paginated list of deployments with metadata
 }
