@@ -1,20 +1,15 @@
 meta {
-  name: Get Quotas
+  name: Get Quotas v2
   type: http
   seq: 7
 }
-
+ 
 get {
   url: {{base_url}}/api/v1/quotas
   body: none
   auth: bearer
-  params:query {
-    lecturer_id: {{lecturer_id}}
-    project_id: {{project_id}}
-    force_refresh: {{force_refresh}}
-  }
 }
-
+ 
 auth:bearer {
   token: {{access_token}}
 }

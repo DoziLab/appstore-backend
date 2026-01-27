@@ -2,11 +2,15 @@
 from unittest.mock import patch, MagicMock
 import pytest
 from uuid import uuid4
+from datetime import datetime
 from fastapi.testclient import TestClient
 from src.main import app
-from src.core.dependencies import get_current_user
+from src.core.dependencies import get_current_user, get_db
 from src.models.user import UserRole
-from src.models.deployment import DeploymentStatus
+from src.models.deployment import DeploymentStatus, DeploymentMode, Deployment
+from src.models.course import Course
+from src.models.template_version import TemplateVersion
+from src.models.template import Template
 
 
 def mock_lecturer_user():
@@ -37,71 +41,130 @@ client = TestClient(app)
 
 
 @pytest.fixture
-def mock_stacks():
-    """Mock OpenStack stacks data."""
+def mock_deployments():
+    """Mock deployment database objects."""
     course_id_1 = str(uuid4())
     course_id_2 = str(uuid4())
+    template_id_1 = str(uuid4())
+    template_id_2 = str(uuid4())
     
-    return [
-        {
-            "stack_id": "stack-1",
-            "stack_name": "test-stack-1",
-            "status": "CREATE_COMPLETE",
-            "creation_time": "2024-11-27T10:00:00",
-            "deployment_id": "deploy-1",
-            "course_id": course_id_1,
-            "deployment_mode": "per_course",
-            "deployment_status": "active",
-            "owner_user_id": 1,
-            "openstack_project_id": "project-1",
-            "openstack_project_name": "Test Project",
-            "resources": [],
-            "outputs": {},
-        },
-        {
-            "stack_id": "stack-2",
-            "stack_name": "test-stack-2",
-            "status": "CREATE_IN_PROGRESS",
-            "creation_time": "2024-11-27T11:00:00",
-            "deployment_id": "deploy-2",
-            "course_id": course_id_2,
-            "deployment_mode": "per_group",
-            "deployment_status": "deploying",
-            "owner_user_id": 1,
-            "openstack_project_id": "project-1",
-            "openstack_project_name": "Test Project",
-            "resources": [],
-            "outputs": {},
-        },
-        {
-            "stack_id": "stack-3",
-            "stack_name": "test-stack-3",
-            "status": "DELETE_COMPLETE",
-            "creation_time": "2024-11-27T09:00:00",
-            "deployment_id": "deploy-3",
-            "course_id": course_id_1,
-            "deployment_mode": "per_student",
-            "deployment_status": "deleted",
-            "owner_user_id": 2,
-            "openstack_project_id": "project-2",
-            "openstack_project_name": "Other Project",
-            "resources": [],
-            "outputs": {},
-        },
-    ], course_id_1, course_id_2
+    # Mock template
+    template1 = MagicMock(spec=Template)
+    template1.id = template_id_1
+    template1.name = "Ubuntu 22.04"
+    
+    template2 = MagicMock(spec=Template)
+    template2.id = template_id_2
+    template2.name = "PostgreSQL"
+    
+    # Mock template versions
+    version1 = MagicMock(spec=TemplateVersion)
+    version1.id = str(uuid4())
+    version1.version = "1.0.0"
+    version1.template_id = template_id_1
+    version1.template = template1
+    
+    version2 = MagicMock(spec=TemplateVersion)
+    version2.id = str(uuid4())
+    version2.version = "2.0.0"
+    version2.template_id = template_id_1
+    version2.template = template1
+    
+    version3 = MagicMock(spec=TemplateVersion)
+    version3.id = str(uuid4())
+    version3.version = "1.0.0"
+    version3.template_id = template_id_2
+    version3.template = template2
+    
+    # Mock courses
+    course1 = MagicMock(spec=Course)
+    course1.id = course_id_1
+    course1.name = "CS101"
+    course1.lecturer_id = 1
+    
+    course2 = MagicMock(spec=Course)
+    course2.id = course_id_2
+    course2.name = "CS201"
+    course2.lecturer_id = 1
+    
+    course3 = MagicMock(spec=Course)
+    course3.id = str(uuid4())
+    course3.name = "CS301"
+    course3.lecturer_id = 2
+    
+    # Mock deployments
+    deployment1 = MagicMock(spec=Deployment)
+    deployment1.id = "deploy-1"
+    deployment1.name = "Web Dev Lab"
+    deployment1.template_version_id = version1.id
+    deployment1.course_id = course_id_1
+    deployment1.deployment_mode = DeploymentMode.PER_COURSE
+    deployment1.status = DeploymentStatus.RUNNING
+    deployment1.openstack_stack_id = "stack-1"
+    deployment1.config_json = None
+    deployment1.deployment_parameters = '{"cpu": 2}'
+    deployment1.access_types_json = '["ssh"]'
+    deployment1.created_at = datetime(2024, 11, 27, 10, 0, 0)
+    deployment1.updated_at = datetime(2024, 11, 27, 10, 5, 0)
+    deployment1.template_version = version1
+    deployment1.course = course1
+    
+    deployment2 = MagicMock(spec=Deployment)
+    deployment2.id = "deploy-2"
+    deployment2.name = "Database Lab"
+    deployment2.template_version_id = version2.id
+    deployment2.course_id = course_id_2
+    deployment2.deployment_mode = DeploymentMode.PER_GROUP
+    deployment2.status = DeploymentStatus.CREATING
+    deployment2.openstack_stack_id = "stack-2"
+    deployment2.config_json = None
+    deployment2.deployment_parameters = '{"cpu": 4}'
+    deployment2.access_types_json = '["ssh", "web"]'
+    deployment2.created_at = datetime(2024, 11, 27, 11, 0, 0)
+    deployment2.updated_at = datetime(2024, 11, 27, 11, 0, 0)
+    deployment2.template_version = version2
+    deployment2.course = course2
+    
+    deployment3 = MagicMock(spec=Deployment)
+    deployment3.id = "deploy-3"
+    deployment3.name = "Admin Deployment"
+    deployment3.template_version_id = version3.id
+    deployment3.course_id = course3.id
+    deployment3.deployment_mode = DeploymentMode.PER_STUDENT
+    deployment3.status = DeploymentStatus.FAILED
+    deployment3.openstack_stack_id = "stack-3"
+    deployment3.config_json = None
+    deployment3.deployment_parameters = None
+    deployment3.access_types_json = '["ssh"]'
+    deployment3.created_at = datetime(2024, 11, 27, 9, 0, 0)
+    deployment3.updated_at = datetime(2024, 11, 27, 9, 10, 0)
+    deployment3.template_version = version3
+    deployment3.course = course3
+    
+    return [deployment1, deployment2, deployment3], course_id_1, course_id_2, template_id_1, template_id_2
 
 
-@patch("src.api.deployments.DeploymentService")
-def test_list_deployments_as_lecturer(mock_service_class, mock_stacks):
-    """Test listing deployments as LECTURER (should see only own stacks)."""
+def test_list_deployments_as_lecturer(mock_deployments):
+    """Test listing deployments as LECTURER (should see only own deployments)."""
+    deployments, course_id_1, course_id_2, template_id_1, template_id_2 = mock_deployments
+    # Lecturer should see only deployments from their courses
+    lecturer_deployments = [d for d in deployments if d.course.lecturer_id == 1]
+    
+    # Mock DB session
+    mock_db = MagicMock()
+    mock_query = MagicMock()
+    mock_query.join.return_value = mock_query
+    mock_query.filter.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.count.return_value = len(lecturer_deployments)
+    mock_query.offset.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.all.return_value = lecturer_deployments
+    mock_db.query.return_value = mock_query
+    
+    # Override dependencies
     app.dependency_overrides[get_current_user] = mock_lecturer_user
-    
-    stacks, course_id_1, course_id_2 = mock_stacks
-    # Mock service to return only lecturer's stacks
-    lecturer_stacks = [s for s in stacks if s["owner_user_id"] == 1]
-    mock_service_instance = MagicMock()
-    mock_service_instance.list_all_openstack_stacks.return_value = lecturer_stacks
-    mock_service_class.return_value = mock_service_instance
+    app.dependency_overrides[get_db] = lambda: mock_db
     
     response = client.get("/api/v1/deployments")
     
@@ -111,22 +174,37 @@ def test_list_deployments_as_lecturer(mock_service_class, mock_stacks):
     assert data["pagination"]["total_items"] == 2
     assert len(data["data"]) == 2
     
-    # Verify service was called with lecturer's user_id
-    mock_service_instance.list_all_openstack_stacks.assert_called_once_with(user_id=1)
+    # Verify response format
+    first_deployment = data["data"][0]
+    assert "id" in first_deployment
+    assert "name" in first_deployment
+    assert "status" in first_deployment
+    assert first_deployment["status"] in ["queued", "creating", "running", "restarting", "deleting", "failed"]
+    assert "template_version" in first_deployment
+    assert "course" in first_deployment
     
     app.dependency_overrides.clear()
 
 
-@patch("src.api.deployments.DeploymentService")
-def test_list_deployments_as_admin(mock_service_class, mock_stacks):
-    """Test listing deployments as ADMIN (should see all stacks)."""
-    app.dependency_overrides[get_current_user] = mock_admin_user
+def test_list_deployments_as_admin(mock_deployments):
+    """Test listing deployments as ADMIN (should see all deployments)."""
+    deployments, course_id_1, course_id_2, template_id_1, template_id_2 = mock_deployments
     
-    stacks, course_id_1, course_id_2 = mock_stacks
-    # Mock service to return all stacks
-    mock_service_instance = MagicMock()
-    mock_service_instance.list_all_openstack_stacks.return_value = stacks
-    mock_service_class.return_value = mock_service_instance
+    # Mock DB session
+    mock_db = MagicMock()
+    mock_query = MagicMock()
+    mock_query.join.return_value = mock_query
+    mock_query.filter.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.count.return_value = len(deployments)
+    mock_query.offset.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.all.return_value = deployments
+    mock_db.query.return_value = mock_query
+    
+    # Override dependencies
+    app.dependency_overrides[get_current_user] = mock_admin_user
+    app.dependency_overrides[get_db] = lambda: mock_db
     
     response = client.get("/api/v1/deployments")
     
@@ -136,22 +214,29 @@ def test_list_deployments_as_admin(mock_service_class, mock_stacks):
     assert data["pagination"]["total_items"] == 3
     assert len(data["data"]) == 3
     
-    # Verify service was called with user_id=None (admin mode)
-    mock_service_instance.list_all_openstack_stacks.assert_called_once_with(user_id=None)
-    
     app.dependency_overrides.clear()
 
 
-@patch("src.api.deployments.DeploymentService")
-def test_list_deployments_filter_by_course(mock_service_class, mock_stacks):
+def test_list_deployments_filter_by_course(mock_deployments):
     """Test filtering deployments by course_id."""
-    app.dependency_overrides[get_current_user] = mock_lecturer_user
+    deployments, course_id_1, course_id_2, template_id_1, template_id_2 = mock_deployments
+    filtered = [d for d in deployments if d.course_id == course_id_1 and d.course.lecturer_id == 1]
     
-    stacks, course_id_1, course_id_2 = mock_stacks
-    mock_service_instance = MagicMock()
-    lecturer_stacks = [s for s in stacks if s["owner_user_id"] == 1]
-    mock_service_instance.list_all_openstack_stacks.return_value = lecturer_stacks
-    mock_service_class.return_value = mock_service_instance
+    # Mock DB session
+    mock_db = MagicMock()
+    mock_query = MagicMock()
+    mock_query.join.return_value = mock_query
+    mock_query.filter.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.count.return_value = len(filtered)
+    mock_query.offset.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.all.return_value = filtered
+    mock_db.query.return_value = mock_query
+    
+    # Override dependencies
+    app.dependency_overrides[get_current_user] = mock_lecturer_user
+    app.dependency_overrides[get_db] = lambda: mock_db
     
     response = client.get(f"/api/v1/deployments?course_id={course_id_1}")
     
@@ -159,45 +244,64 @@ def test_list_deployments_filter_by_course(mock_service_class, mock_stacks):
     data = response.json()
     assert data["success"] is True
     assert data["pagination"]["total_items"] == 1
-    assert data["data"][0]["course_id"] == course_id_1
+    assert data["data"][0]["course"]["id"] == course_id_1
     
     app.dependency_overrides.clear()
 
 
-@patch("src.api.deployments.DeploymentService")
-def test_list_deployments_filter_by_status(mock_service_class, mock_stacks):
+def test_list_deployments_filter_by_status(mock_deployments):
     """Test filtering deployments by status."""
+    deployments, course_id_1, course_id_2, template_id_1, template_id_2 = mock_deployments
+    filtered = [d for d in deployments if d.status == DeploymentStatus.RUNNING and d.course.lecturer_id == 1]
+    
+    # Mock DB session
+    mock_db = MagicMock()
+    mock_query = MagicMock()
+    mock_query.join.return_value = mock_query
+    mock_query.filter.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.count.return_value = len(filtered)
+    mock_query.offset.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.all.return_value = filtered
+    mock_db.query.return_value = mock_query
+    
+    # Override dependencies
     app.dependency_overrides[get_current_user] = mock_lecturer_user
+    app.dependency_overrides[get_db] = lambda: mock_db
     
-    stacks, course_id_1, course_id_2 = mock_stacks
-    mock_service_instance = MagicMock()
-    lecturer_stacks = [s for s in stacks if s["owner_user_id"] == 1]
-    mock_service_instance.list_all_openstack_stacks.return_value = lecturer_stacks
-    mock_service_class.return_value = mock_service_instance
-    
-    response = client.get("/api/v1/deployments?status=CREATE_COMPLETE")
+    response = client.get("/api/v1/deployments?status=running")
     
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
     assert data["pagination"]["total_items"] == 1
-    assert data["data"][0]["status"] == "CREATE_COMPLETE"
+    assert data["data"][0]["status"] == "running"
     
     app.dependency_overrides.clear()
 
 
-@patch("src.api.deployments.DeploymentService")
-def test_list_deployments_pagination(mock_service_class, mock_stacks):
+def test_list_deployments_pagination(mock_deployments):
     """Test pagination of deployment list."""
+    deployments, course_id_1, course_id_2, template_id_1, template_id_2 = mock_deployments
+    lecturer_deployments = [d for d in deployments if d.course.lecturer_id == 1]
+    
+    # Mock DB session
+    mock_db = MagicMock()
+    mock_query = MagicMock()
+    mock_query.join.return_value = mock_query
+    mock_query.filter.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.count.return_value = len(lecturer_deployments)
+    mock_query.offset.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.all.return_value = lecturer_deployments[:1]  # First page
+    mock_db.query.return_value = mock_query
+    
+    # Override dependencies
     app.dependency_overrides[get_current_user] = mock_lecturer_user
+    app.dependency_overrides[get_db] = lambda: mock_db
     
-    stacks, course_id_1, course_id_2 = mock_stacks
-    mock_service_instance = MagicMock()
-    lecturer_stacks = [s for s in stacks if s["owner_user_id"] == 1]
-    mock_service_instance.list_all_openstack_stacks.return_value = lecturer_stacks
-    mock_service_class.return_value = mock_service_instance
-    
-    # Request first page with page_size=1
     response = client.get("/api/v1/deployments?page=1&page_size=1")
     
     assert response.status_code == 200
@@ -211,37 +315,59 @@ def test_list_deployments_pagination(mock_service_class, mock_stacks):
     app.dependency_overrides.clear()
 
 
-@patch("src.api.deployments.DeploymentService")
-def test_list_deployments_combined_filters(mock_service_class, mock_stacks):
+def test_list_deployments_combined_filters(mock_deployments):
     """Test combining multiple filters."""
+    deployments, course_id_1, course_id_2, template_id_1, template_id_2 = mock_deployments
+    filtered = [d for d in deployments 
+                if d.course_id == course_id_1 
+                and d.status == DeploymentStatus.RUNNING 
+                and d.course.lecturer_id == 1]
+    
+    # Mock DB session
+    mock_db = MagicMock()
+    mock_query = MagicMock()
+    mock_query.join.return_value = mock_query
+    mock_query.filter.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.count.return_value = len(filtered)
+    mock_query.offset.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.all.return_value = filtered
+    mock_db.query.return_value = mock_query
+    
+    # Override dependencies
     app.dependency_overrides[get_current_user] = mock_lecturer_user
+    app.dependency_overrides[get_db] = lambda: mock_db
     
-    stacks, course_id_1, course_id_2 = mock_stacks
-    mock_service_instance = MagicMock()
-    lecturer_stacks = [s for s in stacks if s["owner_user_id"] == 1]
-    mock_service_instance.list_all_openstack_stacks.return_value = lecturer_stacks
-    mock_service_class.return_value = mock_service_instance
-    
-    response = client.get(f"/api/v1/deployments?course_id={course_id_1}&status=CREATE_COMPLETE")
+    response = client.get(f"/api/v1/deployments?course_id={course_id_1}&status=running")
     
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
     assert data["pagination"]["total_items"] == 1
-    assert data["data"][0]["course_id"] == course_id_1
-    assert data["data"][0]["status"] == "CREATE_COMPLETE"
+    assert data["data"][0]["course"]["id"] == course_id_1
+    assert data["data"][0]["status"] == "running"
     
     app.dependency_overrides.clear()
 
 
-@patch("src.api.deployments.DeploymentService")
-def test_list_deployments_no_results(mock_service_class):
+def test_list_deployments_no_results():
     """Test empty result when no deployments match filters."""
-    app.dependency_overrides[get_current_user] = mock_lecturer_user
+    # Mock DB session
+    mock_db = MagicMock()
+    mock_query = MagicMock()
+    mock_query.join.return_value = mock_query
+    mock_query.filter.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.count.return_value = 0
+    mock_query.offset.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.all.return_value = []
+    mock_db.query.return_value = mock_query
     
-    mock_service_instance = MagicMock()
-    mock_service_instance.list_all_openstack_stacks.return_value = []
-    mock_service_class.return_value = mock_service_instance
+    # Override dependencies
+    app.dependency_overrides[get_current_user] = mock_lecturer_user
+    app.dependency_overrides[get_db] = lambda: mock_db
     
     response = client.get("/api/v1/deployments")
     
@@ -254,33 +380,56 @@ def test_list_deployments_no_results(mock_service_class):
     app.dependency_overrides.clear()
 
 
-@patch("src.api.deployments.DeploymentService")
-def test_list_deployments_filter_by_template_id(mock_service_class, mock_stacks):
-    """Test filtering deployments by template_id."""
+def test_list_deployments_invalid_status_filter():
+    """Test that invalid status filter returns empty result with message."""
+    # Override dependencies
     app.dependency_overrides[get_current_user] = mock_lecturer_user
     
-    stacks, course_id_1, course_id_2 = mock_stacks
-    template_id = uuid4()
-    
-    # Mock deployment with template_version relationship
-    mock_deployment = MagicMock()
-    mock_deployment.id = "deploy-1"
-    mock_deployment.template_version = MagicMock()
-    mock_deployment.template_version.template_id = template_id
-    
-    mock_service_instance = MagicMock()
-    lecturer_stacks = [s for s in stacks if s["owner_user_id"] == 1]
-    mock_service_instance.list_all_openstack_stacks.return_value = lecturer_stacks
-    mock_service_instance.deployment_repo.get_by_id.return_value = mock_deployment
-    mock_service_class.return_value = mock_service_instance
-    
-    response = client.get(f"/api/v1/deployments?template_id={template_id}")
+    response = client.get("/api/v1/deployments?status=INVALID_STATUS")
     
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
-    # Should only return stacks matching the template_id
-    assert all(s["deployment_id"] == "deploy-1" for s in data["data"])
+    assert data["data"] == []
+    assert data["pagination"]["total_items"] == 0
+    assert "Invalid status filter" in data["message"]
+    
+    app.dependency_overrides.clear()
+
+
+def test_list_deployments_filter_by_template_id(mock_deployments):
+    """Test filtering deployments by template_id."""
+    deployments, course_id_1, course_id_2, template_id_1, template_id_2 = mock_deployments
+    # Filter deployments by template_id and lecturer
+    filtered = [d for d in deployments 
+                if d.template_version.template_id == template_id_1 
+                and d.course.lecturer_id == 1]
+    
+    # Mock DB session
+    mock_db = MagicMock()
+    mock_query = MagicMock()
+    mock_query.join.return_value = mock_query
+    mock_query.filter.return_value = mock_query
+    mock_query.order_by.return_value = mock_query
+    mock_query.count.return_value = len(filtered)
+    mock_query.offset.return_value = mock_query
+    mock_query.limit.return_value = mock_query
+    mock_query.all.return_value = filtered
+    mock_db.query.return_value = mock_query
+    
+    # Override dependencies
+    app.dependency_overrides[get_current_user] = mock_lecturer_user
+    app.dependency_overrides[get_db] = lambda: mock_db
+    
+    response = client.get(f"/api/v1/deployments?template_id={template_id_1}")
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["pagination"]["total_items"] == 2
+    # All returned deployments should have the same template_id
+    for deployment in data["data"]:
+        assert deployment["template_version"]["template_id"] == str(template_id_1)
     
     app.dependency_overrides.clear()
 

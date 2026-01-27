@@ -14,7 +14,9 @@ from src.services.openstack_heat_service import HeatStackService
 from src.schemas.deployment import DeploymentLogResponse
 from src.tasks.deploy_tasks import delete_deployment as delete_deployment_task
 from src.tasks.deploy_tasks import restart_deployment as restart_deployment_task
-from src.models.deployment import DeploymentStatus
+from src.models.deployment import DeploymentStatus, Deployment
+from src.models.course import Course
+from src.models.template_version import TemplateVersion
 
 router = APIRouter(
     prefix="/deployments",
@@ -30,87 +32,99 @@ async def list_deployments(
     user: CurrentUser,
     course_id: UUID | None = Query(None, description="Filter by course ID"),
     template_id: UUID | None = Query(None, description="Filter by template ID"),
-    status_filter: str | None = Query(None, description="Filter by OpenStack stack status (e.g., CREATE_COMPLETE, DELETE_COMPLETE)", alias="status"),
+    status_filter: str | None = Query(None, description="Filter by deployment status (e.g., RUNNING, FAILED)", alias="status"),
 ):
-    """List all OpenStack Heat stacks for the current user.
+    """List all deployments for the current user.
     
-    Fetches stacks directly from OpenStack API and enriches them with deployment
-    information from the database if available. This ensures the list always shows
-    what actually exists in OpenStack, not just what's tracked in the database.
+    Fetches deployments from database and enriches them with current OpenStack stack status.
+    Only shows deployments created through the App Store, not all OpenStack resources.
     
-    Returns stack information including:
-    - Current stack status from OpenStack
-    - Stack resources (VMs, networks, etc.)
-    - Stack outputs (access URLs, IPs, etc.)
-    - Associated deployment information (if tracked in database)
+    Returns deployment information including:
+    - Deployment metadata (name, mode, parameters)
+    - Current status from database
+    - Associated course and template information
+    - OpenStack stack ID (if available)
     
     Optional filters:
-    - Course ID: Only show stacks associated with a specific course
-    - Template ID: Only show stacks associated with a specific template
-    - Status: Filter by OpenStack stack status (e.g., CREATE_COMPLETE, DELETE_COMPLETE)
+    - Course ID: Only show deployments for a specific course
+    - Template ID: Only show deployments using a specific template
+    - Status: Filter by deployment status (e.g., RUNNING, FAILED)
     
     Returns paginated results with total count.
     """
-    service = DeploymentService(db)
     
     # Check if user is admin
     user_roles = user.get("roles", [])
     is_admin = "admin" in [role.lower() for role in user_roles]
     
-    # Fetch stacks: admins get all (user_id=None), lecturers get only their own
-    all_stacks = service.list_all_openstack_stacks(user_id=None if is_admin else user["user_id"])
+    # Build query: admins get all deployments, lecturers only their own
+    query = db.query(Deployment).join(Course)
+    
+    if not is_admin:
+        # Filter by lecturer's courses
+        query = query.filter(Course.lecturer_id == user["user_id"])
     
     # Apply filters
-    filtered_stacks = all_stacks
-    
     if course_id:
-        filtered_stacks = [
-            s for s in filtered_stacks 
-            if s.get('course_id') == str(course_id)
-        ]
+        query = query.filter(Deployment.course_id == str(course_id))
     
     if template_id:
-        # Filter by template_id (requires deployment_id to fetch from DB)
-        deployment_ids = [s.get('deployment_id') for s in filtered_stacks if s.get('deployment_id')]
-        if deployment_ids:
-            # Fetch deployments from DB to check template_version_id -> template_id relationship
-            matching_deployment_ids = set()
-            
-            for deployment_id in deployment_ids:
-                if deployment_id is None:
-                    continue
-                deployment = service.deployment_repo.get_by_id(deployment_id)
-                if deployment and deployment.template_version:
-                    if deployment.template_version.template_id == template_id:
-                        matching_deployment_ids.add(str(deployment.id))
-            
-            filtered_stacks = [
-                s for s in filtered_stacks 
-                if s.get('deployment_id') in matching_deployment_ids
-            ]
-        else:
-            # No deployments with deployment_id, so template_id filter results in empty list
-            filtered_stacks = []
+        query = query.join(TemplateVersion).filter(TemplateVersion.template_id == template_id)
     
     if status_filter:
-        # Filter by OpenStack stack status (case-insensitive)
-        filtered_stacks = [
-            s for s in filtered_stacks 
-            if s.get('status', '').upper() == status_filter.upper()
-        ]
+        try:
+            status_enum = DeploymentStatus(status_filter.lower())
+            query = query.filter(Deployment.status == status_enum)
+        except ValueError:
+            # Invalid status filter, return empty result
+            return ResponseBuilder.paginated(
+                data=[],
+                page=pagination.page,
+                page_size=pagination.page_size,
+                total=0,
+                message=f"Invalid status filter: {status_filter}",
+                request_id=request_id,
+            )
+    
+    # Get total count before pagination
+    total = query.count()
     
     # Apply pagination
-    total = len(filtered_stacks)
-    start_idx = (pagination.page - 1) * pagination.page_size
-    end_idx = start_idx + pagination.page_size
-    paginated_stacks = filtered_stacks[start_idx:end_idx]
+    deployments = (
+        query
+        .order_by(Deployment.created_at.desc())
+        .offset((pagination.page - 1) * pagination.page_size)
+        .limit(pagination.page_size)
+        .all()
+    )
+    
+    # Convert to response format
+    deployment_list = []
+    for deployment in deployments:
+        deployment_dict = DeploymentResponse.model_validate(deployment).model_dump(mode="json")
+        
+        # Add related objects
+        deployment_dict["template_version"] = {
+            "id": str(deployment.template_version.id),
+            "version": deployment.template_version.version,
+            "template_id": str(deployment.template_version.template_id),
+            "template_name": deployment.template_version.template.name if deployment.template_version.template else None,
+        } if deployment.template_version else None
+        
+        deployment_dict["course"] = {
+            "id": str(deployment.course.id),
+            "name": deployment.course.name,
+            "lecturer_id": deployment.course.lecturer_id,
+        } if deployment.course else None
+        
+        deployment_list.append(deployment_dict)
     
     return ResponseBuilder.paginated(
-        data=paginated_stacks,
+        data=deployment_list,
         page=pagination.page,
         page_size=pagination.page_size,
         total=total,
-        message=f"Retrieved {len(paginated_stacks)} stacks from OpenStack (total: {total})",
+        message=f"Retrieved {len(deployment_list)} deployments (total: {total})",
         request_id=request_id,
     )
 
