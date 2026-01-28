@@ -1,4 +1,5 @@
 import json
+import base64
 from typing import Optional, Union
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -7,11 +8,11 @@ from src.repositories.deployment_repository import DeploymentRepository
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
 from src.services.deployment_log_service import DeploymentLogService
 from src.services.openstack_heat_service import HeatStackService
+from src.services.template_user_management_service import TemplateUserManagementService
 from src.schemas.deployment import DeploymentCreate
-from src.models.deployment import Deployment, DeploymentStatus, DeploymentMode
+from src.models.deployment import Deployment, DeploymentStatus
 from src.models.deployment_log import DeploymentLogEventType, DeploymentLogLevel
 from src.models.template_version import TemplateVersion
-from src.models.course import Course
 from src.models.openstack_project import OpenstackProject
 from src.core.exceptions import NotFoundException
 from src.core.exceptions import BadRequestException
@@ -33,14 +34,14 @@ class DeploymentService:
         """Create a new deployment and trigger async deployment task.
         
         Args:
-            deployment_data: Validated deployment creation data
+            deployment_data: Validated deployment creation data with stack_assignments and teacher
             request_id: Request ID for tracing
             
         Returns:
             Created Deployment with status set to QUEUED
             
         Raises:
-            NotFoundException: If template_version_id or course_id does not exist, or app.yaml not found
+            NotFoundException: If template_version_id does not exist, or app.yaml not found
             BadRequestException: If required heat_parameters are missing or have invalid types
         """
         # Validate template_version_id exists
@@ -53,45 +54,25 @@ class DeploymentService:
                 f"Template version with ID '{deployment_data.template_version_id}' not found"
             )
         
-        # Validate course_id exists
-        course = self.db.query(Course).filter(
-            Course.id == deployment_data.course_id
-        ).first()
-        
-        if not course:
-            raise NotFoundException(
-                f"Course with ID '{deployment_data.course_id}' not found"
-            )
-        
-        # Convert access_types list to JSON string
-        access_types_json = json.dumps(deployment_data.access_types or ["ssh"])
-        
-        # Serialize heat_parameters to JSON if provided
-        deployment_parameters = None
         # Validate template parameters required by the template version
-        # Skip access check since deployment creation should work with any template version
-        # (including private templates from other users when explicitly specified)
         template_file_service = TemplateVersionFileService(self.db)
         try:
             template_params_resp = template_file_service.get_template_parameters(
                 str(template_version.id),
-                # if the lecturer was provided the exact ID, they are allowed to use (not read) that template. Collisions are extremely unlikely with UUIDs and not possible because of DB primary keys.
                 skip_access_check=True
             )
             template_params_map = {p.name: p for p in template_params_resp.parameters}
             required_params = [p.name for p in template_params_resp.parameters if p.required]
         except NotFoundException:
-            # If app.yaml not found, bubble up as NotFoundException
             raise
         except Exception as e:
-            # Any parsing/validation error is translated to BadRequest
             raise BadRequestException(f"Failed to read template parameters: {e}")
 
         provided = deployment_data.heat_parameters or {}
         
-        # Check for missing required parameters
+        # Check for missing required parameters (excluding user_json and admin_credentials which we generate)
         if required_params:
-            missing = [p for p in required_params if p not in provided or provided.get(p) is None]
+            missing = [p for p in required_params if p not in provided and p not in ["user_json", "admin_credentials"] and provided.get(p) is None]
             if missing:
                 raise BadRequestException(f"Missing required template parameters: {', '.join(missing)}")
         
@@ -99,42 +80,69 @@ class DeploymentService:
         type_errors = []
         for param_name, param_value in provided.items():
             if param_name not in template_params_map:
-                # Allow extra parameters (Heat will ignore them)
                 continue
             
             expected_type = template_params_map[param_name].type.lower()
-            actual_value = param_value
             
-            # Type checking based on declared parameter type
             if expected_type == "boolean":
-                if not isinstance(actual_value, bool):
-                    type_errors.append(f"{param_name}: expected boolean, got {type(actual_value).__name__}")
+                if not isinstance(param_value, bool):
+                    type_errors.append(f"{param_name}: expected boolean, got {type(param_value).__name__}")
             elif expected_type in ["number", "int", "integer"]:
-                if not isinstance(actual_value, (int, float)):
-                    type_errors.append(f"{param_name}: expected number, got {type(actual_value).__name__}")
+                if not isinstance(param_value, (int, float)):
+                    type_errors.append(f"{param_name}: expected number, got {type(param_value).__name__}")
             elif expected_type == "string":
-                if not isinstance(actual_value, str):
-                    type_errors.append(f"{param_name}: expected string, got {type(actual_value).__name__}")
+                if not isinstance(param_value, str):
+                    type_errors.append(f"{param_name}: expected string, got {type(param_value).__name__}")
         
         if type_errors:
             raise BadRequestException(f"Type validation errors: {'; '.join(type_errors)}")
 
-        if deployment_data.heat_parameters:
-            deployment_parameters = json.dumps(deployment_data.heat_parameters)
+        # Get template name for template-specific user_json generation
+        from src.models.template import Template
+        template = self.db.query(Template).filter(
+            Template.id == template_version.template_id
+        ).first()
         
-        # Parse deployment_mode string to enum (case-insensitive)
-        deployment_mode = DeploymentMode(deployment_data.deployment_mode.lower())
+        if not template:
+            raise NotFoundException(
+                f"Template not found for version {template_version.id}"
+            )
+        
+        # Get or create Course entry based on keycloak_course_id
+        # The course_id from frontend is the Keycloak group ID
+        from src.models.course import Course
+        keycloak_course_id = deployment_data.course_id
+        
+        course = self.db.query(Course).filter(
+            Course.keycloak_course_id == keycloak_course_id
+        ).first()
+        
+        if not course:
+            # Auto-create course entry with deployment name as course name
+            course = Course(
+                name=deployment_data.name,
+                keycloak_course_id=keycloak_course_id
+            )
+            self.db.add(course)
+            self.db.flush()  # Get the ID without committing
+        
+        # Store complete deployment info as JSON
+        # Note: user_json will be generated per-stack during deployment task
+        deployment_parameters = json.dumps({
+            "template_name": template.name,
+            "heat_parameters": provided,
+            "stack_assignments": [sa.model_dump() for sa in deployment_data.stack_assignments],
+            "teacher": deployment_data.teacher.model_dump()
+        })
         
         # Create deployment record with initial status QUEUED
+        # Use course.id (DB ID) instead of keycloak_course_id
         deployment = self.deployment_repo.create(
             name=deployment_data.name,
             template_version_id=deployment_data.template_version_id,
-            course_id=deployment_data.course_id,
-            deployment_mode=deployment_mode,
+            course_id=str(course.id),  # Use DB course ID, not Keycloak group ID
             status=DeploymentStatus.QUEUED,
-            config_json=deployment_data.config_json,
             deployment_parameters=deployment_parameters,
-            access_types_json=access_types_json,
         )
         
         # Create initial log entry
@@ -146,9 +154,10 @@ class DeploymentService:
             details={
                 "template_version_id": deployment_data.template_version_id,
                 "course_id": deployment_data.course_id,
-                "deployment_mode": deployment_data.deployment_mode,
-                "access_types": deployment_data.access_types,
-                "has_heat_parameters": deployment_data.heat_parameters is not None
+                "keycloak_group_id": deployment_data.course_id,
+                "stack_count": len(deployment_data.stack_assignments),
+                "total_groups": sum(len(sa.groups) for sa in deployment_data.stack_assignments),
+                "has_heat_parameters": bool(deployment_data.heat_parameters)
             },
             request_id=request_id
         )
@@ -199,11 +208,9 @@ class DeploymentService:
             "id": str(deployment.id),
             "template_version_id": str(deployment.template_version_id),
             "course_id": str(deployment.course_id),
-            "deployment_mode": deployment.deployment_mode.value,
             "status": deployment.status.value,
             "openstack_stack_id": deployment.openstack_stack_id,
-            "config_json": deployment.config_json,
-            "access_types_json": deployment.access_types_json,
+            "deployment_parameters": deployment.deployment_parameters,
             "created_at": deployment.created_at.isoformat() if deployment.created_at else None,
             "updated_at": deployment.updated_at.isoformat() if deployment.updated_at else None,
             "openstack_data": None
@@ -214,8 +221,22 @@ class DeploymentService:
             return deployment_dict
         
         try:
-            # Get lecturer's OpenStack project
-            lecturer_id = deployment.course.lecturer_id
+            # Get lecturer's OpenStack project from deployment_parameters
+            deployment_params = json.loads(deployment.deployment_parameters) if deployment.deployment_parameters else {}
+            teacher_info = deployment_params.get("teacher", {})
+            lecturer_keycloak_id = teacher_info.get("id")
+            
+            if not lecturer_keycloak_id:
+                return deployment_dict
+            
+            # Map Keycloak ID to local user ID
+            from src.models.user import User
+            lecturer_user = self.db.query(User).filter(User.external_id == lecturer_keycloak_id).first()
+            
+            if not lecturer_user:
+                return deployment_dict
+            
+            lecturer_id = lecturer_user.id
             openstack_projects = self.openstack_repo.get_by_owner(lecturer_id)
             
             if not openstack_projects:
@@ -310,12 +331,10 @@ class DeploymentService:
                     if deployment:
                         stack_data['deployment_id'] = str(deployment.id)
                         stack_data['course_id'] = str(deployment.course_id)
-                        stack_data['deployment_mode'] = deployment.deployment_mode.value
                         stack_data['deployment_status'] = deployment.status.value
                     else:
                         stack_data['deployment_id'] = None
                         stack_data['course_id'] = None
-                        stack_data['deployment_mode'] = None
                         stack_data['deployment_status'] = None
                     
                     # Try to get stack resources (non-critical)

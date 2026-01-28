@@ -22,25 +22,20 @@ class CourseRepository(BaseRepository[Course]):
     def _apply_filters(
         self,
         query,
-        lecturer_id: Optional[str] = None,
-        semester: Optional[str] = None,
         search: Optional[str] = None,
     ):
         """Apply common filters to a query."""
-        if lecturer_id:
-            query = query.filter(self.model.lecturer_id == lecturer_id)
-        if semester:
-            query = query.filter(self.model.semester == semester)
         if search:
-            query = query.filter(self.model.name.ilike(f"%{search}%"))
+            query = query.filter(
+                (self.model.name.ilike(f"%{search}%")) |
+                (self.model.keycloak_course_id.ilike(f"%{search}%"))
+            )
         return query
 
     def get_all_filtered(
         self,
         skip: int = 0,
         limit: int = 100,
-        lecturer_id: Optional[str] = None,
-        semester: Optional[str] = None,
         search: Optional[str] = None,
     ) -> tuple[list[Course], int]:
         """Get all courses with filters and pagination.
@@ -48,16 +43,14 @@ class CourseRepository(BaseRepository[Course]):
         Args:
             skip: Number of records to skip (offset)
             limit: Maximum number of records to return
-            lecturer_id: Filter by lecturer ID
-            semester: Filter by semester
-            search: Search term for course name
+            search: Search term for course name or keycloak_course_id
             
         Returns:
             Tuple of (list of courses, total count)
         """
         base_query = self._apply_filters(
             self.db.query(self.model),
-            lecturer_id, semester, search
+            search
         )
         
         total = base_query.count()
@@ -72,37 +65,3 @@ class CourseRepository(BaseRepository[Course]):
         )
         
         return courses, total
-
-    def get_by_lecturer(self, lecturer_id: str | UUID) -> list[Course]:
-        """Get all courses owned by a specific lecturer.
-        
-        Args:
-            lecturer_id: ID of the lecturer
-            
-        Returns:
-            List of courses owned by the lecturer
-        """
-        return (
-            self.db.query(self.model)
-            .options(joinedload(self.model.deployments))
-            .filter(self.model.lecturer_id == str(lecturer_id))
-            .order_by(self.model.created_at.desc())
-            .all()
-        )
-
-    def get_by_semester(self, semester: str) -> list[Course]:
-        """Get all courses in a specific semester.
-        
-        Args:
-            semester: Semester string (e.g., WS2024, SS2025)
-            
-        Returns:
-            List of courses in the semester
-        """
-        return (
-            self.db.query(self.model)
-            .options(joinedload(self.model.deployments))
-            .filter(self.model.semester == semester)
-            .order_by(self.model.name)
-            .all()
-        )

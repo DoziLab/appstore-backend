@@ -30,39 +30,20 @@ async def list_courses(
     db: DBSession,
     request_id: RequestID,
     current_user: CurrentUser,
-    semester: Optional[str] = Query(None, description="Filter by semester (e.g., WS2024, SS2025)"),
-    search: Optional[str] = Query(None, description="Search in course name"),
-    lecturer_id: Optional[str] = Query(None, description="Filter by lecturer ID (admin only)"),
+    search: Optional[str] = Query(None, description="Search in course name or Keycloak course ID"),
 ):
     """List all courses with optional filters and pagination.
     
-    - Admins can see all courses and filter by lecturer_id
-    - Non-admin users only see their own courses
-    
     Supports filtering by:
-    - Semester (e.g., WS2024, SS2025)
-    - Lecturer ID (admin only)
-    - Search term (searches course name)
+    - Search term (searches course name or keycloak_course_id)
     
     Returns paginated results with total count.
     """
     service = CourseService(db)
     
-    # Check if user is admin
-    realm_roles = current_user.get("realm_access", {}).get("roles", [])
-    is_admin = "admin" in realm_roles
-    
-    # Non-admins can only see their own courses
-    if is_admin:
-        effective_lecturer_id = lecturer_id
-    else:
-        effective_lecturer_id = current_user["user_id"]
-    
     courses, total = service.list_courses(
         skip=(pagination.page - 1) * pagination.page_size,
         limit=pagination.page_size,
-        lecturer_id=effective_lecturer_id,
-        semester=semester,
         search=search,
     )
     
@@ -79,33 +60,6 @@ async def list_courses(
         message="Courses retrieved successfully",
         request_id=request_id,
     )
-
-
-@router.get("/my", response_model=None)
-async def list_my_courses(
-    db: DBSession,
-    request_id: RequestID,
-    current_user: CurrentUser,
-):
-    """List all courses for the authenticated lecturer.
-    
-    Returns all courses where the current user is the lecturer.
-    """
-    service = CourseService(db)
-    
-    courses = service.get_lecturer_courses(current_user["user_id"])
-    
-    course_responses = [
-        CourseResponse.model_validate(course).model_dump(mode="json")
-        for course in courses
-    ]
-    
-    return ResponseBuilder.success(
-        data=course_responses,
-        message="Your courses retrieved successfully",
-        request_id=request_id,
-    )
-
 
 @router.get("/{course_id}", response_model=None)
 async def get_course(
@@ -139,12 +93,11 @@ async def create_course(
 ):
     """Create a new course.
     
-    Requires authentication. The authenticated user becomes the course lecturer.
-    Each lecturer can create their own courses.
+    Requires authentication. Course is identified by keycloak_course_id.
     """
     service = CourseService(db)
     
-    course = service.create_course(course_data, lecturer_id=current_user["user_id"])
+    course = service.create_course(course_data)
     
     course_response = CourseResponse.model_validate(course)
     
@@ -165,7 +118,6 @@ async def update_course(
 ):
     """Update an existing course.
     
-    Only the course lecturer can update the course.
     Supports partial updates - only provided fields are updated.
     """
     service = CourseService(db)
@@ -173,7 +125,6 @@ async def update_course(
     course = service.update_course(
         course_id=course_id,
         course_data=course_data,
-        current_user_id=current_user["user_id"],
     )
     
     course_response = CourseResponse.model_validate(course)
@@ -194,15 +145,11 @@ async def delete_course(
 ):
     """Delete a course.
     
-    Only the course lecturer can delete the course.
     This will permanently remove the course.
     """
     service = CourseService(db)
     
-    service.delete_course(
-        course_id=course_id,
-        current_user_id=current_user["user_id"],
-    )
+    service.delete_course(course_id=course_id)
     
     return ResponseBuilder.success(
         data=None,
@@ -220,22 +167,12 @@ async def list_course_members(
 ):
     """List all members (students) for a specific course.
     
-    Only the course lecturer can view members.
-    
-    Authorization: Course lecturer or ADMIN
+    Authorization: ADMIN or LECTURER
     """
     service = CourseService(db)
     
-    # Verify course exists and user has access
+    # Verify course exists
     course = service.get_course(course_id)
-    
-    # Check if user is admin
-    realm_roles = current_user.get("realm_access", {}).get("roles", [])
-    is_admin = "admin" in realm_roles
-    
-    # Only course lecturer or admin can view members
-    if not is_admin and course.lecturer_id != current_user["user_id"]:
-        raise ForbiddenException("Only the course lecturer can view course members")
     
     # Get course members with user information
     members = (
@@ -271,22 +208,12 @@ async def list_course_groups(
 ):
     """List all groups for a specific course.
     
-    Only the course lecturer can view groups.
-    
-    Authorization: Course lecturer or ADMIN
+    Authorization: ADMIN or LECTURER
     """
     service = CourseService(db)
     
-    # Verify course exists and user has access
+    # Verify course exists
     course = service.get_course(course_id)
-    
-    # Check if user is admin
-    realm_roles = current_user.get("realm_access", {}).get("roles", [])
-    is_admin = "admin" in realm_roles
-    
-    # Only course lecturer or admin can view groups
-    if not is_admin and course.lecturer_id != current_user["user_id"]:
-        raise ForbiddenException("Only the course lecturer can view course groups")
     
     # Get groups for this course
     groups = db.query(CourseGroup).filter(CourseGroup.course_id == str(course_id)).order_by(CourseGroup.created_at.asc()).all()
@@ -313,9 +240,7 @@ async def create_course_group(
 ):
     """Create a new group for a course.
     
-    Only the course lecturer can create groups.
-    
-    Authorization: Course lecturer or ADMIN
+    Authorization: ADMIN or LECTURER
     
     Request Body:
     {
@@ -324,16 +249,8 @@ async def create_course_group(
     """
     service = CourseService(db)
     
-    # Verify course exists and user has access
+    # Verify course exists
     course = service.get_course(course_id)
-    
-    # Check if user is admin
-    realm_roles = current_user.get("realm_access", {}).get("roles", [])
-    is_admin = "admin" in realm_roles
-    
-    # Only course lecturer or admin can create groups
-    if not is_admin and course.lecturer_id != current_user["user_id"]:
-        raise ForbiddenException("Only the course lecturer can create course groups")
     
     # Create the group
     group = CourseGroup(
@@ -364,22 +281,12 @@ async def list_group_members(
 ):
     """List all members of a specific group.
     
-    Only the course lecturer can view group members.
-    
-    Authorization: Course lecturer or ADMIN
+    Authorization: ADMIN or LECTURER
     """
     service = CourseService(db)
     
-    # Verify course exists and user has access
+    # Verify course exists
     course = service.get_course(course_id)
-    
-    # Check if user is admin
-    realm_roles = current_user.get("realm_access", {}).get("roles", [])
-    is_admin = "admin" in realm_roles
-    
-    # Only course lecturer or admin can view group members
-    if not is_admin and course.lecturer_id != current_user["user_id"]:
-        raise ForbiddenException("Only the course lecturer can view group members")
     
     # Verify group exists and belongs to course
     group = db.query(CourseGroup).filter(
@@ -444,16 +351,8 @@ async def add_group_members(
     
     service = CourseService(db)
     
-    # Verify course exists and user has access
+    # Verify course exists
     course = service.get_course(course_id)
-    
-    # Check if user is admin
-    realm_roles = current_user.get("realm_access", {}).get("roles", [])
-    is_admin = "admin" in realm_roles
-    
-    # Only course lecturer or admin can add members
-    if not is_admin and course.lecturer_id != current_user["user_id"]:
-        raise ForbiddenException("Only the course lecturer can add members to groups")
     
     # Verify group exists and belongs to course
     group = db.query(CourseGroup).filter(

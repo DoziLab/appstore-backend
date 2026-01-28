@@ -24,24 +24,19 @@ class CourseService:
 
     def create_course(
         self,
-        course_data: CourseCreate,
-        lecturer_id: str
+        course_data: CourseCreate
     ) -> Course:
         """Create a new course.
         
-        The authenticated lecturer becomes the course owner.
-        
         Args:
-            course_data: Course creation data
-            lecturer_id: ID of the lecturer creating the course
+            course_data: Course creation data with name and keycloak_course_id
             
         Returns:
             Created course
         """
         course = self.course_repo.create(
             name=course_data.name,
-            semester=course_data.semester,
-            lecturer_id=lecturer_id,
+            keycloak_course_id=course_data.keycloak_course_id,
         )
         return course
 
@@ -66,8 +61,6 @@ class CourseService:
         self,
         skip: int = 0,
         limit: int = 100,
-        lecturer_id: Optional[str] = None,
-        semester: Optional[str] = None,
         search: Optional[str] = None,
     ) -> tuple[list[Course], int]:
         """List courses with filters and pagination.
@@ -75,9 +68,7 @@ class CourseService:
         Args:
             skip: Number of records to skip
             limit: Maximum number of records to return
-            lecturer_id: Filter by lecturer ID
-            semester: Filter by semester
-            search: Search term for course name
+            search: Search term for course name or keycloak_course_id
             
         Returns:
             Tuple of (list of courses, total count)
@@ -85,8 +76,6 @@ class CourseService:
         return self.course_repo.get_all_filtered(
             skip=skip,
             limit=limit,
-            lecturer_id=lecturer_id,
-            semester=semester,
             search=search,
         )
 
@@ -94,29 +83,20 @@ class CourseService:
         self,
         course_id: UUID,
         course_data: CourseUpdate,
-        current_user_id: str,
     ) -> Course | None:
         """Update an existing course.
-        
-        Only the course lecturer can update the course.
         
         Args:
             course_id: Course ID
             course_data: Course update data
-            current_user_id: ID of the user making the request
             
         Returns:
             Updated course
             
         Raises:
             NotFoundException: If course not found
-            ForbiddenException: If user is not the course lecturer
         """
         course = self.get_course(course_id)
-        
-        # Only the course lecturer can update
-        if course.lecturer_id != current_user_id:
-            raise ForbiddenException("Only the course lecturer can update this course")
         
         # Build update dict with only provided fields
         update_data = course_data.model_dump(exclude_unset=True)
@@ -130,38 +110,18 @@ class CourseService:
     def delete_course(
         self,
         course_id: UUID,
-        current_user_id: str,
     ) -> bool:
         """Delete a course.
         
-        Only the course lecturer can delete the course.
-        
         Args:
             course_id: Course ID
-            current_user_id: ID of the user making the request
             
         Returns:
             True if deleted successfully
             
         Raises:
             NotFoundException: If course not found
-            ForbiddenException: If user is not the course lecturer
         """
         course = self.get_course(course_id)
-        
-        # Only the course lecturer can delete
-        if course.lecturer_id != current_user_id:
-            raise ForbiddenException("Only the course lecturer can delete this course")
-        
         return self.course_repo.delete(course_id)
 
-    def get_lecturer_courses(self, lecturer_id: str | UUID) -> list[Course]:
-        """Get all courses for a specific lecturer.
-        
-        Args:
-            lecturer_id: Lecturer user ID
-            
-        Returns:
-            List of courses for the lecturer
-        """
-        return self.course_repo.get_by_lecturer(lecturer_id)
