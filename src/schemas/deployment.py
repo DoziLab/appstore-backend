@@ -1,76 +1,104 @@
 """Deployment schemas for request/response validation."""
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from typing import Optional, Any
 
 
+class StudentInfo(BaseModel):
+    """Student information from Keycloak."""
+    id: str = Field(..., description="Keycloak user UUID")
+    username: str = Field(..., description="Student username")
+    email: str = Field(..., description="Student email")
+    first_name: str = Field(..., description="Student first name")
+    last_name: str = Field(..., description="Student last name")
+
+
+class GroupInfo(BaseModel):
+    """Group information with students."""
+    group_name: str = Field(..., description="Group name")
+    group_index: int = Field(..., description="Group index/number")
+    students: list[StudentInfo] = Field(..., description="Students in this group")
+
+
+class StackAssignment(BaseModel):
+    """Stack assignment with groups."""
+    stack_index: Optional[int] = Field(None, description="Stack index (for multiple stacks)")
+    groups: list[GroupInfo] = Field(..., description="Groups assigned to this stack")
+
+
+class TeacherInfo(BaseModel):
+    """Teacher/lecturer information from Keycloak."""
+    id: str = Field(..., description="Keycloak user UUID")
+    username: str = Field(..., description="Teacher username")
+    email: str = Field(..., description="Teacher email")
+    first_name: str = Field(..., description="Teacher first name")
+    last_name: str = Field(..., description="Teacher last name")
+
+
 class DeploymentCreate(BaseModel):
     """Schema for creating a deployment."""
-    name: Optional[str] = Field(None, description="Deployment name for identification", max_length=255)
+    name: str = Field(..., description="Deployment name for identification", max_length=255)
     template_version_id: str = Field(..., description="Template version ID to deploy")
-    course_id: str = Field(..., description="Course ID")
-    deployment_mode: str = Field(..., description="Deployment mode (per_course, per_group, per_student)")
-    config_json: Optional[str] = Field(None, description="Deployment configuration as JSON string")
+    course_id: str = Field(..., description="Keycloak group ID for the course")
     
-    # Heat template parameters (from template config.yaml)
-    heat_parameters: Optional[dict[str, Any]] = Field(
-        None,
-        description="Heat template parameters as dict (e.g., {'instance_name': 'vm1', 'flavor': 'gp1.small'})"
+    # Heat template parameters (OpenStack)
+    heat_parameters: dict[str, Any] = Field(
+        ...,
+        description="Heat template parameters (image, flavor, network, ssh_cidr, etc.)"
     )
     
-    # Target groups/students (required depending on mode)
-    group_ids: Optional[list[str]] = Field(None, description="Group IDs (required for per_group mode)")
-    course_member_ids: Optional[list[str]] = Field(None, description="Course member IDs (required for per_student mode)")
-    
-    # Desired access methods for instances
-    access_types: Optional[list[str]] = Field(
-        default=["ssh"],
-        description="Desired access types for instances (ssh, web_url, guacamole, rdp, vnc)"
+    # Stack assignments (for user_json generation)
+    stack_assignments: list[StackAssignment] = Field(
+        ...,
+        description="Stack assignments with groups and students"
     )
     
-    @field_validator("group_ids", mode="after")
-    @classmethod
-    def validate_group_ids(cls, v, info):
-        """Validate group_ids is provided for per_group mode."""
-        if info.data.get("deployment_mode") == "per_group" and not v:
-            raise ValueError("group_ids is required when deployment_mode is 'per_group'")
-        return v
-    
-    @field_validator("course_member_ids", mode="after")
-    @classmethod
-    def validate_course_member_ids(cls, v, info):
-        """Validate course_member_ids for per_student mode.
-        
-        - Required when deployment_mode is 'per_student'
-        - Optional otherwise (None means "all course members")
-        """
-        if info.data.get("deployment_mode") == "per_student" and not v:
-            raise ValueError("course_member_ids is required when deployment_mode is 'per_student'")
-        return v
+    # Teacher info (for admin_credentials generation)
+    teacher: TeacherInfo = Field(
+        ...,
+        description="Teacher/lecturer information for admin access"
+    )
     
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "name": "Web Development Lab",
-                "template_version_id": "version-123",
-                "course_id": "course-456",
-                "deployment_mode": "per_course",
-                "group_ids": None,
-                "course_member_ids": None,
-                "access_types": ["ssh", "web_url"],
-                "config_json": None,
+                "name": "SQL Kurs - Herbst 2026",
+                "template_version_id": "uuid-der-template-version",
+                "course_id": "keycloak-group-id",
                 "heat_parameters": {
-                    "stack_label": "kurs-ws2024",
                     "image": "Ubuntu 22.04 2025-01",
                     "flavor": "gp1.small",
+                    "network": "NAT",
+                    "external_network": "DHBW",
                     "ssh_cidr": "141.72.0.0/16",
-                    "students": '{"alice":"SecureP@ss1","bob":"SecureP@ss2"}',
-                    "force_password_change": True,
-                    "workdir": "work",
-                    "pw_min_length": 12,
-                    "pw_require_digit": True,
-                    "pw_require_upper": True,
-                    "pw_require_special": True
+                    "web_cidr": "141.72.0.0/16"
+                },
+                "stack_assignments": [
+                    {
+                        "stack_index": 1,
+                        "groups": [
+                            {
+                                "group_name": "Gruppe 1",
+                                "group_index": 1,
+                                "students": [
+                                    {
+                                        "id": "keycloak-uuid-1",
+                                        "username": "max.mustermann",
+                                        "email": "max@example.com",
+                                        "first_name": "Max",
+                                        "last_name": "Mustermann"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ],
+                "teacher": {
+                    "id": "keycloak-teacher-uuid",
+                    "username": "prof.berg",
+                    "email": "berg@dhbw.de",
+                    "first_name": "Prof.",
+                    "last_name": "Berg"
                 }
             }
         }
@@ -82,13 +110,10 @@ class DeploymentResponse(BaseModel):
     id: str = Field(..., description="Deployment ID")
     name: str = Field(..., description="Deployment name")
     template_version_id: str = Field(..., description="Template version ID")
-    course_id: str = Field(..., description="Course ID")
-    deployment_mode: str = Field(..., description="Deployment mode")
+    course_id: str = Field(..., description="Keycloak group ID for the course")
     status: str = Field(..., description="Current status")
     openstack_stack_id: Optional[str] = Field(None, description="OpenStack Heat stack ID")
-    config_json: Optional[str] = Field(None, description="Deployment configuration")
     deployment_parameters: Optional[str] = Field(None, description="Heat template parameters as JSON string")
-    access_types_json: str = Field(..., description="Requested access types as JSON array")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
     
@@ -97,15 +122,12 @@ class DeploymentResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "id": "deploy-123",
-                "name": "Web Development Lab",
+                "name": "SQL Kurs - Herbst 2026",
                 "template_version_id": "version-123",
-                "course_id": "course-456",
-                "deployment_mode": "per_group",
+                "course_id": "keycloak-group-456",
                 "status": "queued",
                 "openstack_stack_id": None,
-                "config_json": '{"cpu": 2, "ram": 4096}',
-                "deployment_parameters": '{"instance_name": "vm1", "flavor": "gp1.small"}',
-                "access_types_json": '["ssh", "web_url"]',
+                "deployment_parameters": '{"image": "Ubuntu 22.04", "flavor": "gp1.small"}',
                 "created_at": "2024-11-27T10:00:00Z",
                 "updated_at": "2024-11-27T10:00:00Z"
             }

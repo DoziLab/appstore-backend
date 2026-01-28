@@ -8,7 +8,6 @@ class DeploymentSummary(BaseModel):
     id: str = Field(..., description="Deployment ID")
     name: str = Field(..., description="Deployment name")
     template_version_id: str = Field(..., description="Template version ID")
-    deployment_mode: str = Field(..., description="Deployment mode")
     status: str = Field(..., description="Current status")
     created_at: datetime = Field(..., description="Creation timestamp")
     
@@ -18,13 +17,13 @@ class DeploymentSummary(BaseModel):
 class CourseCreate(BaseModel):
     """Schema for creating a course."""
     name: str = Field(..., description="Course name", max_length=255)
-    semester: str = Field(..., description="Semester (e.g., WS2024, SS2025)", max_length=50)
+    keycloak_course_id: str = Field(..., description="Keycloak group ID for this course", max_length=255)
     
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "name": "Advanced Web Development",
-                "semester": "WS2024"
+                "keycloak_course_id": "keycloak-group-uuid-123"
             }
         }
     )
@@ -33,13 +32,13 @@ class CourseCreate(BaseModel):
 class CourseUpdate(BaseModel):
     """Schema for updating a course."""
     name: Optional[str] = Field(None, description="Course name", max_length=255)
-    semester: Optional[str] = Field(None, description="Semester", max_length=50)
+    keycloak_course_id: Optional[str] = Field(None, description="Keycloak group ID", max_length=255)
     
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "name": "Updated Course Name",
-                "semester": "SS2025"
+                "keycloak_course_id": "keycloak-group-uuid-456"
             }
         }
     )
@@ -49,9 +48,8 @@ class CourseResponse(BaseModel):
     """Schema for course response."""
     id: str = Field(..., description="Course ID")
     name: str = Field(..., description="Course name")
-    semester: str = Field(..., description="Semester")
-    lecturer_id: str = Field(..., description="Lecturer user ID")
-    deployments: list[DeploymentSummary] = Field(..., description="List of deployments associated with the course")
+    keycloak_course_id: str = Field(..., description="Keycloak group ID")
+    deployments: list[DeploymentSummary] = Field(default=[], description="List of deployments associated with the course")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
     
@@ -61,13 +59,12 @@ class CourseResponse(BaseModel):
             "example": {
                 "id": "course-123",
                 "name": "Advanced Web Development",
-                "semester": "WS2024",
-                "lecturer_id": "user-456",
+                "keycloak_course_id": "keycloak-group-uuid-123",
                 "deployments": [
                     {
                         "id": "deployment-789",
+                        "name": "SQL Kurs - Herbst 2026",
                         "template_version_id": "template-version-101",
-                        "deployment_mode": "automatic",
                         "status": "active",
                         "created_at": "2024-11-27T10:00:00Z"
                     }
