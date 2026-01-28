@@ -20,12 +20,6 @@ class DeploymentStatus(str, Enum):
     FAILED = "failed"
     DELETED = "deleted"
 
-class DeploymentMode(str, Enum):
-    """Deployment mode values."""
-    PER_COURSE = "per_course"
-    PER_GROUP = "per_group"
-    PER_STUDENT = "per_student"
-
 
 class Deployment(Base):
     """Deployment database model."""
@@ -35,24 +29,18 @@ class Deployment(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     name: Mapped[str] = mapped_column(String(255), nullable=False, comment="Deployment name for identification")
     template_version_id: Mapped[str] = mapped_column(String(36), ForeignKey("template_versions.id"), nullable=False)
-    course_id: Mapped[str] = mapped_column(String(36), ForeignKey("courses.id"), nullable=False)
-    deployment_mode: Mapped[DeploymentMode] = mapped_column(
-        SQLEnum(DeploymentMode),
-        nullable=False
-    )
+    course_id: Mapped[str] = mapped_column(String(36), ForeignKey("courses.id"), nullable=False, comment="Course ID (auto-created from Keycloak course_id)")
     status: Mapped[DeploymentStatus] = mapped_column(
         SQLEnum(DeploymentStatus), 
         default=DeploymentStatus.QUEUED
     )
     openstack_stack_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    config_json: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    deployment_parameters: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    access_types_json: Mapped[str] = mapped_column(String, nullable=False, default='["ssh"]')
+    deployment_parameters: Mapped[Optional[str]] = mapped_column(String, nullable=True, comment="Heat parameters, stack_assignments, and teacher info as JSON")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
-    template_version: Mapped["TemplateVersion"] = relationship("TemplateVersion", back_populates="deployments")
     course: Mapped["Course"] = relationship("Course", back_populates="deployments")
+    template_version: Mapped["TemplateVersion"] = relationship("TemplateVersion", back_populates="deployments")
     instances: Mapped[list["DeploymentInstance"]] = relationship("DeploymentInstance", back_populates="deployment")
     logs: Mapped[list["DeploymentLog"]] = relationship("DeploymentLog", back_populates="deployment")

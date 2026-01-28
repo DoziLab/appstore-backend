@@ -10,14 +10,14 @@ from src.models.user import User
 logger = logging.getLogger(__name__)
 
 
-MULTISTUDENT_APP_YAML = """app:
+MULTISTUDENT_APP_YAML = """
+app:
   name: multiuser-ubuntu
   label: Multi-User Ubuntu
   version: 1.0.0
   description: >
     Deploy one Ubuntu VM for a course with multiple local student accounts (username/password),
     SSH allowed only from DHBW/VPN CIDR, and a Floating IP on DHBW.
-    Backend can wait for DOZILAB_READY marker in the Nova console log.
   owner_team: dozilab-app-team
 
 artifacts:
@@ -71,7 +71,6 @@ parameters:
     description: >
       IPv4 CIDR allowed to SSH and ICMP (ping). Default is DHBW/VPN range.
       Examples: 141.72.0.0/16 (VPN/Campus) or 1.2.3.4/32 (single IP).
-
 
   - name: force_password_change
     label: Passwortwechsel beim ersten Login
@@ -163,85 +162,160 @@ outputs:
 
   - name: ready_marker
     from_heat_output: ready_marker
-    description: "Marker string that appears in Nova console log when provisioning is done. Also nach was müsst ihr im log ausschau halten dass ihr wisst dass die VM Ready ist"
+    description: "Marker string that appears in Nova console log when provisioning is done. Auch nach was müsst ihr im log ausschau halten dass ihr wisst dass die VM Ready ist"
 """
 
 POSTGRES_APP_YAML = """
-id: postgres-group-db
-name: PostgreSQL Group Database
-version: 1.0.0
-description: "Provisioniert pro Gruppe eine Ubuntu-VM mit PostgreSQL. Zugriff erfolgt sicher via SSH-Tunnel (Postgres nur localhost)."
+app:
+  name: postgres-group-db
+  label: PostgreSQL Group DB
+  version: 1.1.0
+  description: >
+    Provision one Ubuntu VM with PostgreSQL (localhost-only) and optional pgAdmin.
+    Creates group databases, student logins, and teacher access. Backend can wait
+    for the DOZILAB_READY marker in the Nova console log.
+  owner_team: dozilab-app-team
 
+artifacts:
+  heat_template: heat/main.yaml
+  cloud_init: cloud-init/user-data.yaml
+
+# Parameters exposed to the AppStore UI.
 parameters:
-  instance_name:
+  # --- VM basics ---
+  - name: stack_label
+    label: Label
+    step: template
     type: string
+    default: "sql"
     required: true
-    description: "Eindeutiger Name der Instanz/Stacks (z.B. kursX-grp1-db)."
+    description: >
+      Short course/stack label used in VM name and log markers (e.g. sql-2026-01).
+      Must match: ^[a-z0-9][a-z0-9-]{0,30}$
 
-  image:
+  - name: image
+    label: Image
+    step: konfiguration
     type: string
-    required: true
     default: "Ubuntu 22.04 2025-01"
-    description: "OpenStack Image Name/ID."
-
-  flavor:
-    type: string
+    enum:
+      - "Ubuntu 22.04 2025-01"
+      - "Ubuntu 24.04 2025-01"
+      - "Ubuntu 24.04 2026-01"
     required: true
+    description: "Base image for the VM (restricted to known good images)."
+
+  - name: flavor
+    label: Flavor
+    step: konfiguration
+    type: string
     default: "gp1.small"
-    description: "OpenStack Flavor."
-
-  network:
-    type: string
+    enum:
+      - "gp1.small"
+      - "gp1.medium"
     required: true
+    description: "VM size. Keep small/medium for student workloads."
+
+  - name: volume_size
+    label: Speicher (GB)
+    step: konfiguration
+    type: number
+    default: 8
+    enum:
+      - 8
+      - 16
+      - 32
+      - 64
+      - 128
+    required: true
+    description: "Größe der Root-Disk als Cinder-Volume (Boot from Volume)."
+
+  # --- Access control / networking ---
+  - name: ssh_cidr
+    label: SSH erlaubtes Netz (CIDR)
+    step: netzwerk
+    type: string
+    default: "141.72.0.0/16"
+    required: true
+    description: >
+      IPv4 CIDR allowed to SSH. Default is DHBW/VPN range.
+      Examples: 141.72.0.0/16 or 1.2.3.4/32.
+
+  - name: web_cidr
+    label: pgAdmin erlaubtes Netz (CIDR)
+    step: netzwerk
+    type: string
+    default: "141.72.0.0/16"
+    required: true
+    description: "IPv4 CIDR allowed to reach pgAdmin (HTTP port 80)."
+
+
+  # --- Platform-fixed parameters (not shown in UI) ---
+  - name: network
+    label: Internes Netzwerk
+    step: netzwerk
+    type: string
     default: "NAT"
-    description: "Internes Tenant-Netzwerk."
+    hidden: true
+    description: "Internal network (fixed)."
 
-  external_network:
+  - name: external_network
+    label: Externes Netzwerk (Floating IP)
+    step: netzwerk
     type: string
-    required: true
     default: "DHBW"
-    description: "Externes Netzwerk für Floating IPs."
+    hidden: true
+    description: "External/FloatingIP network (fixed)."
 
-  group_login:
+  - name: key_name
+    label: Admin SSH-Key
+    step: zugriff
     type: string
-    required: true
-    description: "Linux Username für Gruppen-Zugang (SSH)."
+    default: "heat-bastion-key"
+    hidden: true
+    description: "Admin/support SSH keypair (fixed)."
 
-  group_public_key:
-    type: string
-    required: true
-    description: "SSH Public Key der Gruppe."
+outputs:
+  - name: ssh_user
+    from_heat_output: ssh_user
+    description: "SSH username (ubuntu)."
 
-  ssh_cidr:
-    type: string
-    required: false
-    default: "0.0.0.0/0"
-    description: "CIDR, von dem aus SSH erreichbar ist (sicherer: deine IP/32)."
+  - name: floating_ip
+    from_heat_output: floating_ip
+    description: "Public floating IP address."
 
-  db_name:
-    type: string
-    required: true
-    description: "Name der PostgreSQL Datenbank."
+  - name: private_ip
+    from_heat_output: private_ip
+    description: "Private IP on tenant network."
 
-  db_user:
-    type: string
-    required: true
-    description: "Name des PostgreSQL Users."
+  - name: server_id
+    from_heat_output: server_id
+    description: "Nova server ID (useful for console-log polling)."
 
-  db_password:
-    type: string
-    required: true
-    description: "Passwort für den PostgreSQL User (kommt vom Backend)."
+  - name: pgadmin_url
+    from_heat_output: pgadmin_url
+    description: "pgAdmin4 URL (if enabled)."
 
-  postgres_version:
-    type: int
-    required: false
-    default: 14
-    description: "PostgreSQL Major-Version (Ubuntu repo)."
+  - name: ssh_hint
+    from_heat_output: ssh_hint
+    description: "Admin SSH command template."
+
+  - name: ssh_tunnel_hint
+    from_heat_output: ssh_tunnel_hint
+    description: "How to access Postgres securely via SSH tunnel."
+
+  - name: ready_marker
+    from_heat_output: ready_marker
+    description: "Marker string that appears in Nova console log when provisioning is done."
+
+  - name: root_volume_id
+    from_heat_output: root_volume_id
+    description: "Cinder root volume ID (debug/traceability)."
 
 """
 
-MULTISTUDENT_HEAT_TEMPLATE = """heat_template_version: 2018-08-31
+MULTISTUDENT_HEAT_TEMPLATE = """
+heat_template_version: 2018-08-31
 
 description: >
   DoziLab Multi-Student VM: Ubuntu VM + Floating IP + password SSH for multiple users.
@@ -292,9 +366,11 @@ parameters:
       - allowed_pattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$'
     description: "IPv4 CIDR allowed to SSH (default DHBW/VPN)."
 
-  students:
+  user_json:
     type: string
-    description: 'JSON string map username->password. Example: {"alice":"pw","bob":"pw2"}'
+    default: |
+      {"course_label":"","instance":{"credentials":[]},"applications":[]}
+    description: "Base64-encoded JSON payload (raw JSON also accepted; multi-line allowed)."
     constraints:
       - length: { min: 2 }
 
@@ -384,7 +460,8 @@ resources:
         str_replace:
           template: { get_file: ../cloud-init/user-data.yaml }
           params:
-            __STUDENTS_JSON__: { get_param: students }
+            __USER_JSON__: { get_param: user_json }
+    
             __FORCE_CHANGE__: { get_param: force_password_change }
             __WORKDIR__: { get_param: workdir }
 
@@ -433,59 +510,63 @@ outputs:
 
 POSTGRES_HEAT_TEMPLATE = """
 heat_template_version: 2018-08-31
-description: PostgreSQL Group DB (Floating IP + SSH tunnel; Postgres localhost only)
+
+description: DoziLab PostgreSQL VM (localhost-only) + optional pgAdmin4 Web UI (boot from Cinder volume)
 
 parameters:
-  instance_name:
+  stack_label:
     type: string
+    description: Short label used in hostname/log markers
+    default: "sql"
 
   image:
     type: string
-    default: "Ubuntu 22.04 2025-01"
+    description: Glance image name or ID
 
   flavor:
     type: string
-    default: "gp1.small"
+    description: Nova flavor name or ID
+
+  volume_size:
+    type: number
+    description: Root volume size in GB
+    default: 8
+    constraints:
+      - range: { min: 8, max: 200 }
 
   network:
     type: string
-    default: "NAT"
+    description: Tenant network name or ID
 
   external_network:
     type: string
-    default: "DHBW"
+    description: External network name or ID for Floating IP
 
-  group_login:
+  key_name:
     type: string
-    constraints:
-      - length: { min: 1, max: 32 }
-
-  group_public_key:
-    type: string
+    description: Nova keypair name for SSH
+    default: "heat-bastion-key"
 
   ssh_cidr:
     type: string
+    description: Allowed CIDR for SSH
     default: "0.0.0.0/0"
 
-  db_name:
+  web_cidr:
     type: string
+    description: Allowed CIDR for pgAdmin over HTTP (port 80)
+    default: "0.0.0.0/0"
 
-  db_user:
+  user_json:
     type: string
-
-  db_password:
-    type: string
-    hidden: true
-
-  postgres_version:
-    type: number
-    default: 14
+    description: Base64-encoded JSON payload from backend (raw JSON also accepted; multi-line allowed)
 
 resources:
   secgroup:
     type: OS::Neutron::SecurityGroup
     properties:
-      description: Allow SSH + ICMP (Postgres via SSH tunnel only)
+      name: { str_replace: { template: "dozilab-pg-__LABEL__", params: { "__LABEL__": { get_param: stack_label } } } }
+      description: Security group for DoziLab Postgres+pgAdmin VM
       rules:
         - direction: ingress
           ethertype: IPv4
@@ -496,37 +577,54 @@ resources:
 
         - direction: ingress
           ethertype: IPv4
-          protocol: icmp
-          remote_ip_prefix: 0.0.0.0/0
+          protocol: tcp
+          port_range_min: 80
+          port_range_max: 80
+          remote_ip_prefix: { get_param: web_cidr }
+
+        # egress allow all (default in many setups; define explicitly to be safe)
+        - direction: egress
+          ethertype: IPv4
 
   port:
     type: OS::Neutron::Port
     properties:
       network: { get_param: network }
-      security_groups:
-        - { get_resource: secgroup }
+      security_groups: [ { get_resource: secgroup } ]
+
+  root_volume:
+    type: OS::Cinder::Volume
+    properties:
+      name:
+        str_replace:
+          template: "dozilab-pg-__LABEL__-root"
+          params:
+            "__LABEL__": { get_param: stack_label }
+      size: { get_param: volume_size }
+      image: { get_param: image }
+      metadata:
+        dozilab_stack_label: { get_param: stack_label }
 
   server:
     type: OS::Nova::Server
     properties:
-      name: { get_param: instance_name }
-      image: { get_param: image }
+      name: { str_replace: { template: "dozilab-pg-__LABEL__", params: { "__LABEL__": { get_param: stack_label } } } }
       flavor: { get_param: flavor }
-
+      key_name: { get_param: key_name }
+      block_device_mapping_v2:
+        - boot_index: 0
+          volume_id: { get_resource: root_volume }
+          delete_on_termination: true
+      networks:
+        - port: { get_resource: port }
       user_data_format: RAW
       user_data:
         str_replace:
           template: { get_file: ../cloud-init/user-data.yaml }
           params:
-            __GROUP_LOGIN__: { get_param: group_login }
-            __GROUP_PUBKEY__: { get_param: group_public_key }
-            __DB_NAME__: { get_param: db_name }
-            __DB_USER__: { get_param: db_user }
-            __DB_PASS__: { get_param: db_password }
-            __PG_VERSION__: { get_param: postgres_version }
-
-      networks:
-        - port: { get_resource: port }
+            "__STACK_LABEL__": { get_param: stack_label }
+            "__USER_JSON__": { get_param: user_json }
+                
 
   fip:
     type: OS::Neutron::FloatingIP
@@ -540,56 +638,84 @@ resources:
       port_id: { get_resource: port }
 
 outputs:
+  ssh_user:
+    description: SSH username
+    value: ubuntu
+
   floating_ip:
     description: Public Floating IP
-    value: { get_attr: [fip, floating_ip_address] }
-
-  ssh_user:
-    description: SSH username for group access
-    value: { get_param: group_login }
-
-  ssh_port:
-    description: SSH port
-    value: 22
+    value: { get_attr: [ fip, floating_ip_address ] }
 
   private_ip:
     description: Private IP on tenant network
-    value: { get_attr: [port, fixed_ips, 0, ip_address] }
-
-  db_name:
-    description: PostgreSQL database name
-    value: { get_param: db_name }
-
-  db_user:
-    description: PostgreSQL username
-    value: { get_param: db_user }
+    value: { get_attr: [ port, fixed_ips, 0, ip_address ] }
 
   server_id:
     description: Nova server ID
     value: { get_resource: server }
 
+  pgadmin_url:
+    description: pgAdmin4 URL (if enabled)
+    value:
+      str_replace:
+        template: "http://__FIP__/pgadmin4/"
+        params:
+          "__FIP__": { get_attr: [ fip, floating_ip_address ] }
+
+  ssh_hint:
+    description: Admin SSH (key-based)
+    value:
+      str_replace:
+        template: "ssh -i ~/.ssh/heat-bastion-key.pem ubuntu@__FIP__"
+        params:
+          "__FIP__": { get_attr: [ fip, floating_ip_address ] }
+
   ssh_tunnel_hint:
     description: How to access Postgres securely via SSH tunnel
     value:
       str_replace:
-        template: "ssh -i <private_key> -L 5432:localhost:5432 USER@FIP  # then: psql -h 127.0.0.1 -p 5432 -U DBUSER DBNAME"
+        template: "ssh -i ~/.ssh/heat-bastion-key.pem -L 5432:127.0.0.1:5432 ubuntu@__FIP__"
         params:
-          USER: { get_param: group_login }
-          FIP: { get_attr: [fip, floating_ip_address] }
-          DBUSER: { get_param: db_user }
-          DBNAME: { get_param: db_name }
+          "__FIP__": { get_attr: [ fip, floating_ip_address ] }
+
+  ready_marker:
+    description: Backend should wait until this marker appears in the Nova console log
+    value:
+      str_replace:
+        template: "DOZILAB_READY stack=__LABEL__"
+        params:
+          "__LABEL__": { get_param: stack_label }
+
+  root_volume_id:
+    description: Cinder root volume ID (debug/traceability)
+    value: { get_resource: root_volume }
 
 """
 
-MULTISTUDENT_CLOUD_INIT = """#cloud-config
+MULTISTUDENT_CLOUD_INIT = """
+#cloud-config
 package_update: true
 package_upgrade: false
 
 packages:
   - libpam-pwquality
   - python3
+  - cloud-guest-utils
+
+# Ensure root partition/filesystem grows when booting from larger volume
+growpart:
+  mode: auto
+  devices: ["/"]
+  ignore_growroot_disabled: false
+
+resize_rootfs: true
 
 write_files:
+  - path: /etc/dozilab/user.json.payload
+    owner: root:root
+    permissions: "0600"
+    content: |
+      __USER_JSON__
   - path: /usr/local/bin/dozilab-multiuser-setup.sh
     permissions: "0755"
     content: |
@@ -603,8 +729,8 @@ write_files:
 
       STACK_LABEL="__STACK_LABEL__"
 
-      # IMPORTANT: must be valid JSON (double quotes). Keep single quotes around JSON to prevent $ expansion.
-      STUDENTS_JSON='__STUDENTS_JSON__'
+      USER_JSON_PAYLOAD="/etc/dozilab/user.json.payload"
+      USER_JSON_PATH="/etc/dozilab/user.json"
       FORCE="__FORCE_CHANGE__"
       WORKDIR="__WORKDIR__"
 
@@ -614,7 +740,9 @@ write_files:
       PW_REQUIRE_SPECIAL="__PW_REQUIRE_SPECIAL__"
 
       mkdir -p "$MARK_DIR"
-      echo "multiuser setup started $(date -Is)" > "$LOG"
+      # Mirror logs to cloud-init output and our own logfile
+      exec > >(tee -a "$LOG" /var/log/cloud-init-output.log) 2>&1
+      echo "multiuser setup started $(date -Is)"
 
       on_fail() {
         rc=$?
@@ -670,7 +798,7 @@ write_files:
         sed -i -E "/^\s*password\s+.*pam_unix\.so/ i password requisite pam_pwquality.so ${PWQ_OPTS}" "$PAM_FILE"
       fi
 
-      # SSH: enable password login (students use passwords)
+      # SSH: enable password login (users use passwords)
       cat >/etc/ssh/sshd_config.d/99-dozilab-multiuser.conf <<'EOF'
       PasswordAuthentication yes
       KbdInteractiveAuthentication yes
@@ -679,44 +807,139 @@ write_files:
       PermitRootLogin no
       EOF
 
-      export STUDENTS_JSON FORCE WORKDIR
+      export USER_JSON_PATH FORCE WORKDIR
 
-      # Create students (hard fail if any user cannot be created or password cannot be set)
+      if [[ ! -s "$USER_JSON_PAYLOAD" ]]; then
+        echo "ERROR: $USER_JSON_PAYLOAD missing/empty" >&2
+        exit 2
+      fi
+
+      # Decode base64 (or accept raw JSON) into /etc/dozilab/user.json
+      python3 - <<'PY'
+      import ast
+      import base64
+      import json
+      import sys
+      from pathlib import Path
+
+      payload_path = Path("/etc/dozilab/user.json.payload")
+      out_path = Path("/etc/dozilab/user.json")
+
+      raw = payload_path.read_text(encoding="utf-8").strip()
+      if not raw:
+          sys.exit("user_json payload missing/empty")
+
+      def parse_obj(txt: str):
+          try:
+              return json.loads(txt), "json"
+          except Exception:
+              pass
+          try:
+              return ast.literal_eval(txt), "python-literal"
+          except Exception:
+              return None, None
+
+      def decode_b64(s: str):
+          compact = "".join(s.split())
+          pad = (-len(compact)) % 4
+          compact += "=" * pad
+          try:
+              return base64.b64decode(compact, validate=True).decode("utf-8")
+          except Exception:
+              try:
+                  return base64.b64decode(compact).decode("utf-8")
+              except Exception:
+                  return None
+
+      obj, kind = parse_obj(raw)
+      source = "raw"
+      if obj is None:
+          decoded = decode_b64(raw)
+          if decoded is None:
+              sys.exit("user_json payload is neither JSON/literal nor base64-encoded JSON/literal")
+          obj, kind = parse_obj(decoded.strip())
+          if obj is None:
+              sys.exit("user_json base64 decoded, but not valid JSON or python literal")
+          source = "base64"
+
+      out_path.write_text(json.dumps(obj, ensure_ascii=True), encoding="utf-8")
+      print(f"user_json normalized ({source}, {kind}) -> {out_path}")
+      PY
+
+      if [[ ! -s "$USER_JSON_PATH" ]]; then
+        echo "ERROR: $USER_JSON_PATH missing/empty after decoding" >&2
+        exit 2
+      fi
+
+      # Create users from user_json (hard fail on invalid schema)
       python3 - <<'PY'
       import json, os, re, sys, subprocess
 
-      students_json = os.environ.get("STUDENTS_JSON", "")
+      user_json_path = os.environ.get("USER_JSON_PATH", "/etc/dozilab/user.json")
+      try:
+          user_json = open(user_json_path, "r", encoding="utf-8").read().strip()
+      except FileNotFoundError:
+          user_json = ""
       force = str(os.environ.get("FORCE", "true")).lower() in ("1","true","yes","on")
       workdir = os.environ.get("WORKDIR","work")
 
-      try:
-          data = json.loads(students_json)
-      except Exception as e:
-          sys.exit(f"students JSON invalid: {e}. Must be like {{\"alice\":\"pw\"}} (double quotes). Got: {students_json!r}")
+      def fail(msg):
+          print(msg, file=sys.stderr)
+          sys.exit(1)
 
-      if not isinstance(data, dict) or not data:
-          sys.exit("students must be a non-empty JSON object")
+      if not re.match(r"^[A-Za-z0-9._-]{1,32}$", workdir or ""):
+          print(f"Invalid workdir {workdir!r}, using 'work'")
+          workdir = "work"
+
+      if not user_json:
+          fail("user_json is empty or missing")
+
+      try:
+          data = json.loads(user_json)
+      except Exception as e:
+          fail(f"user_json invalid: {e}. Must be JSON with double quotes.")
+
+      if not isinstance(data, dict):
+          fail("user_json must be a JSON object")
+
+      instance = data.get("instance") or {}
+      if not isinstance(instance, dict):
+          fail("instance must be an object")
+
+      credentials = instance.get("credentials") or []
+      admin = instance.get("admin_credentials")
+      apps = data.get("applications") or []
+
+      if not isinstance(credentials, list):
+          fail("instance.credentials must be a list")
+
+      if not isinstance(apps, list):
+          print("applications is not a list; ignoring")
+          apps = []
+
+      course_label = data.get("course_label") or ""
+      if course_label:
+          print(f"course_label={course_label}")
+
+      if not credentials:
+          print("WARNING: instance.credentials empty; no student users will be created")
 
       rx = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 
       def run(cmd, **kw):
           subprocess.run(cmd, check=True, **kw)
 
-      # Validate all upfront so we don't half-configure
-      for u, p in data.items():
-          if not isinstance(u, str) or not rx.match(u):
-              sys.exit(f"Invalid username: {u!r}")
-          if not isinstance(p, str) or len(p) == 0:
-              sys.exit(f"Empty password for {u}")
+      NL = chr(10)
 
-      created = []
-
-      for u, p in data.items():
+      def ensure_user(u, p, is_admin=False):
           if subprocess.run(["id", u], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
               run(["useradd", "-m", "-s", "/bin/bash", u])
 
           # This MUST succeed, otherwise we fail the whole setup
-          run(["chpasswd"], input=f"{u}:{p}\n", text=True)
+          run(["chpasswd"], input=f"{u}:{p}" + NL, text=True)
+
+          if is_admin:
+              subprocess.run(["usermod", "-aG", "sudo", u], check=False)
 
           if force:
               subprocess.run(["chage", "-d", "0", u], check=False)
@@ -727,7 +950,7 @@ write_files:
           run(["chmod", "700", f"/home/{u}/{workdir}"])
 
           profile = f"/home/{u}/.profile"
-          line = f'cd "$HOME/{workdir}"\n'
+          line = f'cd "$HOME/{workdir}"' + NL
           try:
               txt = open(profile, "r", encoding="utf-8", errors="ignore").read()
           except FileNotFoundError:
@@ -737,20 +960,66 @@ write_files:
                   f.write(line)
           run(["chown", f"{u}:{u}", profile])
 
+      created = []
+
+      # Validate credentials upfront so we don't half-configure
+      for idx, item in enumerate(credentials):
+          if not isinstance(item, dict):
+              fail(f"instance.credentials[{idx}] must be an object")
+          u = item.get("username")
+          p = item.get("password")
+          if not isinstance(u, str) or not rx.match(u):
+              fail(f"Invalid username: {u!r}")
+          if not isinstance(p, str) or len(p) == 0:
+              fail(f"Empty password for {u}")
+
+      for item in credentials:
+          u = item["username"]
+          p = item["password"]
+          ensure_user(u, p, is_admin=False)
           created.append(u)
 
-      # Restrict SSH users: ubuntu (admin key) + created students only
-      allow = "AllowUsers ubuntu " + " ".join(sorted(created)) + "\n"
+      admin_user = None
+      if admin is not None:
+          if not isinstance(admin, dict):
+              fail("instance.admin_credentials must be an object")
+          au = admin.get("username")
+          ap = admin.get("password")
+          if not isinstance(au, str) or not rx.match(au):
+              fail(f"Invalid admin username: {au!r}")
+          if not isinstance(ap, str) or len(ap) == 0:
+              fail("Empty password for admin user")
+          ensure_user(au, ap, is_admin=True)
+          admin_user = au
+
+      # Restrict SSH users: ubuntu (admin key) + created users only
+      allow_users = sorted(set(created + ([admin_user] if admin_user else [])))
+      allow = "AllowUsers " + " ".join(["ubuntu"] + allow_users) + NL
       with open("/etc/ssh/sshd_config.d/98-dozilab-allowusers.conf", "w", encoding="utf-8") as f:
           f.write(allow)
 
-      print("created users:", ", ".join(created))
+      if allow_users:
+          print("created users:", ", ".join(allow_users))
+
+      if not apps:
+          print("applications: none")
+      else:
+          for idx, app in enumerate(apps):
+              if isinstance(app, dict):
+                  name = app.get("name") or app.get("app") or f"index-{idx}"
+                  version = app.get("version") or app.get("ver") or ""
+                  if version:
+                      print(f"applications[{idx}]: {name} {version}")
+                  else:
+                      print(f"applications[{idx}]: {name}")
+              else:
+                  print(f"applications[{idx}]: {app!r}")
       PY
 
       # Restart sshd; if this fails, trap will mark FAILED
       systemctl restart ssh || service ssh restart
 
-      echo "multiuser setup finished $(date -Is)" >> "$LOG"
+      echo "multiuser setup finished $(date -Is)"
 
       # READY marker (ONLY here = success)
       msg="DOZILAB_READY stack=${STACK_LABEL} time=$(date -Is)"
@@ -761,6 +1030,7 @@ runcmd:
   - [ bash, -lc, "/usr/local/bin/dozilab-multiuser-setup.sh" ]
 
 final_message: "DoziLab multi-user VM: cloud-init finished"
+
 """
 
 POSTGRES_CLOUD_INIT = """
@@ -768,81 +1038,564 @@ POSTGRES_CLOUD_INIT = """
 package_update: true
 package_upgrade: false
 
-ssh_pwauth: false
-disable_root: true
-
-users:
-  - default
-  - name: __GROUP_LOGIN__
-    gecos: "Group Login"
-    shell: /bin/bash
-    lock_passwd: true
-    ssh_authorized_keys:
-      - "__GROUP_PUBKEY__"
-
 write_files:
-  - path: /usr/local/bin/dozilab-postgres-init.sh
+  - path: /etc/dozilab/user.json.payload
+    owner: root:root
+    permissions: "0600"
+    content: |
+      __USER_JSON__
+
+  - path: /usr/local/bin/dozilab-postgres-setup.sh
+    owner: root:root
     permissions: "0755"
     content: |
       #!/usr/bin/env bash
       set -euo pipefail
       export DEBIAN_FRONTEND=noninteractive
 
-      PG_VER="__PG_VERSION__"
-      DB_NAME="__DB_NAME__"
-      DB_USER="__DB_USER__"
-      DB_PASS="__DB_PASS__"
+      LOG="/var/log/dozilab-postgres.log"
+      MARK_DIR="/var/lib/dozilab"
+      READY_FILE="${MARK_DIR}/ready"
+      FAIL_FILE="${MARK_DIR}/failed"
 
-      echo "Installing PostgreSQL ${PG_VER}..."
-      apt-get update -y
-      apt-get install -y "postgresql-${PG_VER}" "postgresql-client-${PG_VER}"
+      STACK_LABEL="__STACK_LABEL__"
+      USER_JSON_PAYLOAD="/etc/dozilab/user.json.payload"
+      USER_JSON_PATH="/etc/dozilab/user.json"
 
-      # Ensure Postgres listens only on localhost (safe default)
-      PG_CONF="/etc/postgresql/${PG_VER}/main/postgresql.conf"
-      HBA_CONF="/etc/postgresql/${PG_VER}/main/pg_hba.conf"
+      mkdir -p "$MARK_DIR"
+      exec > >(tee -a "$LOG") 2>&1
 
-      sed -i "s/^#\\?listen_addresses\\s*=.*$/listen_addresses = 'localhost'/" "${PG_CONF}"
+      on_fail() {
+        rc=$?
+        msg="DOZILAB_FAILED stack=${STACK_LABEL} rc=${rc} time=$(date -Is)"
+        echo "$msg" | tee -a "$LOG" | tee /dev/console > "$FAIL_FILE"
+        chmod 644 "$FAIL_FILE" || true
+        exit "$rc"
+      }
+      trap on_fail ERR
 
-      # Ensure local auth is allowed
-      # Keep defaults, but we ensure password auth for local connections to the created user
-      if ! grep -qE "host\\s+${DB_NAME}\\s+${DB_USER}\\s+127\\.0\\.0\\.1/32\\s+scram-sha-256" "${HBA_CONF}"; then
-        echo "host ${DB_NAME} ${DB_USER} 127.0.0.1/32 scram-sha-256" >> "${HBA_CONF}"
+      echo "DoziLab setup started $(date -Is)"
+      echo "Stack label: ${STACK_LABEL}"
+      echo "Using user_json payload: ${USER_JSON_PAYLOAD}"
+
+      if [[ ! -s "$USER_JSON_PAYLOAD" ]]; then
+        echo "ERROR: $USER_JSON_PAYLOAD missing/empty" >&2
+        exit 2
       fi
 
-      systemctl enable postgresql
+      # ------------------------------------------------------------
+      # Decode wrapper (base64 or raw) into JSON file, then validate payload.
+      # Backend must send final db_user + database_name etc. (no sanitizing)
+      # ------------------------------------------------------------
+      python3 - <<'PY'
+      import ast
+      import base64
+      import json
+      import sys
+      from pathlib import Path
+
+      payload_path = Path("/etc/dozilab/user.json.payload")
+      out_path = Path("/etc/dozilab/user.json")
+
+      raw = payload_path.read_text(encoding="utf-8").strip()
+      if not raw:
+          sys.exit("user_json payload missing/empty")
+
+      def parse_obj(txt: str):
+          try:
+              return json.loads(txt), "json"
+          except Exception:
+              pass
+          try:
+              return ast.literal_eval(txt), "python-literal"
+          except Exception:
+              return None, None
+
+      def decode_b64(s: str):
+          compact = "".join(s.split())
+          pad = (-len(compact)) % 4
+          compact += "=" * pad
+          try:
+              return base64.b64decode(compact, validate=True).decode("utf-8")
+          except Exception:
+              try:
+                  return base64.b64decode(compact).decode("utf-8")
+              except Exception:
+                  return None
+
+      obj, kind = parse_obj(raw)
+      source = "raw"
+      if obj is None:
+          decoded = decode_b64(raw)
+          if decoded is None:
+              sys.exit("user_json payload is neither JSON/literal nor base64-encoded JSON/literal")
+          obj, kind = parse_obj(decoded.strip())
+          if obj is None:
+              sys.exit("user_json base64 decoded, but not valid JSON or python literal")
+          source = "base64"
+
+      out_path.write_text(json.dumps(obj, ensure_ascii=True), encoding="utf-8")
+      print(f"user_json normalized ({source}, {kind}) -> {out_path}")
+      PY
+
+      if [[ ! -s "$USER_JSON_PATH" ]]; then
+        echo "ERROR: $USER_JSON_PATH missing/empty after decoding" >&2
+        exit 2
+      fi
+
+      echo "Validating user_json schema (direct) ..."
+      python3 - <<'PY'
+      import json, re, sys
+
+      p = "/etc/dozilab/user.json"
+      data = json.load(open(p, "r", encoding="utf-8"))
+      if not isinstance(data, dict):
+          sys.exit("user_json must be an object")
+
+      apps = data.get("applications")
+      if not isinstance(apps, list):
+          sys.exit("user_json.applications must be a list")
+
+      def find_app(name: str):
+          for a in apps:
+              if isinstance(a, dict) and str(a.get("name","")).lower() == name:
+                  return a
+          return None
+
+      pg = find_app("postgres") or find_app("postgresql")
+      if not pg:
+          sys.exit("Missing applications[name=postgres]")
+
+      pg_creds = pg.get("credentials")
+      if not isinstance(pg_creds, list) or not pg_creds:
+          sys.exit("postgres.credentials must be a non-empty list")
+
+      # strict identifiers to avoid surprises
+      ident = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+      group_token = re.compile(r"^[A-Za-z0-9_]{1,32}$")
+
+      used_db_users = set()
+
+      for c in pg_creds:
+          if not isinstance(c, dict):
+              sys.exit("postgres.credentials entries must be objects")
+
+          gid = c.get("group")
+          if gid is None:
+              sys.exit("postgres credential missing group")
+          gid_s = str(gid).strip()
+          if not gid_s or not group_token.match(gid_s):
+              sys.exit(f"postgres credential group must be [A-Za-z0-9_], 1..32 chars, got: {gid!r}")
+
+          dbn = c.get("database_name") or c.get("db_name")
+          if not isinstance(dbn, str) or not ident.match(dbn):
+              sys.exit(f"postgres credential database_name invalid (must match {ident.pattern}): {dbn!r}")
+
+          db_user = c.get("db_user")
+          if not isinstance(db_user, str) or not ident.match(db_user):
+              sys.exit(f"postgres credential db_user invalid (must match {ident.pattern}): {db_user!r}")
+
+          if db_user in used_db_users:
+              sys.exit(f"duplicate postgres db_user not allowed: {db_user!r}")
+          used_db_users.add(db_user)
+
+          pw = c.get("password")
+          if not isinstance(pw, str) or len(pw) < 6:
+              sys.exit(f"postgres credential password too short for {db_user!r} (min 6)")
+
+      admin = pg.get("admin_credentials") or {}
+      if admin:
+          if not isinstance(admin, dict):
+              sys.exit("postgres.admin_credentials must be an object")
+          a_user = admin.get("db_user")
+          a_pw = admin.get("password")
+          if not isinstance(a_user, str) or not ident.match(a_user):
+              sys.exit(f"postgres admin db_user invalid (must match {ident.pattern}): {a_user!r}")
+          if a_user in used_db_users:
+              sys.exit(f"postgres admin db_user collides with group user: {a_user!r}")
+          if not isinstance(a_pw, str) or len(a_pw) < 6:
+              sys.exit("postgres admin password too short (min 6)")
+
+      # pgadmin is optional; if present we validate only what it explicitly sends (no fallback)
+      pga = find_app("pgadmin")
+      if pga:
+          pga_admin = pga.get("admin_credentials") or {}
+          if not isinstance(pga_admin, dict) or not pga_admin.get("email") or not pga_admin.get("password"):
+              sys.exit("pgadmin.admin_credentials must contain email+password when pgadmin app is present")
+
+          pga_creds = pga.get("credentials")
+          if not isinstance(pga_creds, list) or not pga_creds:
+              sys.exit("pgadmin.credentials must be a non-empty list when pgadmin app is present")
+
+          seen_emails = set()
+          for c in pga_creds:
+              if not isinstance(c, dict):
+                  sys.exit("pgadmin.credentials entries must be objects")
+              gid = c.get("group")
+              if gid is None:
+                  sys.exit("pgadmin credential missing group")
+              gid_s = str(gid).strip()
+              if not gid_s or not group_token.match(gid_s):
+                  sys.exit(f"pgadmin credential group must be [A-Za-z0-9_], got: {gid!r}")
+
+              email = c.get("email")
+              pw = c.get("password")
+              if not isinstance(email, str) or "@" not in email:
+                  sys.exit(f"pgadmin credential email invalid: {email!r}")
+              if not isinstance(pw, str) or len(pw) < 6:
+                  sys.exit(f"pgadmin credential password too short for {email!r} (min 6)")
+              if email in seen_emails:
+                  sys.exit(f"duplicate pgadmin email not allowed: {email!r}")
+              seen_emails.add(email)
+
+      print("user_json validated OK (direct mode)")
+      PY
+
+      # ------------------------------------------------------------
+      # Install PostgreSQL
+      # - If user_json contains postgres_version -> install that major
+      # - else install distro default (postgresql meta)
+      # ------------------------------------------------------------
+      PGVER="$(python3 - <<'PY'
+      import json
+      data = json.load(open("/etc/dozilab/user.json"))
+      pgver = data.get("postgres_version")
+      if pgver is None:
+          pgver = data.get("postgresVersion")
+      apps = data.get("applications") or []
+      for a in apps:
+          if isinstance(a, dict) and str(a.get("name","")).lower() in ("postgres","postgresql"):
+              if a.get("postgres_version") is not None:
+                  pgver = a.get("postgres_version")
+              if a.get("postgresVersion") is not None:
+                  pgver = a.get("postgresVersion")
+      if pgver is None:
+          print("")
+      else:
+          print(int(pgver))
+      PY
+      )"
+
+      apt-get update -y
+      if [[ -n "${PGVER}" ]]; then
+        echo "Installing PostgreSQL ${PGVER} ..."
+        apt-get install -y "postgresql-${PGVER}" postgresql-client
+      else
+        echo "Installing distro default PostgreSQL ..."
+        apt-get install -y postgresql postgresql-client
+      fi
+
+      # Detect installed major version
+      DETECTED_PGVER="$(pg_lsclusters --no-header 2>/dev/null | awk 'NR==1{print $1}')"
+      if [[ -z "${DETECTED_PGVER:-}" ]]; then
+        echo "ERROR: Could not detect Postgres version (pg_lsclusters empty)" >&2
+        exit 3
+      fi
+      PGVER="${DETECTED_PGVER}"
+      echo "Detected PostgreSQL major version: ${PGVER}"
+
+      echo "Configuring Postgres to listen on localhost only ..."
+      CONF="/etc/postgresql/${PGVER}/main/postgresql.conf"
+      HBA="/etc/postgresql/${PGVER}/main/pg_hba.conf"
+
+      sed -i "s/^#\\?listen_addresses\\s*=.*/listen_addresses = '127.0.0.1'/" "$CONF"
+
+      grep -qE "^[[:space:]]*host[[:space:]]+all[[:space:]]+all[[:space:]]+127\\.0\\.0\\.1/32" "$HBA" \
+        || echo "host all all 127.0.0.1/32 scram-sha-256" >> "$HBA"
+      grep -qE "^[[:space:]]*host[[:space:]]+all[[:space:]]+all[[:space:]]+::1/128" "$HBA" \
+        || echo "host all all ::1/128 scram-sha-256" >> "$HBA"
+
+      systemctl enable --now postgresql
       systemctl restart postgresql
 
-      echo "Creating DB/User..."
-      # Create user (idempotent-ish)
-      sudo -u postgres psql -v ON_ERROR_STOP=1 <<SQL
-      DO \$\$
-      BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${DB_USER}') THEN
-          CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_PASS}';
-        ELSE
-          ALTER ROLE ${DB_USER} WITH PASSWORD '${DB_PASS}';
-        END IF;
-      END
-      \$\$
-      ;
-      SQL
+      for i in {1..60}; do
+        if sudo -u postgres psql -d postgres -Atc "SELECT 1" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 1
+      done
 
-      # Create database owned by user if not exists
-      sudo -u postgres psql -v ON_ERROR_STOP=1 <<SQL
-      DO \$\$
-      BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}') THEN
-          CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};
-        END IF;
-      END
-      \$\$
-      ;
-      SQL
+      # ------------------------------------------------------------
+      # Provision DB roles & databases from user_json DIRECTLY
+      # (robust quoting; no psql :var substitution)
+      # ------------------------------------------------------------
+      echo "Provisioning roles & databases (direct from user_json) ..."
+      python3 - <<'PY'
+      import json, subprocess, sys, re
 
-      echo "PostgreSQL ready. Access via SSH tunnel only."
+      spec = json.load(open("/etc/dozilab/user.json"))
+      apps = spec.get("applications") or []
+
+      def find_app(name: str):
+          for a in apps:
+              if isinstance(a, dict) and str(a.get("name","")).lower() == name:
+                  return a
+          return None
+
+      pg = find_app("postgres") or find_app("postgresql")
+      pg_creds = pg.get("credentials") or []
+      pg_admin = pg.get("admin_credentials") or {}
+
+      ident = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+      group_token = re.compile(r"^[A-Za-z0-9_]{1,32}$")
+
+      def run(sql: str, db: str = "postgres", capture: bool = True) -> str:
+          cmd = ["sudo", "-u", "postgres", "psql", "-d", db, "-v", "ON_ERROR_STOP=1", "-Atc", sql]
+          if capture:
+              return subprocess.check_output(cmd, text=True, cwd="/").strip()
+          subprocess.check_call(cmd, cwd="/")
+          return ""
+
+      def q_ident(s: str) -> str:
+          return '"' + s.replace('"', '""') + '"'
+
+      def q_lit(s: str) -> str:
+          return "'" + s.replace("'", "''") + "'"
+
+      def role_exists(name: str) -> bool:
+          return run(f"SELECT 1 FROM pg_roles WHERE rolname={q_lit(name)};") == "1"
+
+      def db_exists(name: str) -> bool:
+          return run(f"SELECT 1 FROM pg_database WHERE datname={q_lit(name)};") == "1"
+
+      def ensure_group_role(role: str) -> None:
+          if not role_exists(role):
+              run(f"CREATE ROLE {q_ident(role)} NOLOGIN;", capture=False)
+
+      def ensure_login_role(role: str, password: str) -> None:
+          if not role_exists(role):
+              run(f"CREATE ROLE {q_ident(role)} LOGIN PASSWORD {q_lit(password)};", capture=False)
+          else:
+              run(f"ALTER ROLE {q_ident(role)} LOGIN PASSWORD {q_lit(password)};", capture=False)
+
+      def ensure_db(dbname: str, owner: str) -> None:
+          if not db_exists(dbname):
+              run(f"CREATE DATABASE {q_ident(dbname)} OWNER {q_ident(owner)};", capture=False)
+          run(f"ALTER DATABASE {q_ident(dbname)} OWNER TO {q_ident(owner)};", capture=False)
+
+      def lock_down_db(dbname: str, grp_role: str) -> None:
+          run(f"REVOKE ALL ON DATABASE {q_ident(dbname)} FROM PUBLIC;", capture=False)
+          run(f"GRANT CONNECT, TEMPORARY ON DATABASE {q_ident(dbname)} TO {q_ident(grp_role)};", capture=False)
+          run("REVOKE CREATE ON SCHEMA public FROM PUBLIC;", db=dbname, capture=False)
+          run("REVOKE USAGE ON SCHEMA public FROM PUBLIC;", db=dbname, capture=False)
+          run(f"GRANT USAGE, CREATE ON SCHEMA public TO {q_ident(grp_role)};", db=dbname, capture=False)
+
+      def grant_group_defaults(dbname: str, creator_role: str, grp_role: str) -> None:
+          run(
+              f"ALTER DEFAULT PRIVILEGES FOR ROLE {q_ident(creator_role)} IN SCHEMA public "
+              f"GRANT ALL PRIVILEGES ON TABLES TO {q_ident(grp_role)};",
+              db=dbname,
+              capture=False,
+          )
+          run(
+              f"ALTER DEFAULT PRIVILEGES FOR ROLE {q_ident(creator_role)} IN SCHEMA public "
+              f"GRANT ALL PRIVILEGES ON SEQUENCES TO {q_ident(grp_role)};",
+              db=dbname,
+              capture=False,
+          )
+
+      def grant_role(grp_role: str, user: str) -> None:
+          run(f"GRANT {q_ident(grp_role)} TO {q_ident(user)};", capture=False)
+
+      # Build group map (DIRECT): group -> {dbname, db_user, password}
+      groups = {}
+      for c in pg_creds:
+          gid = str(c.get("group")).strip()
+          if not gid or not group_token.match(gid):
+              sys.exit(f"Invalid group token: {gid!r}")
+
+          dbname = c.get("database_name") or c.get("db_name")
+          db_user = c.get("db_user")
+          pw = c.get("password")
+
+          if not isinstance(dbname, str) or not ident.match(dbname):
+              sys.exit(f"Invalid database_name for group {gid}: {dbname!r}")
+          if not isinstance(db_user, str) or not ident.match(db_user):
+              sys.exit(f"Invalid db_user for group {gid}: {db_user!r}")
+          if not isinstance(pw, str) or len(pw) < 6:
+              sys.exit(f"Invalid password for db_user {db_user!r} (min 6)")
+
+          if gid in groups:
+              sys.exit(f"Duplicate group in postgres.credentials: {gid!r}")
+          groups[gid] = {"dbname": dbname, "db_user": db_user, "password": pw}
+
+      # 1) group roles + dbs
+      for gid, info in groups.items():
+          grp_role = f"grp_{gid}"
+          ensure_group_role(grp_role)
+          ensure_db(info["dbname"], grp_role)
+          lock_down_db(info["dbname"], grp_role)
+
+      # 2) group login users
+      for gid, info in groups.items():
+          grp_role = f"grp_{gid}"
+          db_user = info["db_user"]
+          ensure_login_role(db_user, info["password"])
+          grant_role(grp_role, db_user)
+          grant_group_defaults(info["dbname"], db_user, grp_role)
+
+      # 3) optional admin (teacher)
+      if isinstance(pg_admin, dict) and pg_admin:
+          a_user = pg_admin.get("db_user")
+          a_pw = pg_admin.get("password")
+          if a_user and a_pw:
+              if not isinstance(a_user, str) or not ident.match(a_user):
+                  sys.exit(f"Invalid postgres admin db_user: {a_user!r}")
+              if not isinstance(a_pw, str) or len(a_pw) < 6:
+                  sys.exit("Invalid postgres admin password (min 6)")
+              ensure_login_role(a_user, a_pw)
+              for gid, info in groups.items():
+                  grp_role = f"grp_{gid}"
+                  grant_role(grp_role, a_user)
+                  grant_group_defaults(info["dbname"], a_user, grp_role)
+
+      print(f"Provisioned groups: {len(groups)}")
+      PY
+
+      # ------------------------------------------------------------
+      # pgAdmin (optional; only if applications includes pgadmin)
+      # NO fallback, NO deriving from postgres.
+      # ------------------------------------------------------------
+      PGADMIN_PRESENT="$(python3 - <<'PY'
+      import json
+      spec = json.load(open("/etc/dozilab/user.json"))
+      apps = spec.get("applications") or []
+      def find(name):
+          for a in apps:
+              if isinstance(a, dict) and str(a.get("name","")).lower() == name:
+                  return True
+          return False
+      print("true" if find("pgadmin") else "false")
+      PY
+      )"
+
+      if [[ "$PGADMIN_PRESENT" == "true" ]]; then
+        echo "Installing pgAdmin4 ..."
+        apt-get install -y curl ca-certificates gnupg apache2 libapache2-mod-wsgi-py3
+        install -d -m 0755 /etc/apt/keyrings
+        curl -fsS https://www.pgadmin.org/static/packages_pgadmin_org.pub | gpg --dearmor -o /etc/apt/keyrings/pgadmin.gpg
+        echo "deb [signed-by=/etc/apt/keyrings/pgadmin.gpg] https://ftp.postgresql.org/pub/pgadmin/pgadmin4/apt/jammy pgadmin4 main" > /etc/apt/sources.list.d/pgadmin4.list
+        apt-get update -y
+        apt-get install -y pgadmin4-web
+
+        echo "Configuring pgAdmin admin account (direct) ..."
+        python3 - <<'PY'
+      import json, shlex, sys
+
+      spec = json.load(open("/etc/dozilab/user.json"))
+      apps = spec.get("applications") or []
+
+      def get_app(name):
+          for a in apps:
+              if isinstance(a, dict) and str(a.get("name","")).lower() == name:
+                  return a
+          return None
+
+      pga = get_app("pgadmin") or {}
+      admin = pga.get("admin_credentials") or {}
+      email = admin.get("email")
+      pw = admin.get("password")
+
+      if not email or not pw:
+          sys.exit("pgadmin.admin_credentials missing email/password")
+      if "@" not in email:
+          sys.exit(f"pgAdmin admin email invalid: {email!r}")
+      if len(pw) < 6:
+          sys.exit("pgAdmin admin password too short (min 6)")
+
+      with open("/etc/default/pgadmin4", "w") as f:
+          print(f"PGADMIN_SETUP_EMAIL={shlex.quote(email)}", file=f)
+          print(f"PGADMIN_SETUP_PASSWORD={shlex.quote(pw)}", file=f)
+      print("pgAdmin admin email:", email)
+      PY
+
+        chmod 600 /etc/default/pgadmin4
+        rm -f /var/lib/pgadmin/pgadmin4.db
+        rm -rf /var/lib/pgadmin/sessions /var/lib/pgadmin/storage
+        install -d -m 0750 -o www-data -g www-data /var/lib/pgadmin
+
+        set -a
+        source /etc/default/pgadmin4
+        set +a
+        PGADMIN_SETUP_EMAIL="$PGADMIN_SETUP_EMAIL" \
+        PGADMIN_SETUP_PASSWORD="$PGADMIN_SETUP_PASSWORD" \
+          /usr/pgadmin4/bin/setup-web.sh --yes
+
+        a2enconf pgadmin4 || true
+        systemctl reload apache2 || true
+
+        echo "Creating pgAdmin users (direct from pgadmin.credentials) ..."
+        python3 - <<'PY'
+      import json, subprocess, sys
+
+      spec = json.load(open("/etc/dozilab/user.json"))
+      apps = spec.get("applications") or []
+
+      def get_app(name):
+          for a in apps:
+              if isinstance(a, dict) and str(a.get("name","")).lower() == name:
+                  return a
+          return None
+
+      pga = get_app("pgadmin") or {}
+      creds = pga.get("credentials") or []
+      if not isinstance(creds, list):
+          sys.exit("pgadmin.credentials must be a list")
+
+      accounts = []
+      seen = set()
+      for c in creds:
+          if not isinstance(c, dict):
+              continue
+          email = c.get("email")
+          pw = c.get("password")
+          if not email or not pw:
+              continue
+          if email in seen:
+              continue
+          seen.add(email)
+          accounts.append((email, pw))
+
+      created = 0
+      for email, pw in accounts:
+          cmd = [
+              "sudo",
+              "-u",
+              "www-data",
+              "/usr/pgadmin4/venv/bin/python",
+              "/usr/pgadmin4/web/setup.py",
+              "add-user",
+              email,
+              pw,
+              "--role",
+              "User",
+              "--active",
+          ]
+          res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+          out = (res.stdout or "").strip()
+          if res.returncode == 0:
+              created += 1
+              print(f"created pgAdmin user: {email}")
+          elif "already exists" in out.lower():
+              print(f"pgAdmin user already exists: {email}")
+          else:
+              print(f"WARNING: failed to create pgAdmin user {email} rc={res.returncode} {out}")
+
+      print(f"pgAdmin accounts processed: {len(accounts)}, created: {created}")
+      PY
+      fi
+
+      msg="DOZILAB_READY stack=${STACK_LABEL} time=$(date -Is)"
+      echo "$msg" | tee /dev/console > "$READY_FILE"
+      chmod 644 "$READY_FILE"
+
+      echo "DoziLab setup finished successfully"
 
 runcmd:
-  - /usr/local/bin/dozilab-postgres-init.sh
+  - [ bash, -lc, "/usr/local/bin/dozilab-postgres-setup.sh" ]
+
+final_message: "DoziLab Postgres + pgAdmin VM: cloud-init finished"
+
 
 """
 
@@ -868,13 +1621,22 @@ def create_mock_templates(db: Session, owner_id: str) -> list[Template]:
     templates_data = [
         {
             "name": "Multi-User Ubuntu",
-            "description": "Deploy one Ubuntu VM for a course with multiple local student accounts (username/password), SSH allowed only from DHBW/VPN CIDR, and a Floating IP on DHBW. Backend can wait for DOZILAB_READY marker in the Nova console log.",
+            "description": "Deploy one Ubuntu VM for a course with multiple local student accounts (username/password), SSH allowed only from DHBW/VPN",
             "repo_url": "https://github.com/dozilab/appstore-templates",
             "icon_url": "mdi:server-network",
             "visibility": TemplateVisibility.PUBLIC,
             "approval_status": TemplateApprovalStatus.APPROVED,
         },
-            ]
+        {
+            "name": "PostgreSQL Group Database",
+            "description": "Deploy a PostgreSQL database server where each student group gets its own database and role. Optional pgAdmin4 web interface for database management",
+            "repo_url": "https://github.com/dozilab/appstore-templates",
+            "icon_url": "mdi:database",
+            "visibility": TemplateVisibility.PUBLIC,
+            "approval_status": TemplateApprovalStatus.APPROVED,
+        }
+            
+      ]
     
     templates = []
     for data in templates_data:

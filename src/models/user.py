@@ -86,12 +86,6 @@ class User(Base):
         back_populates="user"
     )
     
-    taught_courses: Mapped[list["Course"]] = relationship(
-        "Course", 
-        back_populates="lecturer", 
-        foreign_keys="Course.lecturer_id"
-    )
-    
     openstack_projects: Mapped[list["OpenstackProject"]] = relationship(
         "OpenstackProject", 
         back_populates="owner_user"

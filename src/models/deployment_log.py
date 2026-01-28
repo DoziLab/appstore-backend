@@ -22,6 +22,7 @@ class DeploymentLogEventType(str, Enum):
     DEPLOYMENT_STARTED = "deployment_started"
     GIT_CLONE = "git_clone"
     TEMPLATE_CREATE = "template_create"
+    STACK_CREATE = "stack_create"
     VM_READY = "vm_ready"
     FAILED = "failed"
     DEPLOYMENT_DELETION_REQUESTED = "deployment_deletion_requested"

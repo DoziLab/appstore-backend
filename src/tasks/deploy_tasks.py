@@ -1,15 +1,12 @@
 """Deploy tasks for Celery."""
 import json
 import logging
-import secrets
-import string
 from uuid import UUID
 from src.celery_app import celery_app
 from src.core.database import SessionLocal
-from src.models.deployment import DeploymentStatus, DeploymentMode
+from src.models.deployment import DeploymentStatus
 from src.models.deployment_log import DeploymentLogLevel, DeploymentLogEventType
 from src.models.template_version_file import FileType
-from src.models.course_member import CourseMember
 from src.repositories.deployment_repository import DeploymentRepository
 from src.repositories.deployment_log_repository import DeploymentLogRepository
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
@@ -22,9 +19,10 @@ logger = logging.getLogger(__name__)
 
 @celery_app.task(bind=True)
 def deploy_stack(self, deployment_id: str) -> dict:
-    """Deploy a Heat stack asynchronously.
+    """Deploy Heat stacks asynchronously for a deployment.
     
     Orchestrates OpenStack Heat stack creation for a deployment.
+    Creates ONE Heat stack per stack_assignment with its own user_json.
     Updates deployment status throughout the process.
     
     Args:
@@ -58,7 +56,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
                 "task_id": task_id,
                 "template_version_id": deployment.template_version_id,
                 "course_id": deployment.course_id,
-                "deployment_mode": deployment.deployment_mode.value
+                "keycloak_group_id": deployment.course_id
             }
         )
         
@@ -66,7 +64,53 @@ def deploy_stack(self, deployment_id: str) -> dict:
         repo.update_status(deployment_id, DeploymentStatus.CREATING)
         logger.info(f"Deployment {deployment_id} status updated to CREATING")
         
-        # Fetch template version files
+        # Parse deployment_parameters to get stack_assignments, teacher, and template name
+        if not deployment.deployment_parameters:
+            error_msg = "No deployment_parameters found in deployment"
+            logger.error(error_msg)
+            log_service.log(
+                deployment_id=deployment_id,
+                event_type=DeploymentLogEventType.FAILED,
+                message=error_msg,
+                level=DeploymentLogLevel.ERROR
+            )
+            repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            return {"status": "failed", "error": error_msg}
+        
+        try:
+            deployment_params = json.loads(deployment.deployment_parameters)
+            template_name = deployment_params.get("template_name", "unknown")
+            base_heat_parameters = deployment_params.get("heat_parameters", {})
+            stack_assignments = deployment_params.get("stack_assignments", [])
+            teacher_info = deployment_params.get("teacher", {})
+            
+            if not stack_assignments:
+                error_msg = "No stack_assignments found in deployment_parameters"
+                logger.error(error_msg)
+                log_service.log(
+                    deployment_id=deployment_id,
+                    event_type=DeploymentLogEventType.FAILED,
+                    message=error_msg,
+                    level=DeploymentLogLevel.ERROR
+                )
+                repo.update_status(deployment_id, DeploymentStatus.FAILED)
+                return {"status": "failed", "error": error_msg}
+            
+            logger.info(f"Found {len(stack_assignments)} stack assignments to deploy")
+            
+        except json.JSONDecodeError as e:
+            error_msg = f"Invalid deployment_parameters JSON: {e}"
+            logger.error(error_msg)
+            log_service.log(
+                deployment_id=deployment_id,
+                event_type=DeploymentLogEventType.FAILED,
+                message=error_msg,
+                level=DeploymentLogLevel.ERROR
+            )
+            repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            return {"status": "failed", "error": error_msg}
+        
+        # Fetch template version files ONCE (used for all stacks)
         logger.info(f"Fetching template files for version {deployment.template_version_id}")
         log_service.log(
             deployment_id=deployment_id,
@@ -75,8 +119,6 @@ def deploy_stack(self, deployment_id: str) -> dict:
             level=DeploymentLogLevel.INFO
         )
         
-        # Skip access check: deployment already validated in creation,
-        # and lecturer may deploy templates they don't own if they know the ID
         files = file_service.get_version_files(
             deployment.template_version_id,
             include_content=True,
@@ -97,8 +139,8 @@ def deploy_stack(self, deployment_id: str) -> dict:
         
         # Find primary Heat template
         heat_file = next((f for f in files if f.is_primary), None)
-        if not heat_file:
-            error_msg = "No primary Heat template found"
+        if not heat_file or not heat_file.content:
+            error_msg = "No primary Heat template found or template has no content"
             logger.error(error_msg)
             log_service.log(
                 deployment_id=deployment_id,
@@ -110,11 +152,12 @@ def deploy_stack(self, deployment_id: str) -> dict:
             repo.update_status(deployment_id, DeploymentStatus.FAILED)
             return {"status": "failed", "error": error_msg}
         
-        logger.info(f"Found Heat template: {heat_file.file_name} ({len(heat_file.content or '')} bytes)")
+        logger.info(f"Found Heat template: {heat_file.file_name} ({len(heat_file.content)} bytes)")
         
-        # Ensure content is not None
-        if not heat_file.content:
-            error_msg = f"Heat template {heat_file.file_name} has no content"
+        # Get lecturer OpenStack project
+        teacher_keycloak_id = teacher_info.get("id")
+        if not teacher_keycloak_id:
+            error_msg = "No teacher information found in deployment parameters"
             logger.error(error_msg)
             log_service.log(
                 deployment_id=deployment_id,
@@ -125,136 +168,26 @@ def deploy_stack(self, deployment_id: str) -> dict:
             repo.update_status(deployment_id, DeploymentStatus.FAILED)
             return {"status": "failed", "error": error_msg}
         
-        log_service.log(
-            deployment_id=deployment_id,
-            event_type=DeploymentLogEventType.TEMPLATE_CREATE,
-            message=f"Heat template loaded: {heat_file.file_name}",
-            level=DeploymentLogLevel.INFO,
-            details={
-                "file_name": heat_file.file_name,
-                "file_size": heat_file.file_size,
-                "file_type": heat_file.file_type.value,
-                "total_files": len(files)
-            }
-        )
+        # Map Keycloak ID to local user ID
+        from src.models.user import User
+        lecturer_user = db.query(User).filter(User.external_id == teacher_keycloak_id).first()
         
-        # Build Heat stack parameters from deployment_parameters (priority) or config_json (legacy)
-        stack_params = {}
-        
-        if deployment.deployment_parameters:
-            try:
-                stack_params = json.loads(deployment.deployment_parameters)
-                logger.info(f"Using Heat template parameters from deployment: {stack_params}")
-                log_service.log(
-                    deployment_id=deployment_id,
-                    event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
-                    message="Heat template parameters loaded from deployment_parameters",
-                    level=DeploymentLogLevel.INFO,
-                    details={"parameters": stack_params}
-                )
-            except json.JSONDecodeError as e:
-                error_msg = f"Invalid deployment_parameters JSON: {e}"
-                logger.error(error_msg)
-                log_service.log(
-                    deployment_id=deployment_id,
-                    event_type=DeploymentLogEventType.FAILED,
-                    message=error_msg,
-                    level=DeploymentLogLevel.ERROR
-                )
-                repo.update_status(deployment_id, DeploymentStatus.FAILED)
-                return {"status": "failed", "error": error_msg}
-        elif deployment.config_json:
-            try:
-                config = json.loads(deployment.config_json)
-                logger.info(f"Parsed deployment config (legacy): {config}")
-                log_service.log(
-                    deployment_id=deployment_id,
-                    event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
-                    message="Deployment configuration parsed from config_json (legacy)",
-                    level=DeploymentLogLevel.INFO,
-                    details=config
-                )
-                stack_params = config
-            except json.JSONDecodeError as e:
-                error_msg = f"Invalid config_json: {e}"
-                logger.error(error_msg)
-                log_service.log(
-                    deployment_id=deployment_id,
-                    event_type=DeploymentLogEventType.FAILED,
-                    message=error_msg,
-                    level=DeploymentLogLevel.ERROR
-                )
-                repo.update_status(deployment_id, DeploymentStatus.FAILED)
-                return {"status": "failed", "error": error_msg}
-        
-        # Generate students parameter for per_course mode if not already provided
-        if deployment.deployment_mode == DeploymentMode.PER_COURSE and "students" not in stack_params:
-            logger.info("Generating students parameter for per_course deployment")
-            
-            # Get all course members (students) for this course
-            course_members = (
-                db.query(CourseMember)
-                .filter(CourseMember.course_id == deployment.course_id)
-                .filter(CourseMember.left_at.is_(None))  # Only active members
-                .all()
-            )
-            
-            if not course_members:
-                error_msg = f"No active course members found for course {deployment.course_id}"
-                logger.error(error_msg)
-                log_service.log(
-                    deployment_id=deployment_id,
-                    event_type=DeploymentLogEventType.FAILED,
-                    message=error_msg,
-                    level=DeploymentLogLevel.ERROR
-                )
-                repo.update_status(deployment_id, DeploymentStatus.FAILED)
-                return {"status": "failed", "error": error_msg}
-            
-            # Generate students dict: username -> password
-            # Use course_member_id as username base for uniqueness
-            students_dict = {}
-            
-            def generate_password(length: int = 16) -> str:
-                """Generate a secure random password."""
-                alphabet = string.ascii_letters + string.digits + string.punctuation
-                # Ensure at least one of each required type
-                password = [
-                    secrets.choice(string.ascii_lowercase),
-                    secrets.choice(string.ascii_uppercase),
-                    secrets.choice(string.digits)
-                ]
-                # Fill the rest randomly
-                password.extend(secrets.choice(alphabet) for _ in range(length - 4))
-                # Shuffle to avoid predictable pattern
-                secrets.SystemRandom().shuffle(password)
-                return ''.join(password)
-            
-            for member in course_members:
-                # Generate username from course_member_id (first 8 chars for readability)
-                username = f"student-{member.id[:8]}"
-                # Generate secure password
-                password = generate_password(16)
-                students_dict[username] = password
-            
-            # Convert to JSON string as required by Heat template
-            students_json = json.dumps(students_dict)
-            stack_params["students"] = students_json
-            
-            logger.info(f"Generated students parameter for {len(course_members)} students")
+        if not lecturer_user:
+            error_msg = f"No user found for Keycloak ID {teacher_keycloak_id}"
+            logger.error(error_msg)
             log_service.log(
                 deployment_id=deployment_id,
-                event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
-                message=f"Generated students parameter for {len(course_members)} course members",
-                level=DeploymentLogLevel.INFO,
-                details={"student_count": len(course_members)}
+                event_type=DeploymentLogEventType.FAILED,
+                message=error_msg,
+                level=DeploymentLogLevel.ERROR
             )
+            repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            return {"status": "failed", "error": error_msg}
         
-        # Get lecturer's OpenStack project from database
+        lecturer_id = lecturer_user.id
+        
+        # Get lecturer's OpenStack project
         openstack_repo = OpenstackProjectRepository(db)
-        lecturer_id = deployment.course.lecturer_id
-        
-        # Get first OpenStack project for lecturer (in future: allow multiple projects)
         openstack_projects = openstack_repo.get_by_owner(lecturer_id)
         if not openstack_projects:
             error_msg = f"No OpenStack project found for lecturer {lecturer_id}"
@@ -270,23 +203,162 @@ def deploy_stack(self, deployment_id: str) -> dict:
             return {"status": "failed", "error": error_msg}
         
         openstack_project = openstack_projects[0]
-        logger.info(
-            f"Using OpenStack project {openstack_project.openstack_project_name} "
-            f"for lecturer {lecturer_id}"
-        )
+        logger.info(f"Using OpenStack project {openstack_project.openstack_project_name} for lecturer {lecturer_id}")
         
-        # Call OpenStack Heat API to create stack
-        log_service.log(
-            deployment_id=deployment_id,
-            event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
-            message="Initiating OpenStack Heat stack creation",
-            level=DeploymentLogLevel.INFO,
-            details={
-                "template_file": heat_file.file_name,
-                "parameters": stack_params,
-                "openstack_project": openstack_project.openstack_project_name,
+        # Initialize Heat service ONCE
+        heat_service = HeatStackService(openstack_project)
+        
+        # Prepare cloud-init files dictionary (same for all stacks)
+        files_dict = {}
+        for template_file in files:
+            if template_file.file_type == FileType.CLOUD_INIT and template_file.content:
+                files_dict['../cloud-init/user-data.yaml'] = template_file.content
+                logger.info("Including cloud-init file in stack files")
+        
+        # Create ONE Heat stack per stack_assignment
+        created_stack_ids = []
+        failed_stacks = []
+        
+        from src.services.template_user_management_service import TemplateUserManagementService
+        from src.schemas.deployment import StackAssignment, TeacherInfo
+        
+        for idx, stack_assignment_data in enumerate(stack_assignments, start=1):
+            try:
+                # Reconstruct Pydantic objects from JSON
+                stack_assignment = StackAssignment(**stack_assignment_data)
+                teacher = TeacherInfo(**teacher_info)
+                
+                # Generate user_json for THIS specific stack
+                user_json_data = TemplateUserManagementService.generate_user_json_for_stack(
+                    template_name=template_name,
+                    course_label=deployment.name,
+                    stack_assignment=stack_assignment,
+                    teacher=teacher
+                )
+
+                print(f"user_json_data: {user_json_data}")
+                # Base64-encode JSON to avoid YAML parsing issues when inserted via str_replace
+                # Cloud-init will decode it back to JSON
+                import base64
+                user_json_string = json.dumps(user_json_data, ensure_ascii=False)
+                user_json_b64 = base64.b64encode(user_json_string.encode('utf-8')).decode('ascii')
+                print(f"user_json_b64: {user_json_b64}")
+                logger.debug(f"Generated user_json for stack {idx}: {len(user_json_string)} chars, {len(user_json_b64)} chars base64")
+                
+                # Merge base parameters with stack-specific user_json (base64-encoded)
+                stack_params = {
+                    **base_heat_parameters,
+                    "user_json": user_json_b64
+                }
+                
+                # Generate unique stack name
+                stack_name = f"{deployment.name}-s{idx}-{deployment_id[:4]}"
+                stack_name = stack_name.replace(" ", "-").replace("_", "-").lower()[:64]
+                
+                tags = {
+                    "deployment_id": deployment_id,
+                    "course_id": deployment.course_id,
+                    "template_version_id": deployment.template_version_id,
+                    "stack_index": str(idx)
+                }
+                
+                logger.info(f"Creating Heat stack {idx}/{len(stack_assignments)}: {stack_name}")
+                log_service.log(
+                    deployment_id=deployment_id,
+                    event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
+                    message=f"Creating Heat stack {idx}/{len(stack_assignments)}: {stack_name}",
+                    level=DeploymentLogLevel.INFO,
+                    details={
+                        "stack_index": idx,
+                        "stack_name": stack_name,
+                        "groups_count": len(stack_assignment.groups),
+                        "parameters": list(stack_params.keys())
+                    }
+                )
+                
+                # Create stack via OpenStack Heat API
+                stack_result = heat_service.create_stack(
+                    stack_name=stack_name,
+                    template=heat_file.content,
+                    parameters=stack_params,
+                    files=files_dict if files_dict else None,
+                    tags=tags,
+                    timeout_mins=60
+                )
+                
+                stack_id = stack_result['stack_id']
+                created_stack_ids.append(stack_id)
+                logger.info(f"Heat stack {idx} created successfully: {stack_id}")
+                
+                log_service.log(
+                    deployment_id=deployment_id,
+                    event_type=DeploymentLogEventType.STACK_CREATE,
+                    message=f"Heat stack {idx} created: {stack_name}",
+                    level=DeploymentLogLevel.INFO,
+                    details={
+                        "stack_id": stack_id,
+                        "stack_name": stack_name,
+                        "stack_index": idx,
+                        "status": stack_result['status'],
+                    }
+                )
+                
+            except Exception as stack_error:
+                error_msg = f"Failed to create Heat stack {idx}: {str(stack_error)}"
+                logger.error(error_msg, exc_info=True)
+                log_service.log(
+                    deployment_id=deployment_id,
+                    event_type=DeploymentLogEventType.FAILED,
+                    message=error_msg,
+                    level=DeploymentLogLevel.ERROR,
+                    details={"error": str(stack_error), "stack_index": idx}
+                )
+                failed_stacks.append({"index": idx, "error": str(stack_error)})
+        
+        # Store all stack IDs as JSON array
+        if created_stack_ids:
+            deployment.openstack_stack_id = json.dumps(created_stack_ids)
+            db.commit()
+            logger.info(f"Stored {len(created_stack_ids)} stack IDs: {created_stack_ids}")
+            log_service.log(
+                deployment_id=deployment_id,
+                event_type=DeploymentLogEventType.VM_READY,
+                message=f"Created {len(created_stack_ids)}/{len(stack_assignments)} Heat stacks",
+                level=DeploymentLogLevel.INFO,
+                details={
+                    "stack_ids": created_stack_ids,
+                    "total_stacks": len(stack_assignments),
+                    "failed_stacks": len(failed_stacks)
+                }
+            )
+        
+        # Update deployment status based on results
+        if failed_stacks and not created_stack_ids:
+            # All stacks failed
+            repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            return {
+                "status": "failed",
+                "error": f"All {len(failed_stacks)} stacks failed",
+                "failed_stacks": failed_stacks
             }
-        )
+        elif failed_stacks:
+            # Partial failure
+            logger.warning(f"Partial deployment success: {len(created_stack_ids)} succeeded, {len(failed_stacks)} failed")
+            repo.update_status(deployment_id, DeploymentStatus.RUNNING)
+            return {
+                "status": "partial",
+                "created_stacks": len(created_stack_ids),
+                "failed_stacks": failed_stacks
+            }
+        else:
+            # All stacks succeeded
+            repo.update_status(deployment_id, DeploymentStatus.RUNNING)
+            logger.info(f"All {len(created_stack_ids)} stacks created successfully")
+            return {
+                "status": "success",
+                "stack_count": len(created_stack_ids),
+                "stack_ids": created_stack_ids
+            }
         
         try:
             heat_service = HeatStackService(openstack_project)
@@ -327,97 +399,75 @@ def deploy_stack(self, deployment_id: str) -> dict:
             
             log_service.log(
                 deployment_id=deployment_id,
-                event_type=DeploymentLogEventType.TEMPLATE_CREATE,
+                event_type=DeploymentLogEventType.STACK_CREATE,
                 message=f"Heat stack created: {stack_name}",
                 level=DeploymentLogLevel.INFO,
                 details={
                     "stack_id": stack_id,
-                    "stack_name": stack_name,
+                    "stack_index": idx,
                     "status": stack_result['status'],
                 }
             )
-            
-        except Exception as heat_error:
-            error_msg = f"Failed to create Heat stack: {str(heat_error)}"
+                
+        except Exception as stack_error:
+            error_msg = f"Failed to create Heat stack {idx}: {str(stack_error)}"
             logger.error(error_msg, exc_info=True)
             log_service.log(
                 deployment_id=deployment_id,
                 event_type=DeploymentLogEventType.FAILED,
                 message=error_msg,
                 level=DeploymentLogLevel.ERROR,
-                details={"error": str(heat_error)}
+                details={"error": str(stack_error), "stack_index": idx}
             )
-            repo.update_status(deployment_id, DeploymentStatus.FAILED)
-            return {"status": "failed", "error": error_msg}
+            failed_stacks.append({"index": idx, "error": str(stack_error)})
         
-        # Store stack_id
-        deployment.openstack_stack_id = stack_id
-        db.commit()
-        
-        logger.info(f"Stack ID stored: {stack_id}")
-        log_service.log(
-            deployment_id=deployment_id,
-            event_type=DeploymentLogEventType.VM_READY,
-            message=f"Heat stack ID stored: {stack_id}",
-            level=DeploymentLogLevel.INFO,
-            details={
-                "stack_id": stack_id,
-                "template": heat_file.file_name
-            }
-        )
-        
-        # Create DeploymentInstance records from Heat stack resources
-        try:
-            logger.info(f"Fetching stack resources for {stack_id}")
-            resources = heat_service.get_stack_resources(stack_id)
-            
+        # Store all stack IDs as JSON array
+        if created_stack_ids:
+            deployment.openstack_stack_id = json.dumps(created_stack_ids)
+            db.commit()
+            logger.info(f"Stored {len(created_stack_ids)} stack IDs: {created_stack_ids}")
             log_service.log(
                 deployment_id=deployment_id,
-                event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
-                message=f"Retrieved {len(resources)} resources from Heat stack",
+                event_type=DeploymentLogEventType.VM_READY,
+                message=f"Created {len(created_stack_ids)}/{len(stack_assignments)} Heat stacks",
                 level=DeploymentLogLevel.INFO,
-                details={"resource_count": len(resources), "resources": resources}
-            )
-            
-            # TODO: Create DeploymentInstance records for each VM/server resource
-            # This will require checking resource types and extracting access information
-            logger.info(f"Found {len(resources)} stack resources. Instance creation pending implementation.")
-            
-        except Exception as resource_error:
-            # Non-fatal: Log warning but continue
-            logger.warning(f"Failed to fetch stack resources: {resource_error}")
-            log_service.log(
-                deployment_id=deployment_id,
-                event_type=DeploymentLogEventType.DEPLOYMENT_STARTED,
-                message=f"Could not fetch stack resources: {str(resource_error)}",
-                level=DeploymentLogLevel.WARNING,
-                details={"error": str(resource_error)}
+                details={
+                    "stack_ids": created_stack_ids,
+                    "total_stacks": len(stack_assignments),
+                    "failed_stacks": len(failed_stacks)
+                }
             )
         
-        # Update status to RUNNING
-        repo.update_status(deployment_id, DeploymentStatus.RUNNING)
-        logger.info(f"Deployment {deployment_id} completed successfully")
-        log_service.log(
-            deployment_id=deployment_id,
-            event_type=DeploymentLogEventType.VM_READY,
-            message="Deployment completed successfully",
-            level=DeploymentLogLevel.INFO,
-            details={
-                "status": "RUNNING",
-                "stack_id": stack_id
+        # Update deployment status based on results
+        if failed_stacks and not created_stack_ids:
+            # All stacks failed
+            repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            return {
+                "status": "failed",
+                "error": f"All {len(failed_stacks)} stacks failed",
+                "failed_stacks": failed_stacks
             }
-        )
-        
-        return {
-            "status": "success",
-            "deployment_id": deployment_id,
-            "task_id": task_id,
-            "stack_id": stack_id,
-            "files_processed": len(files)
-        }
-        
+        elif failed_stacks:
+            # Partial failure
+            logger.warning(f"Partial deployment success: {len(created_stack_ids)} succeeded, {len(failed_stacks)} failed")
+            repo.update_status(deployment_id, DeploymentStatus.RUNNING)
+            return {
+                "status": "partial",
+                "created_stacks": len(created_stack_ids),
+                "failed_stacks": failed_stacks
+            }
+        else:
+            # All stacks succeeded
+            repo.update_status(deployment_id, DeploymentStatus.RUNNING)
+            logger.info(f"All {len(created_stack_ids)} stacks created successfully")
+            return {
+                "status": "success",
+                "stack_count": len(created_stack_ids),
+                "stack_ids": created_stack_ids
+            }
+    
     except Exception as e:
-        logger.exception(f"Failed to deploy stack for deployment {deployment_id}: {e}")
+        logger.exception(f"Failed to deploy stacks for deployment {deployment_id}: {e}")
         
         # Log the failure
         try:
@@ -490,28 +540,70 @@ def delete_deployment(self, deployment_id: str) -> dict:
         # If there is an associated Heat stack, attempt to delete it
         if deployment.openstack_stack_id:
             try:
-                openstack_repo = OpenstackProjectRepository(db)
-                lecturer_id = deployment.course.lecturer_id
-                openstack_projects = openstack_repo.get_by_owner(lecturer_id)
-
-                if openstack_projects:
-                    heat_service = HeatStackService(openstack_projects[0])
-                    heat_service.delete_stack(deployment.openstack_stack_id)
-                    log_service.log(
-                        deployment_id=deployment_id,
-                        event_type=DeploymentLogEventType.DEPLOYMENT_DELETED,
-                        message=f"Heat stack deleted: {deployment.openstack_stack_id}",
-                        level=DeploymentLogLevel.INFO,
-                        details={"stack_id": deployment.openstack_stack_id}
-                    )
+                # Extract owner ID from deployment_parameters
+                if not deployment.deployment_parameters:
+                    raise ValueError("Deployment parameters are missing")
+                params = json.loads(deployment.deployment_parameters)
+                teacher_info = params.get("teacher", {})
+                teacher_keycloak_id = teacher_info.get("id")
+                
+                if not teacher_keycloak_id:
+                    logger.warning("No teacher information in deployment_parameters; skipping stack deletion")
                 else:
-                    logger.warning(f"No OpenStack project found for lecturer {lecturer_id}; skipping stack deletion")
+                    # Map Keycloak ID to local user ID
+                    from src.models.user import User
+                    teacher_user = db.query(User).filter(User.external_id == teacher_keycloak_id).first()
+                    
+                    if not teacher_user:
+                        logger.warning(f"Teacher user not found for Keycloak ID {teacher_keycloak_id}; skipping stack deletion")
+                    else:
+                        openstack_repo = OpenstackProjectRepository(db)
+                        openstack_projects = openstack_repo.get_by_owner(teacher_user.id)
+
+                        if openstack_projects:
+                            heat_service = HeatStackService(openstack_projects[0])
+                            
+                            # Parse stack IDs (can be single ID or JSON array)
+                            try:
+                                stack_ids = json.loads(deployment.openstack_stack_id)
+                                if not isinstance(stack_ids, list):
+                                    stack_ids = [stack_ids]
+                            except (json.JSONDecodeError, TypeError):
+                                # Fallback: treat as single stack ID
+                                stack_ids = [deployment.openstack_stack_id]
+                            
+                            logger.info(f"Deleting {len(stack_ids)} Heat stack(s)")
+                            deleted_count = 0
+                            failed_deletions = []
+                            
+                            for idx, stack_id in enumerate(stack_ids, start=1):
+                                try:
+                                    heat_service.delete_stack(stack_id)
+                                    deleted_count += 1
+                                    logger.info(f"Heat stack {idx}/{len(stack_ids)} deleted: {stack_id}")
+                                except Exception as delete_error:
+                                    logger.error(f"Failed to delete stack {stack_id}: {delete_error}")
+                                    failed_deletions.append({"stack_id": stack_id, "error": str(delete_error)})
+                            
+                            log_service.log(
+                                deployment_id=deployment_id,
+                                event_type=DeploymentLogEventType.DEPLOYMENT_DELETED,
+                                message=f"Heat stacks deleted: {deleted_count}/{len(stack_ids)} succeeded",
+                                level=DeploymentLogLevel.INFO if not failed_deletions else DeploymentLogLevel.WARNING,
+                                details={
+                                    "deleted_count": deleted_count,
+                                    "total_stacks": len(stack_ids),
+                                    "failed_deletions": failed_deletions if failed_deletions else None
+                                }
+                            )
+                        else:
+                            logger.warning(f"No OpenStack project found for teacher {teacher_user.id}; skipping stack deletion")
             except Exception as e:
-                logger.error(f"Failed to delete Heat stack {deployment.openstack_stack_id}: {e}", exc_info=True)
+                logger.error(f"Failed to delete Heat stacks: {e}", exc_info=True)
                 log_service.log(
                     deployment_id=deployment_id,
                     event_type=DeploymentLogEventType.FAILED,
-                    message=f"Failed to delete Heat stack: {str(e)}",
+                    message=f"Failed to delete Heat stacks: {str(e)}",
                     level=DeploymentLogLevel.ERROR,
                     details={"error": str(e)}
                 )
@@ -594,13 +686,49 @@ def restart_deployment(self, deployment_id: str) -> dict:
             repo.update_status(deployment_id, DeploymentStatus.FAILED)
             return {"status": "failed", "error": error_msg}
         
-        # Get OpenStack project credentials
+        # Get OpenStack project credentials from deployment owner
+        if not deployment.deployment_parameters:
+            error_msg = "Deployment parameters are missing"
+            logger.error(f"[{deployment_id}] {error_msg}")
+            repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            return {"status": "failed", "error": error_msg}
+        params = json.loads(deployment.deployment_parameters)
+        teacher_info = params.get("teacher", {})
+        teacher_keycloak_id = teacher_info.get("id")
+        
+        if not teacher_keycloak_id:
+            error_msg = "No teacher information found in deployment parameters"
+            logger.error(error_msg)
+            log_service.log(
+                deployment_id=deployment_id,
+                event_type=DeploymentLogEventType.FAILED,
+                message=error_msg,
+                level=DeploymentLogLevel.ERROR
+            )
+            repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            return {"status": "failed", "error": error_msg}
+        
+        # Map Keycloak ID to local user ID
+        from src.models.user import User
+        teacher_user = db.query(User).filter(User.external_id == teacher_keycloak_id).first()
+        
+        if not teacher_user:
+            error_msg = f"Teacher user not found for Keycloak ID {teacher_keycloak_id}"
+            logger.error(error_msg)
+            log_service.log(
+                deployment_id=deployment_id,
+                event_type=DeploymentLogEventType.FAILED,
+                message=error_msg,
+                level=DeploymentLogLevel.ERROR
+            )
+            repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            return {"status": "failed", "error": error_msg}
+        
         openstack_repo = OpenstackProjectRepository(db)
-        lecturer_id = deployment.course.lecturer_id
-        openstack_projects = openstack_repo.get_by_owner(lecturer_id)
+        openstack_projects = openstack_repo.get_by_owner(teacher_user.id)
         
         if not openstack_projects:
-            error_msg = f"No OpenStack project found for lecturer {lecturer_id}"
+            error_msg = f"No OpenStack project found for teacher {teacher_user.id}"
             logger.error(error_msg)
             log_service.log(
                 deployment_id=deployment_id,

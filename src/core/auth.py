@@ -216,9 +216,9 @@ def get_user_id(
         Internal user UUID as string (users.id, NOT external_id)
         
     Usage:
-        @router.get("/my-deployments")
-        async def my_deployments(user_id: str = Depends(get_user_id)):
-            return db.query(Deployment).filter_by(lecturer_id=user_id).all()
+        @router.get("/my-resources")
+        async def my_resources(user_id: str = Depends(get_user_id)):
+            return db.query(Resource).filter_by(owner_id=user_id).all()
     """
     from src.services.user_sync_service import UserRepository
     

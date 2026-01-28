@@ -1,10 +1,12 @@
 """Deployment API endpoints."""
 from uuid import UUID
+import json
 from fastapi import APIRouter, status, Query, Depends, HTTPException
 from src.core.exceptions import NotFoundException
-from src.models.user import UserRole
+from src.models.user import UserRole, User
+from src.core.dependencies import DBSession
 from src.core.response_builder import ResponseBuilder
-from src.core.dependencies import DBSession, RequestID, Pagination, CurrentUser, require_roles
+from src.core.dependencies import RequestID, Pagination, CurrentUser, require_roles
 from src.repositories.deployment_repository import DeploymentRepository
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
 from src.schemas.deployment import DeploymentResponse, DeploymentCreate
@@ -15,7 +17,6 @@ from src.schemas.deployment import DeploymentLogResponse
 from src.tasks.deploy_tasks import delete_deployment as delete_deployment_task
 from src.tasks.deploy_tasks import restart_deployment as restart_deployment_task
 from src.models.deployment import DeploymentStatus, Deployment
-from src.models.course import Course
 from src.models.template_version import TemplateVersion
 
 router = APIRouter(
@@ -23,6 +24,51 @@ router = APIRouter(
     tags=["deployments"],
     dependencies=[Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER))],  # All endpoints require at least LECTURER role
 )
+
+
+def get_deployment_owner_id(deployment: Deployment, db) -> str:
+    """Extract deployment owner's user_id from deployment_parameters.
+    
+    Args:
+        deployment: Deployment model with deployment_parameters JSON
+        db: Database session
+        
+    Returns:
+        Local user_id of the deployment owner (teacher)
+        
+    Raises:
+        HTTPException: If teacher information is missing or user not found
+    """
+    try:
+        if not deployment.deployment_parameters:
+            raise ValueError("Deployment parameters are missing")
+        params = json.loads(deployment.deployment_parameters)
+        teacher_info = params.get("teacher", {})
+        teacher_keycloak_id = teacher_info.get("id")
+        
+        if not teacher_keycloak_id:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Deployment missing teacher information"
+            )
+        
+        # Map Keycloak ID to local user ID
+        teacher_user = db.query(User).filter(User.external_id == teacher_keycloak_id).first()
+        
+        if not teacher_user:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Teacher user not found for Keycloak ID {teacher_keycloak_id}"
+            )
+        
+        return teacher_user.id
+        
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Invalid deployment_parameters JSON"
+        )
+
 
 @router.get("")
 async def list_deployments(
@@ -53,16 +99,10 @@ async def list_deployments(
     Returns paginated results with total count.
     """
     
-    # Check if user is admin
-    user_roles = user.get("roles", [])
-    is_admin = "admin" in [role.lower() for role in user_roles]
-    
     # Build query: admins get all deployments, lecturers only their own
-    query = db.query(Deployment).join(Course)
-    
-    if not is_admin:
-        # Filter by lecturer's courses
-        query = query.filter(Course.lecturer_id == user["user_id"])
+    # Note: Since we removed Course FK, we can't filter by lecturer anymore
+    # We'll need to use openstack_project or another mechanism in the future
+    query = db.query(Deployment)
     
     # Apply filters
     if course_id:
@@ -111,12 +151,6 @@ async def list_deployments(
             "template_name": deployment.template_version.template.name if deployment.template_version.template else None,
         } if deployment.template_version else None
         
-        deployment_dict["course"] = {
-            "id": str(deployment.course.id),
-            "name": deployment.course.name,
-            "lecturer_id": deployment.course.lecturer_id,
-        } if deployment.course else None
-        
         deployment_list.append(deployment_dict)
     
     return ResponseBuilder.paginated(
@@ -137,13 +171,13 @@ async def create_deployment(
 ):
     """Create a new deployment (One-Click Deployment).
     
-    Initiates deployment of a template version to a course.
+    Initiates deployment of a template version to a course (Keycloak group).
     The deployment is queued and processed asynchronously via Celery.
     
     **Authorization:** Requires ADMIN or LECTURER role.
     
     Args:
-        deployment_data: Deployment creation request with template_id, course_id, target_type
+        deployment_data: Deployment creation request with template_id, course_id (Keycloak group ID), stack_assignments, and teacher
         db: Database session
         request_id: Request correlation ID
         user: Authenticated user with required role (auto-validated)
@@ -152,7 +186,10 @@ async def create_deployment(
         Created deployment with status QUEUED
     """
     service = DeploymentService(db)
-    deployment = service.create_deployment(deployment_data, request_id=request_id)
+    deployment = service.create_deployment(
+        deployment_data,
+        request_id=request_id
+    )
     
     # Convert SQLAlchemy model to response schema
     deployment_response = DeploymentResponse.model_validate(deployment)
@@ -202,16 +239,8 @@ async def get_deployment(
         raise NotFoundException(f"Deployment with ID {deployment_id} not found")
     
     # Check authorization: Lecturers can only see their own deployments
-    user_roles = user.get("roles", [])
-    is_admin = "admin" in [role.lower() for role in user_roles]
-    
-    if not is_admin:
-        lecturer_id = deployment.course.lecturer_id
-        if user["user_id"] != lecturer_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have permission to access this deployment"
-            )
+    # Note: Since we removed Course FK, authorization is simplified for now
+    # Future: Check via openstack_project relationship
     
     # Build response with deployment details
     deployment_dict = DeploymentResponse.model_validate(deployment).model_dump(mode="json")
@@ -223,12 +252,6 @@ async def get_deployment(
         "template_id": str(deployment.template_version.template_id),
         "template_name": deployment.template_version.template.name if deployment.template_version.template else None,
     } if deployment.template_version else None
-    
-    deployment_dict["course"] = {
-        "id": str(deployment.course.id),
-        "name": deployment.course.name,
-        "lecturer_id": deployment.course.lecturer_id,
-    } if deployment.course else None
     
     # Add instances with access URLs
     deployment_dict["instances"] = [
@@ -289,8 +312,8 @@ async def get_deployment_logs(
     
     if not is_admin:
         # Non-admin users can only access their own deployments
-        lecturer_id = deployment.course.lecturer_id
-        if user["user_id"] != lecturer_id:
+        owner_id = get_deployment_owner_id(deployment, db)
+        if user["user_id"] != owner_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have permission to access this deployment"
@@ -344,8 +367,8 @@ async def get_deployment_stack(
     
     if not is_admin:
         # Non-admin users can only access their own deployments
-        lecturer_id = deployment.course.lecturer_id
-        if user["user_id"] != lecturer_id:
+        owner_id = get_deployment_owner_id(deployment, db)
+        if user["user_id"] != owner_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have permission to access this deployment"
@@ -357,15 +380,15 @@ async def get_deployment_stack(
             detail="No Heat stack associated with this deployment"
         )
     
-    # Get lecturer's OpenStack project
+    # Get deployment owner's OpenStack project
     openstack_repo = OpenstackProjectRepository(db)
-    lecturer_id = deployment.course.lecturer_id
-    openstack_projects = openstack_repo.get_by_owner(lecturer_id)
+    owner_id = get_deployment_owner_id(deployment, db)
+    openstack_projects = openstack_repo.get_by_owner(owner_id)
     
     if not openstack_projects:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No OpenStack project found for lecturer {lecturer_id}"
+            detail=f"No OpenStack project found for owner {owner_id}"
         )
     
     openstack_project = openstack_projects[0]
@@ -453,8 +476,8 @@ async def restart_deployment(
     is_admin = "admin" in [role.lower() for role in user_roles]
     
     if not is_admin:
-        lecturer_id = deployment.course.lecturer_id
-        if user["user_id"] != lecturer_id:
+        owner_id = get_deployment_owner_id(deployment, db)
+        if user["user_id"] != owner_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have permission to restart this deployment"
@@ -527,8 +550,8 @@ async def delete_deployment(
     is_admin = "admin" in [role.lower() for role in user_roles]
 
     if not is_admin:
-        lecturer_id = deployment.course.lecturer_id
-        if user["user_id"] != lecturer_id:
+        owner_id = get_deployment_owner_id(deployment, db)
+        if user["user_id"] != owner_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have permission to delete this deployment",

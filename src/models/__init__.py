@@ -4,7 +4,7 @@
 from src.models.course import Course
 from src.models.course_group import CourseGroup
 from src.models.course_member import CourseMember
-from src.models.deployment import Deployment, DeploymentStatus, DeploymentMode
+from src.models.deployment import Deployment, DeploymentStatus
 from src.models.deployment_instance import DeploymentInstance, DeploymentInstanceStatus
 from src.models.deployment_instance_access import DeploymentInstanceAccess
 from src.models.deployment_log import DeploymentLog
@@ -23,7 +23,6 @@ __all__ = [
     "CourseMember",
     "Deployment",
     "DeploymentStatus",
-    "DeploymentMode",
     "DeploymentInstance",
     "DeploymentInstanceStatus",
     "DeploymentInstanceAccess",
