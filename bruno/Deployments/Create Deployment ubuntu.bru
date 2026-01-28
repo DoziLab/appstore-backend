@@ -1,7 +1,7 @@
 meta {
-  name: Create Deployment
+  name: Create Deployment ubuntu
   type: http
-  seq: 2
+  seq: 8
 }
 
 post {
@@ -16,50 +16,34 @@ auth:bearer {
 
 body:json {
   {
-    "name": "SQL Kurs - Herbst 2026",
+    "name": "Ubuntu-Kurs",
     "template_version_id": "{{template_version_id}}",
     "course_id": "keycloak-group-id-123",
     "heat_parameters": {
-      "stack_label": "my-postgres",
-      "volume_size": 16,
+      "stack_label": "multistudent",
       "image": "Ubuntu 22.04 2025-01",
       "flavor": "gp1.small",
-      "network": "NAT",
-      "external_network": "DHBW",
       "ssh_cidr": "141.72.0.0/16",
-      "web_cidr": "141.72.0.0/16"
+      "force_password_change": false,
+      "workdir": "work",
+      "pw_min_length": 7,
+      "pw_require_digit": false,
+      "pw_require_upper": false,
+      "pw_require_special": false
     },
     "stack_assignments": [
       {
         "stack_index": 1,
         "groups": [
           {
-            "group_name": "Gruppe 1",
+            "group_name": "Dozilab",
             "group_index": 1,
             "students": [
               {
                 "id": "keycloak-uuid-1",
-                "username": "max.mustermann",
+                "username": "max",
                 "email": "max@example.com",
                 "first_name": "Max",
-                "last_name": "Mustermann"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "stack_index": 2,
-        "groups": [
-          {
-            "group_name": "Gruppe 2",
-            "group_index": 2,
-            "students": [
-              {
-                "id": "keycloak-uuid-2",
-                "username": "dilo.mustermann",
-                "email": "dilo@example.com",
-                "first_name": "Dilo",
                 "last_name": "Mustermann"
               }
             ]
@@ -69,16 +53,16 @@ body:json {
     ],
     "teacher": {
       "id": "b2767751-c2d0-4d09-9400-ad520edbfe3c",
-      "username": "prof.berg",
+      "username": "berg",
       "email": "berg@dhbw.de",
-      "first_name": "Prof.",
+      "first_name": "Prof",
       "last_name": "Berg"
     }
   }
 }
 
 vars:pre-request {
-  template_version_id: f45ac4ac-fef1-4668-b458-14f28b1cc984
+  template_version_id: 21269450-224d-4d3e-b91f-1a22c38500d8
 }
 
 script:post-response {

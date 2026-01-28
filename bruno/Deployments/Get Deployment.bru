@@ -24,20 +24,19 @@ docs {
   Retrieves complete details about a single deployment including:
   - Deployment metadata and configuration
   - Current status and timestamps
-  - Associated template version and course information
+  - Associated template version information
   - OpenStack Heat stack ID (if available)
   - Deployment instances with access URLs
   
   ## Authorization
-  - **Owner (Lecturer)** or **Admin** only
-  - Lecturers can only access their own deployments
-  - Admins can access any deployment
+  - **Lecturer** or **Admin** role required
+  - Authorization simplified after removing Course FK
   
   ## Response
   
   Returns deployment with nested objects:
   - `template_version`: Version details and template name
-  - `course`: Course information
+  - `course_id`: Keycloak group ID (string)
   - `instances`: List of VM instances with:
     - Instance name and OpenStack ID
     - Status (ACTIVE, BUILD, etc.)
@@ -51,25 +50,19 @@ docs {
     "success": true,
     "data": {
       "id": "deploy-123",
+      "name": "SQL Kurs - Herbst 2026",
       "template_version_id": "version-456",
-      "course_id": "course-789",
-      "deployment_mode": "per_course",
-      "status": "active",
+      "course_id": "keycloak-group-789",
+      "status": "running",
       "openstack_stack_id": "stack-abc",
-      "config_json": "{\"cpu\": 2, \"ram\": 4096}",
-      "access_types_json": "[\"ssh\", \"web_url\"]",
+      "deployment_parameters": "{...}",
       "created_at": "2024-11-27T10:00:00Z",
       "updated_at": "2024-11-27T10:00:00Z",
       "template_version": {
         "id": "version-456",
         "version": "1.0",
         "template_id": "template-abc",
-        "template_name": "Ubuntu Server"
-      },
-      "course": {
-        "id": "course-789",
-        "name": "Cloud Computing Lab",
-        "lecturer_id": 1
+        "template_name": "PostgreSQL Group DB"
       },
       "instances": [
         {
