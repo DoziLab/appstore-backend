@@ -541,6 +541,8 @@ def delete_deployment(self, deployment_id: str) -> dict:
         if deployment.openstack_stack_id:
             try:
                 # Extract owner ID from deployment_parameters
+                if not deployment.deployment_parameters:
+                    raise ValueError("Deployment parameters are missing")
                 params = json.loads(deployment.deployment_parameters)
                 teacher_info = params.get("teacher", {})
                 teacher_keycloak_id = teacher_info.get("id")
@@ -685,6 +687,11 @@ def restart_deployment(self, deployment_id: str) -> dict:
             return {"status": "failed", "error": error_msg}
         
         # Get OpenStack project credentials from deployment owner
+        if not deployment.deployment_parameters:
+            error_msg = "Deployment parameters are missing"
+            logger.error(f"[{deployment_id}] {error_msg}")
+            repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            return {"status": "failed", "error": error_msg}
         params = json.loads(deployment.deployment_parameters)
         teacher_info = params.get("teacher", {})
         teacher_keycloak_id = teacher_info.get("id")

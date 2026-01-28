@@ -6,7 +6,7 @@ from src.core.exceptions import NotFoundException
 from src.models.user import UserRole, User
 from src.core.dependencies import DBSession
 from src.core.response_builder import ResponseBuilder
-from src.core.dependencies import DBSession, RequestID, Pagination, CurrentUser, require_roles
+from src.core.dependencies import RequestID, Pagination, CurrentUser, require_roles
 from src.repositories.deployment_repository import DeploymentRepository
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
 from src.schemas.deployment import DeploymentResponse, DeploymentCreate
@@ -17,7 +17,6 @@ from src.schemas.deployment import DeploymentLogResponse
 from src.tasks.deploy_tasks import delete_deployment as delete_deployment_task
 from src.tasks.deploy_tasks import restart_deployment as restart_deployment_task
 from src.models.deployment import DeploymentStatus, Deployment
-from src.models.course import Course
 from src.models.template_version import TemplateVersion
 
 router = APIRouter(
@@ -41,6 +40,8 @@ def get_deployment_owner_id(deployment: Deployment, db) -> str:
         HTTPException: If teacher information is missing or user not found
     """
     try:
+        if not deployment.deployment_parameters:
+            raise ValueError("Deployment parameters are missing")
         params = json.loads(deployment.deployment_parameters)
         teacher_info = params.get("teacher", {})
         teacher_keycloak_id = teacher_info.get("id")
@@ -97,10 +98,6 @@ async def list_deployments(
     
     Returns paginated results with total count.
     """
-    
-    # Check if user is admin
-    user_roles = user.get("roles", [])
-    is_admin = "admin" in [role.lower() for role in user_roles]
     
     # Build query: admins get all deployments, lecturers only their own
     # Note: Since we removed Course FK, we can't filter by lecturer anymore
@@ -244,8 +241,6 @@ async def get_deployment(
     # Check authorization: Lecturers can only see their own deployments
     # Note: Since we removed Course FK, authorization is simplified for now
     # Future: Check via openstack_project relationship
-    user_roles = user.get("roles", [])
-    is_admin = "admin" in [role.lower() for role in user_roles]
     
     # Build response with deployment details
     deployment_dict = DeploymentResponse.model_validate(deployment).model_dump(mode="json")

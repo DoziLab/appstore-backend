@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from src.models.course import Course
 from src.repositories.course_repository import CourseRepository
 from src.schemas.course import CourseCreate, CourseUpdate
-from src.core.exceptions import NotFoundException, ForbiddenException
+from src.core.exceptions import NotFoundException
 
 
 class CourseService:
@@ -122,6 +122,6 @@ class CourseService:
         Raises:
             NotFoundException: If course not found
         """
-        course = self.get_course(course_id)
+        self.get_course(course_id)
         return self.course_repo.delete(course_id)
 

@@ -1,5 +1,4 @@
 import json
-import base64
 from typing import Optional, Union
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -8,7 +7,6 @@ from src.repositories.deployment_repository import DeploymentRepository
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
 from src.services.deployment_log_service import DeploymentLogService
 from src.services.openstack_heat_service import HeatStackService
-from src.services.template_user_management_service import TemplateUserManagementService
 from src.schemas.deployment import DeploymentCreate
 from src.models.deployment import Deployment, DeploymentStatus
 from src.models.deployment_log import DeploymentLogEventType, DeploymentLogLevel

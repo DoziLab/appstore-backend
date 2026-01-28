@@ -7,7 +7,7 @@ from fastapi import APIRouter, status, Query, Depends
 from src.core.response_builder import ResponseBuilder
 from src.core.dependencies import DBSession, RequestID, Pagination, CurrentUser
 from src.core.auth import require_roles
-from src.core.exceptions import NotFoundException, ForbiddenException
+from src.core.exceptions import NotFoundException
 from src.schemas.course import CourseCreate, CourseUpdate, CourseResponse, CourseGroupCreate, CourseGroupResponse, CourseMemberResponse, GroupMemberAdd
 from src.services.course_service import CourseService
 from src.models.user import UserRole
@@ -172,7 +172,7 @@ async def list_course_members(
     service = CourseService(db)
     
     # Verify course exists
-    course = service.get_course(course_id)
+    service.get_course(course_id)
     
     # Get course members with user information
     members = (
@@ -213,7 +213,7 @@ async def list_course_groups(
     service = CourseService(db)
     
     # Verify course exists
-    course = service.get_course(course_id)
+    service.get_course(course_id)
     
     # Get groups for this course
     groups = db.query(CourseGroup).filter(CourseGroup.course_id == str(course_id)).order_by(CourseGroup.created_at.asc()).all()
@@ -250,7 +250,7 @@ async def create_course_group(
     service = CourseService(db)
     
     # Verify course exists
-    course = service.get_course(course_id)
+    service.get_course(course_id)
     
     # Create the group
     group = CourseGroup(
@@ -286,7 +286,7 @@ async def list_group_members(
     service = CourseService(db)
     
     # Verify course exists
-    course = service.get_course(course_id)
+    service.get_course(course_id)
     
     # Verify group exists and belongs to course
     group = db.query(CourseGroup).filter(
@@ -352,7 +352,7 @@ async def add_group_members(
     service = CourseService(db)
     
     # Verify course exists
-    course = service.get_course(course_id)
+    service.get_course(course_id)
     
     # Verify group exists and belongs to course
     group = db.query(CourseGroup).filter(
