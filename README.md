@@ -35,8 +35,9 @@ This starts:
 - **PostgreSQL** at localhost:5432
 - **Redis** at localhost:6379
 - **Celery Worker** for async tasks
+- **Prometheus** at http://localhost:9090 (metrics)
 - **Loki** at localhost:3100 (log aggregation)
-- **Grafana** at http://localhost:3000 (monitoring dashboards)
+- **Grafana** at http://localhost:8888 (monitoring dashboards)
 - **Promtail** (log collection)
 
 ### 4. Verify Installation
@@ -90,4 +91,4 @@ docker compose down -v
 
 ## Monitoring & Observability
 
-Access Grafana at http://localhost:3000
+Access Grafana at http://localhost:8888
