@@ -15,7 +15,7 @@ module "vm" {
   # floating_ip_pool when a routable pool is available.
   assign_floating_ip = false
 
-  security_groups = ["default", "ssh", "http-https"]
+  security_groups = ["default", "appstore-sg"]
 
   # Container storage on a separate Cinder volume
 
