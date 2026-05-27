@@ -25,12 +25,12 @@ Expected Template Structures (per stack):
               "group": 1,
               "database_name": "db_g01",
               "db_user": "grp1",
-              "password": "Grp1DbPw_2026!"
+              "password": "Grp1Db-azure-tiger-42"
             }
           ],
           "admin_credentials": {
             "db_user": "teacher",
-            "password": "TeacherDbPw_2026!"
+            "password": "TeacherDb-mango-cobalt-91"
           }
         }
       ]
@@ -43,12 +43,12 @@ Expected Template Structures (per stack):
       "course_label": "ubuntu-kurs",
       "instance": {
         "credentials": [
-          { "username": "gruppe-1", "password": "Grp2026!grupp" },
-          { "username": "gruppe-2", "password": "Grp2026!grupp" }
+          { "username": "gruppe-1", "password": "Grp1-azure-tiger-42" },
+          { "username": "gruppe-2", "password": "Grp2-mellow-raven-07" }
         ],
         "admin_credentials": {
           "username": "prof-berg",
-          "password": "Tch2026!prof-"
+          "password": "Teacher-witty-cedar-58"
         }
       },
       "applications": []
@@ -77,6 +77,7 @@ Usage Example:
 """
 from typing import Any
 from src.schemas.deployment import StackAssignment, TeacherInfo
+from src.utils.secure_password import generate_memorable_password
 
 
 class TemplateUserManagementService:
@@ -149,29 +150,25 @@ class TemplateUserManagementService:
                 "group": group_idx,
                 "database_name": f"db_g{group_idx:02d}",
                 "db_user": f"grp{group_idx}",
-                "password": TemplateUserManagementService._generate_password(
-                    f"Grp{group_idx}Db"
-                )
+                "password": generate_memorable_password(f"Grp{group_idx}Db")
             })
-            
+
             # pgAdmin credentials per group
             pgadmin_credentials.append({
                 "group": group_idx,
                 "email": f"grp{group_idx}@{course_label_to_domain(stack_assignment.groups[0].group_name if stack_assignment.groups else 'course')}.de",
-                "password": TemplateUserManagementService._generate_password(
-                    f"Grp{group_idx}Pg"
-                )
+                "password": generate_memorable_password(f"Grp{group_idx}Pg")
             })
-        
+
         # Teacher admin credentials
         postgres_admin = {
             "db_user": "teacher",
-            "password": TemplateUserManagementService._generate_password("TeacherDb")
+            "password": generate_memorable_password("TeacherDb")
         }
-        
+
         pgadmin_admin = {
             "email": f"teacher@{course_label_to_domain(teacher.username)}.de",
-            "password": TemplateUserManagementService._generate_password("TeacherPg")
+            "password": generate_memorable_password("TeacherPg")
         }
         
         return [
@@ -195,34 +192,31 @@ class TemplateUserManagementService:
         teacher: TeacherInfo
     ) -> dict[str, Any]:
         """Generate instance data for multistudent-ubuntu template.
-        
+
         This template expects credentials directly in the instance object,
         not nested in applications. Each GROUP gets one shared VM account.
-        
-        Password format: Grp2026!{username[:5]} (min 12 chars, e.g., "Grp2026!dozil")
-        Meets requirements: ≥12 chars, 1 uppercase, 1 lowercase, 1 digit, 1 special char
-        
+
         Returns:
             Dictionary with credentials (one per group) and admin_credentials
         """
         credentials = []
-        
+
         # One credential per group (shared account for all students in group)
         for group in stack_assignment.groups:
             # Sanitize group name for Unix username (lowercase, alphanumeric + dash/underscore)
             unix_username = sanitize_unix_username(group.group_name)
             credentials.append({
                 "username": unix_username,
-                "password": f"Grp2026!{unix_username[:5]}"
+                "password": generate_memorable_password(f"Grp{group.group_index}")
             })
-        
+
         # Teacher admin account
         unix_teacher = sanitize_unix_username(teacher.username)
         admin_credentials = {
             "username": unix_teacher,
-            "password": f"Tch2026!{unix_teacher[:5]}"
+            "password": generate_memorable_password("Teacher")
         }
-        
+
         return {
             "credentials": credentials,
             "admin_credentials": admin_credentials
@@ -247,7 +241,7 @@ class TemplateUserManagementService:
                     "email": student.email,
                     "first_name": student.first_name,
                     "last_name": student.last_name,
-                    "suggested_password": TemplateUserManagementService._generate_password(
+                    "suggested_password": generate_memorable_password(
                         f"{student.first_name}{student.last_name}"
                     )
                 }
@@ -271,26 +265,12 @@ class TemplateUserManagementService:
                     "email": teacher.email,
                     "first_name": teacher.first_name,
                     "last_name": teacher.last_name,
-                    "suggested_password": TemplateUserManagementService._generate_password(
+                    "suggested_password": generate_memorable_password(
                         f"{teacher.first_name}{teacher.last_name}"
                     )
                 }
             }
         ]
-    
-    @staticmethod
-    def _generate_password(prefix: str) -> str:
-        """Generate a secure password with prefix.
-        
-        Format: Prefix_Pw_2026!
-        
-        Args:
-            prefix: Prefix for the password (e.g., "TeacherDb", "Grp1Pg", "MaxMustermann")
-            
-        Returns:
-            Generated password string
-        """
-        return f"{prefix}Pw_2026!"
 
 
 def sanitize_unix_username(name: str) -> str:

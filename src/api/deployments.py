@@ -13,10 +13,16 @@ from src.schemas.deployment import DeploymentResponse, DeploymentCreate
 from src.services.deployment_service import DeploymentService
 from src.services.deployment_log_service import DeploymentLogService
 from src.services.openstack_heat_service import HeatStackService
-from src.schemas.deployment import DeploymentLogResponse
+from src.schemas.deployment import (
+    DeploymentLogResponse,
+    DeploymentCredentialEntry,
+    DeploymentInstanceCredentials,
+    DeploymentCredentialsResponse,
+)
 from src.tasks.deploy_tasks import delete_deployment as delete_deployment_task
 from src.tasks.deploy_tasks import restart_deployment as restart_deployment_task
 from src.models.deployment import DeploymentStatus, Deployment
+from src.models.deployment_instance import DeploymentInstance
 from src.models.template_version import TemplateVersion
 
 router = APIRouter(
@@ -327,6 +333,70 @@ async def get_deployment_logs(
         data=[DeploymentLogResponse.model_validate(log) for log in logs],
         message=f"Retrieved {len(logs)} log entries for deployment",
         request_id=request_id
+    )
+
+
+@router.get("/{deployment_id}/credentials", response_model=dict)
+async def get_deployment_credentials(
+    deployment_id: str,
+    db: DBSession,
+    request_id: RequestID,
+    user: CurrentUser,
+):
+    """Return generated user credentials for a deployment.
+
+    Accessible to the lecturer who owns the deployment or any admin. Passwords
+    are decrypted on read by the EncryptedString TypeDecorator on the model.
+    """
+    deployment_repo = DeploymentRepository(db)
+    deployment = deployment_repo.get_by_id(deployment_id)
+    if not deployment:
+        raise NotFoundException(f"Deployment with ID {deployment_id} not found")
+
+    user_roles = user.get("roles", [])
+    is_admin = "admin" in [role.lower() for role in user_roles]
+    if not is_admin:
+        owner_id = get_deployment_owner_id(deployment, db)
+        if user["user_id"] != owner_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to access this deployment"
+            )
+
+    instances = (
+        db.query(DeploymentInstance)
+        .filter(DeploymentInstance.deployment_id == deployment_id)
+        .all()
+    )
+
+    instance_payloads = [
+        DeploymentInstanceCredentials(
+            instance_id=instance.id,
+            vm_name=instance.vm_name,
+            openstack_stack_id=instance.openstack_server_id,
+            accesses=[
+                DeploymentCredentialEntry(
+                    access_type=access.access_type.value,
+                    username=access.username,
+                    password=access.password,
+                    connection_url=access.connection_url,
+                    port=access.port,
+                )
+                for access in instance.access_methods
+            ],
+        )
+        for instance in instances
+    ]
+
+    payload = DeploymentCredentialsResponse(
+        deployment_id=deployment_id,
+        instances=instance_payloads,
+    )
+
+    return ResponseBuilder.success(
+        data=payload.model_dump(),
+        message=f"Retrieved credentials for {len(instance_payloads)} instance(s)",
+        request_id=request_id,
     )
 
 

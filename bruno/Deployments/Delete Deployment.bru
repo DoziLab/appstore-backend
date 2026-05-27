@@ -10,12 +10,16 @@ delete {
   auth: bearer
 }
 
+params:path {
+  deployment_id: 
+}
+
 auth:bearer {
   token: {{access_token}}
 }
 
-params:path {
-  deployment_id: 
+vars:pre-request {
+  deployment_id: 0fc73e47-99b7-4eb9-8bb1-de27de03297e
 }
 
 docs {

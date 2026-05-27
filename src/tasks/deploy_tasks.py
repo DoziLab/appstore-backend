@@ -12,6 +12,7 @@ from src.repositories.deployment_log_repository import DeploymentLogRepository
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
 from src.services.template_version_file_service import TemplateVersionFileService
 from src.services.deployment_log_service import DeploymentLogService
+from src.services.deployment_credential_service import DeploymentCredentialService
 from src.services.openstack_heat_service import HeatStackService
 
 logger = logging.getLogger(__name__)
@@ -236,13 +237,11 @@ def deploy_stack(self, deployment_id: str) -> dict:
                     teacher=teacher
                 )
 
-                print(f"user_json_data: {user_json_data}")
                 # Base64-encode JSON to avoid YAML parsing issues when inserted via str_replace
                 # Cloud-init will decode it back to JSON
                 import base64
                 user_json_string = json.dumps(user_json_data, ensure_ascii=False)
                 user_json_b64 = base64.b64encode(user_json_string.encode('utf-8')).decode('ascii')
-                print(f"user_json_b64: {user_json_b64}")
                 logger.debug(f"Generated user_json for stack {idx}: {len(user_json_string)} chars, {len(user_json_b64)} chars base64")
                 
                 # Merge base parameters with stack-specific user_json (base64-encoded)
@@ -302,6 +301,26 @@ def deploy_stack(self, deployment_id: str) -> dict:
                         "status": stack_result['status'],
                     }
                 )
+
+                try:
+                    DeploymentCredentialService(db).persist_credentials_for_stack(
+                        deployment_id=deployment_id,
+                        stack_name=stack_name,
+                        openstack_stack_id=stack_id,
+                        user_json=user_json_data,
+                    )
+                except Exception as cred_error:
+                    # Best-effort: a failure to record credentials must not roll back the
+                    # stack itself. Surface the error in the deployment log so the lecturer
+                    # knows credentials need to be retrieved another way.
+                    logger.error(f"Failed to persist credentials for stack {idx}: {cred_error}", exc_info=True)
+                    log_service.log(
+                        deployment_id=deployment_id,
+                        event_type=DeploymentLogEventType.FAILED,
+                        message=f"Stack {idx} created but credential persistence failed",
+                        level=DeploymentLogLevel.ERROR,
+                        details={"stack_index": idx, "error": str(cred_error)}
+                    )
                 
             except Exception as stack_error:
                 error_msg = f"Failed to create Heat stack {idx}: {str(stack_error)}"
