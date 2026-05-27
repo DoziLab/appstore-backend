@@ -94,3 +94,20 @@ def test_postgres_passwords_are_random_per_call():
     first_pg = [c["password"] for c in first["applications"][0]["credentials"]]
     second_pg = [c["password"] for c in second["applications"][0]["credentials"]]
     assert first_pg != second_pg
+
+
+def test_pgadmin_emails_use_fixed_dozi_local_host():
+    """All pgAdmin emails must end with @dozi.local — no leaking of group/teacher names into the email host."""
+    stack = _make_stack(group_count=2)
+    teacher = _make_teacher()
+
+    payload = TemplateUserManagementService.generate_user_json_for_stack(
+        template_name="postgres-group-db",
+        course_label="course-x",
+        stack_assignment=stack,
+        teacher=teacher,
+    )
+    pgadmin_app = next(app for app in payload["applications"] if app["name"] == "pgadmin")
+    for cred in pgadmin_app["credentials"]:
+        assert cred["email"].endswith("@dozi.local"), cred["email"]
+    assert pgadmin_app["admin_credentials"]["email"] == "teacher@dozi.local"

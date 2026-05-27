@@ -156,7 +156,7 @@ class TemplateUserManagementService:
             # pgAdmin credentials per group
             pgadmin_credentials.append({
                 "group": group_idx,
-                "email": f"grp{group_idx}@{course_label_to_domain(stack_assignment.groups[0].group_name if stack_assignment.groups else 'course')}.de",
+                "email": f"grp{group_idx}@dozi.local",
                 "password": generate_memorable_password(f"Grp{group_idx}Pg")
             })
 
@@ -167,7 +167,7 @@ class TemplateUserManagementService:
         }
 
         pgadmin_admin = {
-            "email": f"teacher@{course_label_to_domain(teacher.username)}.de",
+            "email": "teacher@dozi.local",
             "password": generate_memorable_password("TeacherPg")
         }
         
@@ -309,17 +309,3 @@ def sanitize_unix_username(name: str) -> str:
     
     # Truncate to max 32 chars (Unix username limit)
     return username[:32]
-
-
-def course_label_to_domain(label: str) -> str:
-    """Convert course label to valid domain name.
-    
-    Args:
-        label: Course or username label
-        
-    Returns:
-        Sanitized domain-safe string
-    """
-    # Remove special chars, keep alphanumeric and dash
-    domain = ''.join(c if c.isalnum() or c == '-' else '' for c in label.lower())
-    return domain or "course"
