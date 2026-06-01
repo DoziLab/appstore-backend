@@ -14,6 +14,10 @@ auth:bearer {
   token: {{access_token}}
 }
 
+vars:pre-request {
+  deployment_id: 8a986b4f-0b39-4c98-85d1-e7f8784ca34d
+}
+
 script:post-response {
   if (res.status === 200) {
     const logs = res.body.data;

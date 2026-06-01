@@ -470,12 +470,12 @@ def test_get_deployment_as_owner(mock_repo_class):
     # Mock instances
     mock_instance = MagicMock()
     mock_instance.id = "instance-123"
-    mock_instance.instance_name = "vm-1"
-    mock_instance.openstack_instance_id = "os-instance-456"
+    mock_instance.vm_name = "vm-1"
+    mock_instance.openstack_server_id = "os-instance-456"
     mock_instance.status = MagicMock()
     mock_instance.status.value = "ACTIVE"
     mock_instance.ip_address = "192.168.1.10"
-    mock_instance.access_urls_json = '{"ssh": "ssh://192.168.1.10"}'
+    mock_instance.access_methods = []
     mock_instance.created_at = "2024-11-27T10:00:00"
     mock_instance.updated_at = "2024-11-27T10:00:00"
     mock_deployment.instances = [mock_instance]

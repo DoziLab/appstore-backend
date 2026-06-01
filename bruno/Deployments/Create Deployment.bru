@@ -131,15 +131,14 @@ docs {
   **Example Heat Parameters (PostgreSQL Group DB):**
   ```json
   {
+    "stack_label": "my-postgres",
     "image": "Ubuntu 22.04 2025-01",
     "flavor": "gp1.small",
+    "volume_size": 16,
     "network": "NAT",
     "external_network": "DHBW",
     "ssh_cidr": "141.72.0.0/16",
     "web_cidr": "141.72.0.0/16"
-  }
-    "db_password": "securepassword123",
-    "postgres_version": 14
   }
   ```
   

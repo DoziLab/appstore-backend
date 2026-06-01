@@ -88,50 +88,54 @@ class TemplateUserManagementService:
         template_name: str,
         course_label: str,
         stack_assignment: StackAssignment,
-        teacher: TeacherInfo
+        teacher: TeacherInfo,
+        min_password_length: int = 12,
     ) -> dict[str, Any]:
         """Generate user_json for a SINGLE Heat stack.
-        
+
         This creates the structure that templates expect. Different templates
         get different applications based on their needs.
-        
+
         Args:
             template_name: Name of the template (e.g., "postgres-group-db")
             course_label: Name/label for the course (displayed in templates)
             stack_assignment: Single stack with its groups and students
             teacher: Teacher information
-            
+            min_password_length: Minimum length for generated passwords. Used to
+                satisfy per-deployment pwquality policies (Heat ``pw_min_length``).
+
         Returns:
             Dictionary matching the structure templates expect
         """
         # Normalize template name for comparison
         template_key = template_name.lower().replace("_", "-").replace(" ", "-")
-        
+
         # Route to template-specific generator
         # Currently only two template types: postgres or ubuntu
         if "postgres" in template_key:
             # PostgreSQL template: credentials in applications
             instance_data = {}
             applications = TemplateUserManagementService._generate_postgres_group_db_applications(
-                stack_assignment, teacher
+                stack_assignment, teacher, min_password_length
             )
         else:
             # Ubuntu/VM template: credentials in instance (default)
             instance_data = TemplateUserManagementService._generate_multistudent_ubuntu_instance(
-                stack_assignment, teacher
+                stack_assignment, teacher, min_password_length
             )
             applications = []
-        
+
         return {
             "course_label": course_label,
             "instance": instance_data,
             "applications": applications
         }
-    
+
     @staticmethod
     def _generate_postgres_group_db_applications(
         stack_assignment: StackAssignment,
-        teacher: TeacherInfo
+        teacher: TeacherInfo,
+        min_password_length: int = 12,
     ) -> list[dict[str, Any]]:
         """Generate applications for postgres-group-db template.
         
@@ -150,25 +154,25 @@ class TemplateUserManagementService:
                 "group": group_idx,
                 "database_name": f"db_g{group_idx:02d}",
                 "db_user": f"grp{group_idx}",
-                "password": generate_memorable_password(f"Grp{group_idx}Db")
+                "password": generate_memorable_password(f"Grp{group_idx}Db", min_length=min_password_length)
             })
 
             # pgAdmin credentials per group
             pgadmin_credentials.append({
                 "group": group_idx,
                 "email": f"grp{group_idx}@dozi.local",
-                "password": generate_memorable_password(f"Grp{group_idx}Pg")
+                "password": generate_memorable_password(f"Grp{group_idx}Pg", min_length=min_password_length)
             })
 
         # Teacher admin credentials
         postgres_admin = {
             "db_user": "teacher",
-            "password": generate_memorable_password("TeacherDb")
+            "password": generate_memorable_password("TeacherDb", min_length=min_password_length)
         }
 
         pgadmin_admin = {
             "email": "teacher@dozi.local",
-            "password": generate_memorable_password("TeacherPg")
+            "password": generate_memorable_password("TeacherPg", min_length=min_password_length)
         }
         
         return [
@@ -189,7 +193,8 @@ class TemplateUserManagementService:
     @staticmethod
     def _generate_multistudent_ubuntu_instance(
         stack_assignment: StackAssignment,
-        teacher: TeacherInfo
+        teacher: TeacherInfo,
+        min_password_length: int = 12,
     ) -> dict[str, Any]:
         """Generate instance data for multistudent-ubuntu template.
 
@@ -207,14 +212,14 @@ class TemplateUserManagementService:
             unix_username = sanitize_unix_username(group.group_name)
             credentials.append({
                 "username": unix_username,
-                "password": generate_memorable_password(f"Grp{group.group_index}")
+                "password": generate_memorable_password(f"Grp{group.group_index}", min_length=min_password_length)
             })
 
         # Teacher admin account
         unix_teacher = sanitize_unix_username(teacher.username)
         admin_credentials = {
             "username": unix_teacher,
-            "password": generate_memorable_password("Teacher")
+            "password": generate_memorable_password("Teacher", min_length=min_password_length)
         }
 
         return {

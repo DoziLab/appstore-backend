@@ -40,19 +40,37 @@ def _random_suffix() -> str:
     return f"{adjective}-{noun}-{number:02d}"
 
 
-def generate_memorable_password(prefix: str) -> str:
+def generate_memorable_password(prefix: str, *, min_length: int = 12) -> str:
     """Generate a memorable but cryptographically random password.
 
-    The result is ``{prefix}-{adjective}-{noun}-{NN}``. The adjective and noun
-    come from short curated wordlists; the trailing number is two random digits.
+    The base format is ``{prefix}-{adjective}-{noun}-{NN}``. If the result is
+    shorter than ``min_length``, additional ``-{noun}`` tokens are inserted
+    before the trailing 2-digit number until the threshold is met. This keeps
+    the recognizable prefix at the start and the numeric token at the end,
+    while letting the password grow long enough for strict pwquality policies
+    (e.g. ``pw_min_length=30`` configured per Heat parameter).
+
+    The adjective and noun come from short curated wordlists; the trailing
+    number is two random digits.
 
     Args:
         prefix: Stable, human-readable prefix that ties the password to its
             owner (e.g. ``"Grp1"``, ``"Teacher"``). Not validated; the caller is
             responsible for keeping it short and printable.
+        min_length: Minimum length of the generated password. The result is
+            guaranteed to be at least this many characters; in practice it may
+            be a few characters longer because tokens are inserted whole.
 
     Returns:
         A password string guaranteed to be unique with high probability across
         deployments and impossible to guess from the prefix alone.
     """
-    return f"{prefix}-{_random_suffix()}"
+    adjective = secrets.choice(_ADJECTIVES)
+    noun = secrets.choice(_NOUNS)
+    number = f"{secrets.randbelow(100):02d}"
+
+    parts: list[str] = [prefix, adjective, noun]
+    while len("-".join(parts)) + 1 + len(number) < min_length:
+        parts.append(secrets.choice(_NOUNS))
+    parts.append(number)
+    return "-".join(parts)

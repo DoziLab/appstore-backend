@@ -263,11 +263,21 @@ async def get_deployment(
     deployment_dict["instances"] = [
         {
             "id": str(instance.id),
-            "instance_name": instance.instance_name,
-            "openstack_instance_id": instance.openstack_instance_id,
+            "instance_name": instance.vm_name,
+            "openstack_instance_id": instance.openstack_server_id,
             "status": instance.status.value if instance.status else None,
             "ip_address": instance.ip_address,
-            "access_urls": instance.access_urls_json,
+            "access_urls": [
+                {
+                    "id": str(access.id),
+                    "access_type": access.access_type.value if access.access_type else None,
+                    "connection_url": access.connection_url,
+                    "username": access.username,
+                    "port": access.port,
+                    "is_active": access.is_active,
+                }
+                for access in (instance.access_methods or [])
+            ],
             "created_at": instance.created_at.isoformat() if hasattr(instance.created_at, 'isoformat') else instance.created_at,
             "updated_at": instance.updated_at.isoformat() if hasattr(instance.updated_at, 'isoformat') else instance.updated_at,
         }

@@ -230,11 +230,16 @@ def deploy_stack(self, deployment_id: str) -> dict:
                 teacher = TeacherInfo(**teacher_info)
                 
                 # Generate user_json for THIS specific stack
+                # Pass pw_min_length from heat_parameters so generated passwords
+                # satisfy the per-deployment pwquality policy that cloud-init enforces
+                # via PAM (chpasswd would otherwise reject overly short passwords).
+                min_pw = int(base_heat_parameters.get("pw_min_length", 12))
                 user_json_data = TemplateUserManagementService.generate_user_json_for_stack(
                     template_name=template_name,
                     course_label=deployment.name,
                     stack_assignment=stack_assignment,
-                    teacher=teacher
+                    teacher=teacher,
+                    min_password_length=min_pw,
                 )
 
                 # Base64-encode JSON to avoid YAML parsing issues when inserted via str_replace
