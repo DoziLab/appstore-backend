@@ -112,7 +112,7 @@ class HeatStackService:
             logger.debug(f"Stack parameters: {parameters}")
             
             # Create stack
-            stack = conn.orchestration.create_stack(**stack_params)
+            stack = conn.orchestration.create_stack(preview=False, **stack_params)
             
             logger.info(f"Heat stack created successfully: {stack.id}")
             

@@ -23,13 +23,16 @@ body:json {
       "stack_label": "multistudent",
       "image": "Ubuntu 22.04 2025-01",
       "flavor": "gp1.small",
+      "volume_size": 16,
+      "network": "NAT",
+      "external_network": "DHBW",
       "ssh_cidr": "141.72.0.0/16",
       "force_password_change": false,
       "workdir": "work",
-      "pw_min_length": 7,
-      "pw_require_digit": false,
-      "pw_require_upper": false,
-      "pw_require_special": false
+      "pw_min_length": 12,
+      "pw_require_digit": true,
+      "pw_require_upper": true,
+      "pw_require_special": true
     },
     "stack_assignments": [
       {
@@ -112,18 +115,22 @@ docs {
   required and optional parameters for the template. The backend automatically generates
   `user_json` and `admin_credentials` from stack_assignments and teacher data.
   
-  **Example Heat Parameters (PostgreSQL Group DB):**
+  **Example Heat Parameters (Multistudent Ubuntu):**
   ```json
   {
+    "stack_label": "multistudent",
     "image": "Ubuntu 22.04 2025-01",
     "flavor": "gp1.small",
+    "volume_size": 16,
     "network": "NAT",
     "external_network": "DHBW",
     "ssh_cidr": "141.72.0.0/16",
-    "web_cidr": "141.72.0.0/16"
-  }
-    "db_password": "securepassword123",
-    "postgres_version": 14
+    "force_password_change": true,
+    "workdir": "work",
+    "pw_min_length": 12,
+    "pw_require_digit": true,
+    "pw_require_upper": true,
+    "pw_require_special": true
   }
   ```
   

@@ -145,7 +145,7 @@ class DeploymentLogResponse(BaseModel):
     details: Optional[dict[str, Any]] = Field(None, description="Additional details as JSON")
     request_id: Optional[str] = Field(None, description="Request ID for tracing")
     created_at: datetime = Field(..., description="Log timestamp")
-    
+
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={
@@ -161,4 +161,29 @@ class DeploymentLogResponse(BaseModel):
             }
         }
     )
+
+
+class DeploymentCredentialEntry(BaseModel):
+    """One credential entry for a deployment instance."""
+    access_type: str = Field(..., description="Access type, e.g. ssh or database")
+    username: Optional[str] = Field(None, description="Account username")
+    password: Optional[str] = Field(None, description="Plaintext password (decrypted on read)")
+    connection_url: Optional[str] = Field(None, description="Connection URL if applicable")
+    port: Optional[int] = Field(None, description="Port number if applicable")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DeploymentInstanceCredentials(BaseModel):
+    """Credentials grouped by deployment instance (one per Heat stack)."""
+    instance_id: str = Field(..., description="Deployment instance ID")
+    vm_name: Optional[str] = Field(None, description="Stack name / VM name")
+    openstack_stack_id: Optional[str] = Field(None, description="OpenStack Heat stack ID")
+    accesses: list[DeploymentCredentialEntry] = Field(..., description="Credential entries for this instance")
+
+
+class DeploymentCredentialsResponse(BaseModel):
+    """Response payload for GET /deployments/{id}/credentials."""
+    deployment_id: str = Field(..., description="Deployment ID")
+    instances: list[DeploymentInstanceCredentials] = Field(..., description="Per-instance credential bundles")
 
