@@ -29,7 +29,15 @@ class Settings(BaseSettings):
     
     # Encryption key for secrets (Fernet key)
     encryption_key: str | None = None
-    
+
+    # GitHub App (used by /import-from-github and /auth/github/* endpoints)
+    # All optional at boot; the import endpoints raise a clear error if unset.
+    github_app_id: int | None = None
+    github_app_slug: str | None = None
+    github_app_private_key: str | None = None
+    github_app_state_secret: str | None = None
+    frontend_base_url: str = "http://localhost:5173"
+
     @property
     def database_url(self) -> str:
         """Build database URL from components."""

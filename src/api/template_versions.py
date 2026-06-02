@@ -9,7 +9,8 @@ from src.schemas.template_version import (
     TemplateVersionCreate,
     TemplateVersionUpdate,
     TemplateVersionResponse,
-    TemplateVersionWithFilesResponse
+    TemplateVersionWithFilesCreate,
+    TemplateVersionWithFilesResponse,
 )
 from src.services.template_version_service import TemplateVersionService
 from src.models.user import UserRole
@@ -30,27 +31,56 @@ async def create_version(
     current_user: CurrentUser,
 ):
     """Create a new template version.
-    
+
     Only template owners or admins can create versions.
     If set as active, automatically deactivates other versions of the same template.
-    
+
     Requires authentication. Permission checks enforce ownership or admin role.
     """
     service = TemplateVersionService(db)
-    
+
     is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
-    
+
     version = service.create_version(
         version_data,
         user_id=current_user["user_id"],
-        is_admin=is_admin
+        is_admin=is_admin,
+        user_roles=current_user.get("roles", []),
     )
-    
+
     version_response = TemplateVersionResponse.model_validate(version)
-    
+
     return ResponseBuilder.created(
         data=version_response.model_dump(mode="json"),
         message="Template version created successfully",
+        request_id=request_id,
+    )
+
+
+@router.post("/with-files", status_code=status.HTTP_201_CREATED, response_model=None)
+async def create_version_with_files(
+    payload: TemplateVersionWithFilesCreate,
+    db: DBSession,
+    request_id: RequestID,
+    current_user: CurrentUser,
+):
+    """Create a new template version together with all its files in one transaction.
+
+    Used by the "user edits a template in the UI -> save as new version" flow.
+    Optional `base_version_id` copies that version's files first; entries in
+    `files` overlay them by `file_path`. Owner-or-admin only. Approval defaults
+    to PENDING unless the user is an admin and the template is public.
+    """
+    service = TemplateVersionService(db)
+    version = service.create_version_with_files(
+        payload,
+        user_id=current_user["user_id"],
+        user_roles=current_user.get("roles", []),
+    )
+    version_response = TemplateVersionResponse.model_validate(version)
+    return ResponseBuilder.created(
+        data=version_response.model_dump(mode="json"),
+        message="Template version created with files",
         request_id=request_id,
     )
 
@@ -323,5 +353,55 @@ async def delete_version(
         user_id=current_user["user_id"],
         is_admin=is_admin
     )
-    
+
     return None
+
+
+@router.post(
+    "/{version_id}/approve",
+    response_model=None,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+async def approve_version(
+    version_id: UUID,
+    db: DBSession,
+    request_id: RequestID,
+    current_user: CurrentUser,
+):
+    """Approve a template version. Admin-only.
+
+    Sets approval_status=APPROVED and records approver + timestamp.
+    """
+    service = TemplateVersionService(db)
+    version = service.approve_version(str(version_id), admin_user_id=current_user["user_id"])
+    version_response = TemplateVersionResponse.model_validate(version)
+    return ResponseBuilder.success(
+        data=version_response.model_dump(mode="json"),
+        message="Template version approved successfully",
+        request_id=request_id,
+    )
+
+
+@router.post(
+    "/{version_id}/reject",
+    response_model=None,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+async def reject_version(
+    version_id: UUID,
+    db: DBSession,
+    request_id: RequestID,
+    current_user: CurrentUser,
+):
+    """Reject a template version. Admin-only.
+
+    Sets approval_status=REJECTED and records reviewer + timestamp.
+    """
+    service = TemplateVersionService(db)
+    version = service.reject_version(str(version_id), admin_user_id=current_user["user_id"])
+    version_response = TemplateVersionResponse.model_validate(version)
+    return ResponseBuilder.success(
+        data=version_response.model_dump(mode="json"),
+        message="Template version rejected successfully",
+        request_id=request_id,
+    )

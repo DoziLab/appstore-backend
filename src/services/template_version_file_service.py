@@ -7,7 +7,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from src.models.template_version_file import TemplateVersionFile
-from src.models.template import Template, TemplateVisibility, TemplateApprovalStatus
+from src.models.template import Template, TemplateVisibility
 from src.repositories.template_version_file_repository import TemplateVersionFileRepository
 from src.repositories.template_version_repository import TemplateVersionRepository
 from src.repositories.template_repository import TemplateRepository
@@ -39,37 +39,35 @@ class TemplateVersionFileService:
         is_admin: bool = False
     ) -> bool:
         """Check if a user can access a template.
-        
-        Access rules:
+
+        Access rules (post per-version-approval refactor):
         - Admins can access any template
-        - Lecturers can access:
-          1. Their own private templates
-          2. Any approved public templates
-        
+        - Owners can access their own templates
+        - Other users can access PUBLIC templates only if at least one version
+          has been APPROVED. The per-version approval gate is also enforced at
+          the version level; this is the template-level safety net.
+
         Args:
             template: Template to check access for
             user_id: ID of the requesting user
             is_admin: Whether the requesting user is an admin
-            
+
         Returns:
             True if user can access the template, False otherwise
         """
         if is_admin:
             return True
-        
+
         if not user_id:
             return False
-        
-        # Owner can access their own templates
+
         if template.owner_id == user_id:
             return True
-        
-        # Non-owners can only access approved public templates
-        if (template.visibility == TemplateVisibility.PUBLIC and
-            template.approval_status == TemplateApprovalStatus.APPROVED):
-            return True
-        
-        return False
+
+        if template.visibility != TemplateVisibility.PUBLIC:
+            return False
+
+        return self.template_repo.has_approved_version(template.id)
 
     def _check_template_access(
         self,

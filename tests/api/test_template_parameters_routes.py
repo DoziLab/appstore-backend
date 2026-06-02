@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 from src.main import app
 from src.core.database import Base
 from src.core.dependencies import get_db, get_current_user
-from src.models.template import Template, TemplateVisibility, TemplateApprovalStatus
+from src.models.template import Template, TemplateVisibility
 from src.models.template_version import TemplateVersion
 from src.models.template_version_file import TemplateVersionFile, FileType
 from src.models.user import User
@@ -98,7 +98,6 @@ def sample_template(db_session, mock_user):
         owner_id=mock_user.id,
         repo_url="https://github.com/example/postgres-template",
         visibility=TemplateVisibility.PUBLIC,
-        approval_status=TemplateApprovalStatus.APPROVED,
     )
     db_session.add(template)
     db_session.commit()

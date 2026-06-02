@@ -2,10 +2,11 @@
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import or_
+from sqlalchemy import and_, exists, or_
 from sqlalchemy.orm import Session
 
-from src.models.template import Template, TemplateVisibility, TemplateApprovalStatus
+from src.models.template import Template, TemplateVisibility
+from src.models.template_version import TemplateVersion, TemplateVersionApprovalStatus
 from src.repositories.base_repository import BaseRepository
 
 
@@ -13,47 +14,54 @@ class TemplateRepository(BaseRepository[Template]):
     """Repository for Template database operations."""
 
     def __init__(self, db: Session):
-        """Initialize TemplateRepository with database session.
-        
-        Args:
-            db: SQLAlchemy database session
-        """
+        """Initialize TemplateRepository with database session."""
         super().__init__(Template, db)
+
+    @staticmethod
+    def _has_approved_version_clause():
+        """SQL EXISTS clause: template has at least one APPROVED version."""
+        return exists().where(
+            and_(
+                TemplateVersion.template_id == Template.id,
+                TemplateVersion.approval_status == TemplateVersionApprovalStatus.APPROVED,
+            )
+        )
+
+    def has_approved_version(self, template_id: str | UUID) -> bool:
+        """Return True if the template has at least one APPROVED version."""
+        return self.db.query(
+            self.db.query(TemplateVersion)
+            .filter(
+                TemplateVersion.template_id == str(template_id),
+                TemplateVersion.approval_status == TemplateVersionApprovalStatus.APPROVED,
+            )
+            .exists()
+        ).scalar()
 
     def get_all_filtered(
         self,
         skip: int = 0,
         limit: int = 100,
-        status: Optional[TemplateApprovalStatus] = None,
         visibility: Optional[TemplateVisibility] = None,
         owner_id: Optional[str] = None,
         search: Optional[str] = None,
+        visible_to_user_id: Optional[str] = None,
     ) -> tuple[list[Template], int]:
         """Get all templates with filters and pagination.
-        
-        Args:
-            skip: Number of records to skip (offset)
-            limit: Maximum number of records to return
-            status: Filter by approval status
-            visibility: Filter by visibility (private/public)
-            owner_id: Filter by owner ID
-            search: Search term for name/description
-            
-        Returns:
-            Tuple of (list of templates, total count)
+
+        When ``visible_to_user_id`` is set, the result is restricted to templates
+        the viewer is allowed to see: their own templates *or* public templates
+        that have at least one APPROVED version. Pass ``None`` for admins / when
+        the caller has already gated access elsewhere.
         """
         query = self.db.query(self.model)
-        
-        # Apply filters
-        if status:
-            query = query.filter(self.model.approval_status == status)
-        
+
         if visibility:
             query = query.filter(self.model.visibility == visibility)
-        
+
         if owner_id:
             query = query.filter(self.model.owner_id == owner_id)
-        
+
         if search:
             search_term = f"%{search}%"
             query = query.filter(
@@ -62,44 +70,24 @@ class TemplateRepository(BaseRepository[Template]):
                     self.model.description.ilike(search_term)
                 )
             )
-        
-        # Get total count before pagination
+
+        if visible_to_user_id is not None:
+            query = query.filter(
+                or_(
+                    self.model.owner_id == visible_to_user_id,
+                    and_(
+                        self.model.visibility == TemplateVisibility.PUBLIC,
+                        self._has_approved_version_clause(),
+                    ),
+                )
+            )
+
         total = query.count()
-        
-        # Apply pagination
         templates = query.offset(skip).limit(limit).all()
-        
         return templates, total
 
     def get_by_owner(self, owner_id: str | UUID) -> list[Template]:
-        """Get all templates owned by a specific user.
-        
-        Args:
-            owner_id: ID of the template owner
-            
-        Returns:
-            List of templates owned by the user
-        """
+        """Get all templates owned by a specific user."""
         return self.db.query(self.model).filter(
             self.model.owner_id == str(owner_id)
         ).all()
-
-    def update_approval_status(
-        self,
-        template_id: str | UUID,
-        status: TemplateApprovalStatus
-    ) -> Optional[Template]:
-        """Update template approval status.
-        
-        Args:
-            template_id: ID of the template
-            status: New approval status
-            
-        Returns:
-            Updated template or None if not found
-        """
-        template = self.get_by_id(template_id)
-        if template:
-            uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
-            return self.update(uuid_id, approval_status=status)
-        return None

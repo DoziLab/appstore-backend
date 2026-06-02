@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 from src.main import app
 from src.core.database import Base
 from src.core.dependencies import get_db, get_current_user
-from src.models.template import Template, TemplateVisibility, TemplateApprovalStatus
+from src.models.template import Template, TemplateVisibility
 from src.models.template_version import TemplateVersion
 from src.models.template_version_file import TemplateVersionFile, FileType
 from src.models.user import User
@@ -100,7 +100,6 @@ def private_template(db_session, owner_user):
         owner_id=owner_user.id,
         repo_url="https://github.com/example/private-template",
         visibility=TemplateVisibility.PRIVATE,
-        approval_status=TemplateApprovalStatus.PENDING,
     )
     db_session.add(template)
     db_session.commit()
@@ -110,18 +109,29 @@ def private_template(db_session, owner_user):
 
 @pytest.fixture
 def public_approved_template(db_session, owner_user):
-    """Create a public approved template."""
+    """Create a public template with an APPROVED version."""
+    from src.models.template_version import TemplateVersionApprovalStatus
+
     template = Template(
         name="Public Template",
         description="A public template",
         owner_id=owner_user.id,
         repo_url="https://github.com/example/public-template",
         visibility=TemplateVisibility.PUBLIC,
-        approval_status=TemplateApprovalStatus.APPROVED,
     )
     db_session.add(template)
     db_session.commit()
     db_session.refresh(template)
+
+    version = TemplateVersion(
+        template_id=template.id,
+        version="1.0.0",
+        git_commit_sha="public-approved-sha",
+        is_active=True,
+        approval_status=TemplateVersionApprovalStatus.APPROVED,
+    )
+    db_session.add(version)
+    db_session.commit()
     return template
 
 

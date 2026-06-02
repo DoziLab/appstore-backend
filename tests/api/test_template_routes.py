@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 from src.main import app
 from src.core.database import Base
 from src.core.dependencies import get_db, get_current_user
-from src.models.template import Template, TemplateVisibility, TemplateApprovalStatus
+from src.models.template import Template, TemplateVisibility
 from src.models.user import User
 
 
@@ -99,7 +99,6 @@ def sample_template(db_session, mock_user):
         owner_id=mock_user.id,
         repo_url="https://github.com/example/test-template",
         visibility=TemplateVisibility.PUBLIC,
-        approval_status=TemplateApprovalStatus.APPROVED,
     )
     db_session.add(template)
     db_session.commit()
@@ -141,7 +140,6 @@ class TestListTemplates:
                 owner_id=mock_user.id,
                 repo_url=f"https://github.com/example/template-{i}",
                 visibility=TemplateVisibility.PUBLIC,
-                approval_status=TemplateApprovalStatus.APPROVED,
             )
             db_session.add(template)
         db_session.commit()
@@ -160,31 +158,6 @@ class TestListTemplates:
         data = response.json()
         assert len(data["data"]) == 5
         assert data["pagination"]["page"] == 2
-    
-    def test_filter_by_status(self, client, db_session, mock_user):
-        """Test filtering templates by approval status."""
-        # Create templates with different statuses
-        pending = Template(
-            name="Pending Template",
-            owner_id=mock_user.id,
-            repo_url="https://github.com/example/pending",
-            approval_status=TemplateApprovalStatus.PENDING,
-        )
-        approved = Template(
-            name="Approved Template",
-            owner_id=mock_user.id,
-            repo_url="https://github.com/example/approved",
-            approval_status=TemplateApprovalStatus.APPROVED,
-        )
-        db_session.add(pending)
-        db_session.add(approved)
-        db_session.commit()
-        
-        response = client.get("/api/v1/templates?status=approved")
-        assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert len(data["data"]) == 1
-        assert data["data"][0]["approval_status"] == "approved"
     
     def test_filter_by_visibility(self, client, db_session, mock_user):
         """Test filtering templates by visibility."""
@@ -282,7 +255,6 @@ class TestCreateTemplate:
         data = response.json()
         assert data["success"] is True
         assert data["data"]["name"] == "New Template"
-        assert data["data"]["approval_status"] == "pending"
         assert data["data"]["visibility"] == "private"
     
     def test_create_template_minimal_data(self, client, mock_user):

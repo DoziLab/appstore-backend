@@ -6,7 +6,7 @@ from uuid import uuid4
 from src.services.template_service import TemplateService
 from src.services.template_version_service import TemplateVersionService
 from src.services.template_version_file_service import TemplateVersionFileService
-from src.models.template import Template, TemplateVisibility, TemplateApprovalStatus
+from src.models.template import Template, TemplateVisibility
 from src.models.template_version import TemplateVersion
 from src.models.template_version_file import TemplateVersionFile
 from src.core.exceptions import ForbiddenException, NotFoundException
@@ -55,29 +55,26 @@ def private_template(owner_user_id):
     template.id = str(uuid4())
     template.owner_id = owner_user_id
     template.visibility = TemplateVisibility.PRIVATE
-    template.approval_status = TemplateApprovalStatus.PENDING
     return template
 
 
 @pytest.fixture
 def public_approved_template(owner_user_id):
-    """Create a public approved template."""
+    """Create a public template (approval lives on TemplateVersion now)."""
     template = Mock(spec=Template)
     template.id = str(uuid4())
     template.owner_id = owner_user_id
     template.visibility = TemplateVisibility.PUBLIC
-    template.approval_status = TemplateApprovalStatus.APPROVED
     return template
 
 
 @pytest.fixture
 def public_pending_template(owner_user_id):
-    """Create a public pending template."""
+    """Create a public template with no approved version yet."""
     template = Mock(spec=Template)
     template.id = str(uuid4())
     template.owner_id = owner_user_id
     template.visibility = TemplateVisibility.PUBLIC
-    template.approval_status = TemplateApprovalStatus.PENDING
     return template
 
 
@@ -111,7 +108,9 @@ class TestTemplateServiceAccessControl:
     def test_can_access_template_anyone_can_access_public_approved(
         self, template_service, public_approved_template, other_user_id
     ):
-        """Anyone can access public approved template."""
+        """Non-owner can access a public template that has an APPROVED version."""
+        template_service.template_repo = Mock()
+        template_service.template_repo.has_approved_version.return_value = True
         assert template_service._can_access_template(
             public_approved_template, user_id=other_user_id, is_admin=False
         )
@@ -119,7 +118,14 @@ class TestTemplateServiceAccessControl:
     def test_can_access_template_non_owner_cannot_access_public_pending(
         self, template_service, public_pending_template, other_user_id
     ):
-        """Non-owner cannot access public pending template."""
+        """Non-owner CANNOT access a public template with no approved version yet.
+
+        Safety-net: a public template only becomes visible to non-owners once
+        at least one version has been approved. Per-version gating still applies
+        on top of this in TemplateVersionService._can_access_version.
+        """
+        template_service.template_repo = Mock()
+        template_service.template_repo.has_approved_version.return_value = False
         assert not template_service._can_access_template(
             public_pending_template, user_id=other_user_id, is_admin=False
         )
@@ -190,29 +196,30 @@ class TestTemplateServiceAccessControl:
                 str(uuid4()), user_id=owner_user_id, is_admin=False
             )
 
-    def test_list_templates_filters_private_templates(
-        self, template_service, private_template, public_approved_template, owner_user_id, other_user_id
+    def test_list_templates_passes_user_id_for_non_admin(
+        self, template_service, public_approved_template, other_user_id
     ):
-        """List templates filters private templates for non-owners."""
+        """Non-admin list pushes the safety-net filter into SQL via visible_to_user_id."""
         template_service.template_repo = Mock()
         template_service.template_repo.get_all_filtered.return_value = (
-            [private_template, public_approved_template],
-            2
+            [public_approved_template],
+            1,
         )
 
-        # Non-owner should only see public approved template
         templates, total = template_service.list_templates(
             user_id=other_user_id, is_admin=False
         )
 
-        assert len(templates) == 1
-        assert templates[0] == public_approved_template
+        # Repo was asked to apply the safety-net filter for this user.
+        kwargs = template_service.template_repo.get_all_filtered.call_args.kwargs
+        assert kwargs["visible_to_user_id"] == other_user_id
+        assert templates == [public_approved_template]
         assert total == 1
 
     def test_list_templates_admin_sees_all(
         self, template_service, private_template, public_approved_template, other_user_id
     ):
-        """Admin sees all templates."""
+        """Admin bypasses the safety-net filter (visible_to_user_id is None)."""
         template_service.template_repo = Mock()
         template_service.template_repo.get_all_filtered.return_value = (
             [private_template, public_approved_template],
@@ -223,6 +230,8 @@ class TestTemplateServiceAccessControl:
             user_id=other_user_id, is_admin=True
         )
 
+        kwargs = template_service.template_repo.get_all_filtered.call_args.kwargs
+        assert kwargs["visible_to_user_id"] is None
         assert len(templates) == 2
         assert total == 2
 
