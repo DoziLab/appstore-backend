@@ -231,6 +231,16 @@ class TemplateVersionService:
                 "Cannot create a version with zero files. Provide `files` or a `base_version_id`."
             )
 
+        has_app_manifest = any(
+            f.get("file_type") == FileType.APP_MANIFEST.value
+            or f.get("file_name", "").lower() in ("app.yaml", "app.yml")
+            for f in merged.values()
+        )
+        if not has_app_manifest:
+            raise BadRequestException(
+                "Cannot create a version without an APP_MANIFEST (app.yaml/app.yml)."
+            )
+
         # Sanity check: at most one primary
         primary_count = sum(1 for f in merged.values() if f["is_primary"])
         if primary_count > 1:
