@@ -65,6 +65,7 @@ def upgrade() -> None:
         FROM templates t
         WHERE tv.template_id = t.id
           AND t.approval_status = 'APPROVED'
+        """
     )
 
     # templates: drop the legacy template-level approval column and its enum.

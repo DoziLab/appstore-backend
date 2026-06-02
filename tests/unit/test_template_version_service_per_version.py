@@ -235,7 +235,7 @@ class TestCreateVersionWithFiles:
         service.version_repo.get_by_commit_sha.return_value = None
 
         payload = self._payload(t.id, files=[
-            self._file("a.yaml", "a.yaml", is_primary=True),
+            self._file("app.yaml", "app.yaml", file_type="APP_MANIFEST", is_primary=True),
             self._file("b.yaml", "b.yaml", is_primary=True),
         ])
         with pytest.raises(BadRequestException, match="is_primary"):
