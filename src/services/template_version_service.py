@@ -297,6 +297,7 @@ class TemplateVersionService:
         version.approval_status = TemplateVersionApprovalStatus.APPROVED
         version.approved_by_id = admin_user_id
         version.approved_at = datetime.now(timezone.utc)
+        version.rejection_reason = None
         self.db.commit()
         self.db.refresh(version)
 
@@ -314,8 +315,12 @@ class TemplateVersionService:
         self,
         version_id: str | UUID,
         admin_user_id: str,
+        reason: Optional[str] = None,
     ) -> TemplateVersion:
-        """Admin-only: mark a pending version as rejected."""
+        """Admin-only: mark a pending version as rejected.
+
+        `reason` is optional free-text persisted on the version.
+        """
         version = self.version_repo.get_by_id(version_id)
         if not version:
             raise NotFoundException(f"Template version with ID {version_id} not found")
@@ -323,6 +328,7 @@ class TemplateVersionService:
         version.approval_status = TemplateVersionApprovalStatus.REJECTED
         version.approved_by_id = admin_user_id
         version.approved_at = datetime.now(timezone.utc)
+        version.rejection_reason = reason
         self.db.commit()
         self.db.refresh(version)
 
@@ -332,6 +338,7 @@ class TemplateVersionService:
                 "version_id": str(version.id),
                 "template_id": version.template_id,
                 "rejected_by": admin_user_id,
+                "has_reason": reason is not None,
             },
         )
         return version
@@ -487,6 +494,27 @@ class TemplateVersionService:
             raise NotFoundException(f"Template version with ID {version_id} not found after activation")
 
         return updated_version
+
+    def list_versions_by_approval_status(
+        self,
+        approval_status: TemplateVersionApprovalStatus,
+        skip: int = 0,
+        limit: int = 100,
+        template_id: Optional[str | UUID] = None,
+    ) -> tuple[list[tuple[TemplateVersion, Template]], int]:
+        """Admin approval queue: list versions filtered by approval status.
+
+        Bypasses the per-template/per-version access checks - callers must enforce
+        admin-only authorization before invoking this.
+
+        Returns `(rows, total)` where each row is `(version, template)`.
+        """
+        return self.version_repo.list_by_approval_status(
+            approval_status=approval_status,
+            skip=skip,
+            limit=limit,
+            template_id=template_id,
+        )
 
     def get_version_with_parameters(
         self,

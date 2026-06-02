@@ -4,7 +4,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import String, DateTime, Boolean, ForeignKey, Enum as SQLEnum
+from sqlalchemy import String, DateTime, Boolean, ForeignKey, Text, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
@@ -43,6 +43,10 @@ class TemplateVersion(Base):
         comment="Admin who approved/rejected this version",
     )
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(
+        Text, nullable=True,
+        comment="Optional admin-provided reason when approval_status == REJECTED",
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # Relationships

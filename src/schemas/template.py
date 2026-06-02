@@ -85,10 +85,13 @@ class TemplateResponse(BaseModel):
 
 
 class GithubImportNewTemplate(BaseModel):
-    """Body for `POST /templates/import-from-github` - creates Template + first Version."""
+    """Body for `POST /templates/import-from-github` - creates Template + first Version.
+
+    New templates are always created with `visibility=private` (matching
+    `POST /templates`). Visibility is admin-only and changed later via PATCH.
+    """
     name: str = Field(..., max_length=255)
     description: Optional[str] = None
-    visibility: str = Field(default="private", description="private or public")
     icon_url: Optional[str] = Field(None, max_length=500)
     github_url: str = Field(..., description=GITHUB_URL_DESCRIPTION, max_length=1000)
     app_yaml_path: Optional[str] = Field(
@@ -102,7 +105,6 @@ class GithubImportNewTemplate(BaseModel):
             "example": {
                 "name": "PostgreSQL Group DB",
                 "description": "Provision a Postgres VM",
-                "visibility": "public",
                 "github_url": "https://github.com/dozilab/templates",
                 "app_yaml_path": "postgres/app.yaml",
             }

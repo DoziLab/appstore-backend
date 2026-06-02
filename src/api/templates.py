@@ -207,10 +207,15 @@ async def import_template_from_github(
 ):
     """Create a new template plus its first version from a GitHub repository.
 
-    Requires the calling user to have a GitHub token connected via
-    `POST /users/me/github-token`. The endpoint resolves the repo's commit SHA,
-    fetches `app.yaml` and every file referenced under `artifacts:`, and persists
-    the result as a new Template + TemplateVersion + TemplateVersionFile rows.
+    The template is always created with `visibility=private` (matching
+    `POST /templates`); admins can promote to public later via PATCH. The first
+    version follows the standard per-version approval rules.
+
+    For private repos the calling user must have linked our GitHub App via
+    `POST /auth/github/install`. Public repos work without an installation
+    (subject to GitHub's 60/h unauthenticated rate limit). The endpoint
+    resolves the repo's commit SHA, fetches `app.yaml`, and persists every
+    file in the same folder as a new Template + TemplateVersion + files.
     """
     service = GithubImportService(db)
     template = service.import_to_new_template(
@@ -218,7 +223,6 @@ async def import_template_from_github(
         app_yaml_path=payload.app_yaml_path,
         name=payload.name,
         description=payload.description,
-        visibility=payload.visibility,
         icon_url=payload.icon_url,
         owner_user_id=current_user["user_id"],
         owner_user_roles=current_user.get("roles", []),
@@ -246,9 +250,10 @@ async def import_new_version_from_github(
 ):
     """Append a new version to an existing template, populated from GitHub.
 
-    Owner-or-admin only. Requires the calling user to have a GitHub token
-    connected. Approval defaults to PENDING unless the user is an admin and
-    the parent template is public, in which case the new version is auto-approved.
+    Owner-or-admin only. For private repos the calling user must have linked
+    our GitHub App via `POST /auth/github/install`. Approval defaults to
+    PENDING unless the user is an admin and the parent template is public,
+    in which case the new version is auto-approved.
     """
     service = GithubImportService(db)
     version = service.import_to_existing_template(

@@ -5,7 +5,8 @@ from uuid import UUID
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from src.models.template_version import TemplateVersion
+from src.models.template import Template
+from src.models.template_version import TemplateVersion, TemplateVersionApprovalStatus
 from src.models.template_version_file import TemplateVersionFile
 from src.repositories.base_repository import BaseRepository
 
@@ -133,6 +134,41 @@ class TemplateVersionRepository(BaseRepository[TemplateVersion]):
         
         self.db.commit()
         return updated_count
+
+    def list_by_approval_status(
+        self,
+        approval_status: TemplateVersionApprovalStatus,
+        skip: int = 0,
+        limit: int = 100,
+        template_id: Optional[str | UUID] = None,
+    ) -> tuple[list[tuple[TemplateVersion, Template]], int]:
+        """List versions filtered by approval status, joined with their template.
+
+        Used by the admin approval queue. Returns `(rows, total)` where each row is
+        a `(version, template)` tuple so the API can inline template metadata
+        without a second query per row.
+
+        Versions are ordered by created_at DESC (newest first).
+        """
+        query = (
+            self.db.query(self.model, Template)
+            .join(Template, Template.id == self.model.template_id)
+            .filter(self.model.approval_status == approval_status)
+        )
+
+        if template_id is not None:
+            query = query.filter(self.model.template_id == str(template_id))
+
+        total = query.with_entities(func.count(self.model.id)).scalar() or 0
+
+        rows = (
+            query.order_by(self.model.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+        return rows, total
 
     def delete_by_template_id(
         self,

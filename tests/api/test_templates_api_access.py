@@ -395,3 +395,213 @@ def cleanup():
     """Cleanup after each test."""
     yield
     app.dependency_overrides.clear()
+
+
+class TestApprovalQueue:
+    """Tests for the admin approval queue endpoint."""
+
+    @pytest.fixture
+    def pending_version_private(self, db_session, private_template):
+        """Pending version on a private template."""
+        from src.models.template_version import TemplateVersionApprovalStatus
+
+        v = TemplateVersion(
+            template_id=private_template.id,
+            version="1.0.0",
+            git_commit_sha="pending-private-sha",
+            is_active=True,
+            approval_status=TemplateVersionApprovalStatus.PENDING,
+        )
+        db_session.add(v)
+        db_session.commit()
+        db_session.refresh(v)
+        return v
+
+    @pytest.fixture
+    def pending_version_public(self, db_session, public_approved_template):
+        """A second, still-pending version on a public template (which already has an approved one)."""
+        from src.models.template_version import TemplateVersionApprovalStatus
+
+        v = TemplateVersion(
+            template_id=public_approved_template.id,
+            version="1.1.0",
+            git_commit_sha="pending-public-sha",
+            is_active=False,
+            approval_status=TemplateVersionApprovalStatus.PENDING,
+        )
+        db_session.add(v)
+        db_session.commit()
+        db_session.refresh(v)
+        return v
+
+    def test_admin_sees_pending_versions_across_templates(
+        self,
+        db_session,
+        admin_user,
+        pending_version_private,
+        pending_version_public,
+    ):
+        """Admin queue (default status=pending) returns pending versions across all templates."""
+        client = create_client_with_user(db_session, admin_user, is_admin=True)
+
+        response = client.get("/api/v1/template-versions/queue")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        version_ids = [v["id"] for v in data["data"]]
+
+        assert pending_version_private.id in version_ids
+        assert pending_version_public.id in version_ids
+
+        for row in data["data"]:
+            assert row["approval_status"] == "pending"
+            assert "template" in row
+            assert {"id", "name", "owner_id", "visibility"}.issubset(row["template"].keys())
+
+    def test_non_admin_cannot_access_queue(
+        self,
+        db_session,
+        owner_user,
+        pending_version_private,
+    ):
+        """Lecturer (non-admin) gets 403 from the approval queue."""
+        client = create_client_with_user(db_session, owner_user, is_admin=False)
+
+        response = client.get("/api/v1/template-versions/queue")
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_status_filter_approved(
+        self,
+        db_session,
+        admin_user,
+        pending_version_private,
+        public_approved_template,
+    ):
+        """status=approved returns only approved versions."""
+        client = create_client_with_user(db_session, admin_user, is_admin=True)
+
+        response = client.get("/api/v1/template-versions/queue?status=approved")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+
+        for row in data["data"]:
+            assert row["approval_status"] == "approved"
+
+        assert pending_version_private.id not in [r["id"] for r in data["data"]]
+
+    def test_template_id_filter(
+        self,
+        db_session,
+        admin_user,
+        private_template,
+        pending_version_private,
+        pending_version_public,
+    ):
+        """template_id filter restricts the queue to one template."""
+        client = create_client_with_user(db_session, admin_user, is_admin=True)
+
+        response = client.get(
+            f"/api/v1/template-versions/queue?template_id={private_template.id}"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        version_ids = [v["id"] for v in data["data"]]
+
+        assert pending_version_private.id in version_ids
+        assert pending_version_public.id not in version_ids
+
+
+class TestRejectVersionWithReason:
+    """Tests for `POST /template-versions/{id}/reject` with optional reason body."""
+
+    @pytest.fixture
+    def pending_version(self, db_session, private_template):
+        from src.models.template_version import TemplateVersionApprovalStatus
+
+        v = TemplateVersion(
+            template_id=private_template.id,
+            version="1.0.0",
+            git_commit_sha="reject-test-sha",
+            is_active=True,
+            approval_status=TemplateVersionApprovalStatus.PENDING,
+        )
+        db_session.add(v)
+        db_session.commit()
+        db_session.refresh(v)
+        return v
+
+    def test_reject_persists_reason(self, db_session, admin_user, pending_version):
+        """Reject with a reason body persists rejection_reason."""
+        client = create_client_with_user(db_session, admin_user, is_admin=True)
+
+        response = client.post(
+            f"/api/v1/template-versions/{pending_version.id}/reject",
+            json={"reason": "app.yaml is missing required parameters"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert body["data"]["approval_status"] == "rejected"
+        assert body["data"]["rejection_reason"] == "app.yaml is missing required parameters"
+
+        db_session.expire(pending_version)
+        db_session.refresh(pending_version)
+        assert pending_version.rejection_reason == "app.yaml is missing required parameters"
+
+    def test_reject_without_body_works(self, db_session, admin_user, pending_version):
+        """Reject without any body still works; rejection_reason stays None."""
+        client = create_client_with_user(db_session, admin_user, is_admin=True)
+
+        response = client.post(
+            f"/api/v1/template-versions/{pending_version.id}/reject",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert body["data"]["approval_status"] == "rejected"
+        assert body["data"]["rejection_reason"] is None
+
+    def test_approve_clears_previous_rejection_reason(
+        self, db_session, admin_user, pending_version
+    ):
+        """Re-approving a previously rejected version clears its rejection_reason."""
+        client = create_client_with_user(db_session, admin_user, is_admin=True)
+
+        client.post(
+            f"/api/v1/template-versions/{pending_version.id}/reject",
+            json={"reason": "broken"},
+        )
+        approve_response = client.post(
+            f"/api/v1/template-versions/{pending_version.id}/approve",
+        )
+
+        assert approve_response.status_code == status.HTTP_200_OK
+        body = approve_response.json()
+        assert body["data"]["approval_status"] == "approved"
+        assert body["data"]["rejection_reason"] is None
+
+    def test_non_admin_cannot_reject(self, db_session, owner_user, pending_version):
+        """Lecturer (non-admin) cannot reject."""
+        client = create_client_with_user(db_session, owner_user, is_admin=False)
+
+        response = client.post(
+            f"/api/v1/template-versions/{pending_version.id}/reject",
+            json={"reason": "any"},
+        )
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+class TestImportFromGithubVisibility:
+    """The import-from-github schema no longer accepts a visibility field."""
+
+    def test_schema_rejects_visibility_field(self):
+        """Visibility is no longer part of the import body — extra fields are ignored
+        but the schema's resolved value is always None / the default. Confirm
+        that the field truly isn't on the model."""
+        from src.schemas.template import GithubImportNewTemplate
+
+        assert "visibility" not in GithubImportNewTemplate.model_fields

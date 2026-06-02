@@ -332,14 +332,16 @@ class GithubImportService:
         app_yaml_path: Optional[str],
         name: str,
         description: Optional[str],
-        visibility: str,
         icon_url: Optional[str],
         owner_user_id: str,
         owner_user_roles: list[str],
     ) -> Template:
-        """Create a brand-new Template + first TemplateVersion populated from GitHub."""
-        visibility_enum = self._coerce_visibility(visibility)
+        """Create a brand-new Template + first TemplateVersion populated from GitHub.
 
+        New templates are always created PRIVATE (matching `TemplateService.create_template`);
+        admins promote to public later via PATCH. The first version follows the standard
+        per-version approval rules (PENDING unless admin + public).
+        """
         template = Template(
             id=str(uuid4()),
             name=name,
@@ -347,7 +349,7 @@ class GithubImportService:
             owner_id=owner_user_id,
             repo_url=github_url,
             icon_url=icon_url,
-            visibility=visibility_enum,
+            visibility=TemplateVisibility.PRIVATE,
         )
         self.db.add(template)
         self.db.flush()
@@ -593,15 +595,6 @@ class GithubImportService:
             ).update({TemplateVersion.is_active: False}, synchronize_session=False)
 
         return version
-
-    @staticmethod
-    def _coerce_visibility(value: str) -> TemplateVisibility:
-        try:
-            return TemplateVisibility(value)
-        except ValueError as e:
-            raise BadRequestException(
-                f"Invalid visibility '{value}'. Use 'private' or 'public'."
-            ) from e
 
     @staticmethod
     def _initial_approval(

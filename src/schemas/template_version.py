@@ -89,6 +89,21 @@ class TemplateVersionWithFilesCreate(BaseModel):
     )
 
 
+class TemplateVersionRejectRequest(BaseModel):
+    """Optional body for `POST /template-versions/{id}/reject`."""
+    reason: Optional[str] = Field(
+        default=None,
+        max_length=2000,
+        description="Optional admin-provided reason; persisted on the version.",
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {"reason": "app.yaml is missing required parameters"}
+        }
+    )
+
+
 class TemplateVersionResponse(BaseModel):
     """Schema for template version response."""
     id: str = Field(..., description="Version ID")
@@ -99,6 +114,7 @@ class TemplateVersionResponse(BaseModel):
     approval_status: str = Field(..., description="Approval status (pending/approved/rejected/deprecated)")
     approved_by_id: Optional[str] = Field(None, description="Admin user ID who approved/rejected this version")
     approved_at: Optional[datetime] = Field(None, description="Approval/rejection timestamp")
+    rejection_reason: Optional[str] = Field(None, description="Optional admin-provided reason when rejected")
     created_at: datetime = Field(..., description="Creation timestamp")
     parameters: Optional[list[dict[str, Any]]] = Field(None, description="Template parameters from app.yaml")
 
@@ -126,6 +142,27 @@ class TemplateVersionResponse(BaseModel):
             }
         }
     )
+
+
+class TemplateQueueInfo(BaseModel):
+    """Inlined template metadata for admin approval-queue rows."""
+    id: str
+    name: str
+    owner_id: str
+    visibility: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TemplateVersionQueueItem(TemplateVersionResponse):
+    """A single row of the admin approval queue.
+
+    Extends `TemplateVersionResponse` with the parent template inlined so the
+    admin UI can render the queue without a follow-up fetch per row.
+    """
+    template: TemplateQueueInfo
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TemplateVersionWithFilesResponse(TemplateVersionResponse):

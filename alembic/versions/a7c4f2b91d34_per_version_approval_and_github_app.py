@@ -44,6 +44,10 @@ def upgrade() -> None:
         'template_versions',
         sa.Column('approved_at', sa.DateTime(), nullable=True),
     )
+    op.add_column(
+        'template_versions',
+        sa.Column('rejection_reason', sa.Text(), nullable=True),
+    )
     op.create_foreign_key(
         'fk_template_versions_approved_by_id_users',
         source_table='template_versions',
@@ -107,5 +111,6 @@ def downgrade() -> None:
     op.drop_column('template_versions', 'approved_at')
     op.drop_column('template_versions', 'approved_by_id')
     op.drop_column('template_versions', 'approval_status')
+    op.drop_column('template_versions', 'rejection_reason')
 
     sa.Enum(name='templateversionapprovalstatus').drop(op.get_bind(), checkfirst=True)
