@@ -9,6 +9,7 @@ Format: ``<urlsafe-b64(json({user_id, nonce, exp}))>.<urlsafe-b64(hmac-sha256)>`
 from __future__ import annotations
 
 import base64
+import binascii
 import hmac
 import json
 import secrets
@@ -63,7 +64,7 @@ def verify_state(token: str) -> str:
     expected_sig = hmac.new(_secret_bytes(), payload_b64.encode("ascii"), sha256).digest()
     try:
         provided_sig = _b64decode(sig_b64)
-    except (ValueError, base64.binascii.Error) as exc:
+    except (ValueError, binascii.Error) as exc:
         raise BadRequestException("Invalid OAuth state signature.") from exc
 
     if not hmac.compare_digest(expected_sig, provided_sig):

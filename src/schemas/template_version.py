@@ -158,9 +158,15 @@ class TemplateVersionQueueItem(TemplateVersionResponse):
     """A single row of the admin approval queue.
 
     Extends `TemplateVersionResponse` with the parent template inlined so the
-    admin UI can render the queue without a follow-up fetch per row.
+    admin UI can render the queue without a follow-up fetch per row, plus the
+    parsed app.yaml `parameters` (resource requirements) so requirements can be
+    shown directly in the list view.
     """
     template: TemplateQueueInfo
+    parameters: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Parameters parsed from app.yaml of this version (CPU/RAM/disk/etc).",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

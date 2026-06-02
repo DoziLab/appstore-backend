@@ -38,8 +38,11 @@ async def list_templates(
 ):
     """List all templates with optional filters and pagination.
 
-    Admins see all templates. Lecturers see public templates plus their own.
-    Per-version approval gating happens on TemplateVersion.
+    Admins see all templates. Lecturers see their own templates plus public
+    templates that have at least one APPROVED version (safety net — public
+    templates whose versions are all still pending/rejected stay hidden from
+    non-owners). Per-version approval gating is then enforced when the user
+    fetches a specific TemplateVersion.
 
     Supports filtering by:
     - Visibility (private, public)
@@ -86,8 +89,10 @@ async def get_template(
     current_user: CurrentUser,
 ):
     """Get a single template by ID.
-    
-    Admins can view any template. Lecturers can only view approved public templates or their own templates.
+
+    Admins can view any template. Lecturers can view their own templates plus
+    public templates with at least one APPROVED version. Per-version approval
+    is then enforced when fetching a specific TemplateVersion.
     Returns complete template details including metadata and timestamps.
     """
     service = TemplateService(db)

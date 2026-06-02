@@ -70,6 +70,7 @@ class GithubAppService:
         Used as ``Authorization: Bearer <jwt>`` on ``/app/*`` endpoints.
         """
         self._require_configured()
+        assert self._private_key is not None
         now = int(time.time())
         payload = {
             "iat": now - 60,  # tolerate small clock skew

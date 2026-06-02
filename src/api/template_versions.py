@@ -1,11 +1,12 @@
 """Template Version API endpoints."""
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, status, Query, Depends
 
 from src.core.response_builder import ResponseBuilder
 from src.core.dependencies import DBSession, RequestID, Pagination, require_roles, CurrentUser
+from src.models.template import TemplateVisibility
 from src.models.template_version import TemplateVersionApprovalStatus
 from src.schemas.template_version import (
     TemplateVersionCreate,
@@ -108,14 +109,29 @@ async def list_approval_queue(
         None,
         description="Optional: limit the queue to a single template",
     ),
+    visibility: Optional[TemplateVisibility] = Query(
+        None,
+        description="Optional: filter by parent template visibility (private/public)",
+    ),
+    sort: Literal[
+        "created_at_desc",
+        "created_at_asc",
+        "template_name_asc",
+        "template_name_desc",
+    ] = Query(
+        "created_at_desc",
+        description="Sort order. Defaults to newest-first.",
+    ),
 ):
     """Admin approval queue: list template versions filtered by approval status.
 
-    Returns versions across ALL templates so admins can triage pending submissions
-    in one view. Each row inlines the parent template's name/owner/visibility so
-    the UI does not need to issue follow-up template lookups.
+    Returns versions across ALL templates so admins can triage submissions in
+    one view. Each row inlines:
+    - The parent template's metadata (`template.{name, owner_id, visibility}`)
+    - The parsed `parameters` from app.yaml (resource requirements)
 
-    Ordered newest-first (created_at DESC). Admin-only.
+    Filters: `status`, `template_id`, `visibility`. Sortable via `sort`.
+    Admin-only.
     """
     service = TemplateVersionService(db)
 
@@ -124,12 +140,15 @@ async def list_approval_queue(
         skip=(pagination.page - 1) * pagination.page_size,
         limit=pagination.page_size,
         template_id=str(template_id) if template_id else None,
+        visibility=visibility,
+        sort=sort,
     )
 
     items = []
     for version, template in rows:
         item = TemplateVersionResponse.model_validate(version).model_dump(mode="json")
         item["template"] = TemplateQueueInfo.model_validate(template).model_dump(mode="json")
+        item["parameters"] = service.get_version_parameters(version.id)
         items.append(TemplateVersionQueueItem.model_validate(item).model_dump(mode="json"))
 
     return ResponseBuilder.paginated(

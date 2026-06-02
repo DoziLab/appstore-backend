@@ -6,6 +6,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from src.models.template_version import TemplateVersion, TemplateVersionApprovalStatus
 from src.models.template_version_file import TemplateVersionFile
 from src.models.template import Template, TemplateVisibility
 from src.repositories.template_version_file_repository import TemplateVersionFileRepository
@@ -38,22 +39,14 @@ class TemplateVersionFileService:
         user_id: Optional[str] = None,
         is_admin: bool = False
     ) -> bool:
-        """Check if a user can access a template.
+        """Template-level safety net.
 
-        Access rules (post per-version-approval refactor):
-        - Admins can access any template
-        - Owners can access their own templates
+        - Admins can access any template.
+        - Owners can access their own templates.
         - Other users can access PUBLIC templates only if at least one version
-          has been APPROVED. The per-version approval gate is also enforced at
-          the version level; this is the template-level safety net.
-
-        Args:
-            template: Template to check access for
-            user_id: ID of the requesting user
-            is_admin: Whether the requesting user is an admin
-
-        Returns:
-            True if user can access the template, False otherwise
+          has been APPROVED. This is the safety net; the per-version approval
+          gate (`_can_access_version`) must still be enforced for any operation
+          that targets a specific version's content.
         """
         if is_admin:
             return True
@@ -69,38 +62,60 @@ class TemplateVersionFileService:
 
         return self.template_repo.has_approved_version(template.id)
 
-    def _check_template_access(
+    def _can_access_version(
+        self,
+        version: TemplateVersion,
+        template: Template,
+        user_id: Optional[str] = None,
+        is_admin: bool = False,
+    ) -> bool:
+        """Per-version access (matches TemplateVersionService._can_access_version).
+
+        - Admin -> always
+        - Owner -> always
+        - Others -> only when template is PUBLIC AND version is APPROVED.
+          Files of PENDING/REJECTED versions stay hidden from non-owners even
+          when the template has *some other* approved version.
+        """
+        if is_admin:
+            return True
+        if not user_id:
+            return False
+        if template.owner_id == user_id:
+            return True
+        return (
+            template.visibility == TemplateVisibility.PUBLIC
+            and version.approval_status == TemplateVersionApprovalStatus.APPROVED
+        )
+
+    def _check_version_access(
         self,
         template_version_id: str | UUID,
         user_id: Optional[str] = None,
         is_admin: bool = False
     ) -> Template:
-        """Check if user can access parent template via version and return template.
-        
-        Args:
-            template_version_id: Template version ID to check
-            user_id: ID of the requesting user
-            is_admin: Whether the requesting user is an admin
-            
-        Returns:
-            Template if accessible
-            
-        Raises:
-            NotFoundException: If version or template not found
-            ForbiddenException: If user lacks permission to view template
+        """Resolve the version + parent template and enforce per-version access.
+
+        Returns the parent Template if accessible. Raises NotFoundException if
+        the version or template does not exist, ForbiddenException if the user
+        cannot access this specific version.
         """
         version = self.version_repo.get_by_id(template_version_id)
         if not version:
             raise NotFoundException(f"Template version with ID {template_version_id} not found")
-        
+
         template = self.template_repo.get_by_id(version.template_id)
         if not template:
             raise NotFoundException(f"Template with ID {version.template_id} not found")
-        
-        if not self._can_access_template(template, user_id, is_admin):
-            raise ForbiddenException("You do not have permission to access this template")
-        
+
+        if not self._can_access_version(version, template, user_id, is_admin):
+            raise ForbiddenException("You do not have permission to access this template version")
+
         return template
+
+    # Backwards-compatible alias for tests/callers that referenced the older
+    # template-level helper. Now enforces per-version rules.
+    _check_template_access = _check_version_access
 
     def create_file(
         self,
@@ -167,8 +182,8 @@ class TemplateVersionFileService:
             raise NotFoundException(f"File with ID {file_id} not found")
         
         # Check access to parent template
-        self._check_template_access(file.template_version_id, user_id, is_admin)
-        
+        self._check_version_access(file.template_version_id, user_id, is_admin)
+
         return file
 
     def get_version_files(
@@ -198,9 +213,10 @@ class TemplateVersionFileService:
         Raises:
             ForbiddenException: If user lacks permission to access parent template (unless skipped)
         """
-        # Check access to parent template unless explicitly skipped
+        # Enforce per-version access (PENDING/REJECTED versions stay hidden
+        # from non-owners even when the template has another approved version)
         if not skip_access_check:
-            self._check_template_access(template_version_id, user_id, is_admin)
+            self._check_version_access(template_version_id, user_id, is_admin)
         
         if file_type:
             try:
@@ -231,9 +247,9 @@ class TemplateVersionFileService:
         Raises:
             ForbiddenException: If user lacks permission to access parent template
         """
-        # Check access to parent template
-        self._check_template_access(template_version_id, user_id, is_admin)
-        
+        # Enforce per-version access
+        self._check_version_access(template_version_id, user_id, is_admin)
+
         return self.file_repo.get_primary_file(template_version_id)
 
     def get_file_content(
@@ -411,9 +427,10 @@ class TemplateVersionFileService:
             BadRequestException: If YAML invalid or missing required sections
             ForbiddenException: If user lacks permission to access parent template
         """
-        # Check access to parent template unless explicitly skipped
+        # Enforce per-version access (PENDING/REJECTED versions stay hidden
+        # from non-owners even when the template has another approved version)
         if not skip_access_check:
-            self._check_template_access(template_version_id, user_id, is_admin)
+            self._check_version_access(template_version_id, user_id, is_admin)
         
         # Find app.yaml file for this version
         files = self.file_repo.get_by_version_id(template_version_id, include_content=True)

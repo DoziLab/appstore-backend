@@ -388,6 +388,75 @@ class TestTemplateVersionFileAccessControl:
 
         assert response.status_code == status.HTTP_200_OK
 
+    def test_non_owner_cannot_view_files_of_pending_version_on_public_template(
+        self, db_session, other_user, owner_user
+    ):
+        """Regression: non-owner must NOT access files of a PENDING version,
+        even when the parent public template has another APPROVED version.
+
+        Before this fix, file access was authorized only at the template level
+        via the safety net (`has_approved_version`), which would let any
+        non-owner pull the file content of unreviewed versions on the same
+        template. Per-version approval must gate file access too.
+        """
+        from src.models.template_version import TemplateVersionApprovalStatus
+        from src.models.template_version_file import TemplateVersionFile, FileType
+
+        template = Template(
+            name="Public mixed-status template",
+            description=None,
+            owner_id=owner_user.id,
+            repo_url="https://example.com/mixed",
+            visibility=TemplateVisibility.PUBLIC,
+        )
+        db_session.add(template)
+        db_session.commit()
+        db_session.refresh(template)
+
+        approved = TemplateVersion(
+            template_id=template.id,
+            version="1.0.0",
+            git_commit_sha="approved-sha",
+            is_active=False,
+            approval_status=TemplateVersionApprovalStatus.APPROVED,
+        )
+        pending = TemplateVersion(
+            template_id=template.id,
+            version="1.1.0",
+            git_commit_sha="pending-sha",
+            is_active=True,
+            approval_status=TemplateVersionApprovalStatus.PENDING,
+        )
+        db_session.add_all([approved, pending])
+        db_session.commit()
+        db_session.refresh(approved)
+        db_session.refresh(pending)
+
+        secret_file = TemplateVersionFile(
+            template_version_id=pending.id,
+            file_name="app.yaml",
+            file_type=FileType.APP_MANIFEST,
+            file_path="app.yaml",
+            content="secret: not-yet-reviewed",
+            file_size=24,
+            is_primary=False,
+        )
+        db_session.add(secret_file)
+        db_session.commit()
+        db_session.refresh(secret_file)
+
+        client = create_client_with_user(db_session, other_user)
+
+        # Direct file fetch
+        file_resp = client.get(f"/api/v1/template-version-files/{secret_file.id}")
+        assert file_resp.status_code == status.HTTP_403_FORBIDDEN
+
+        # Listing files of the pending version
+        list_resp = client.get(
+            f"/api/v1/template-version-files/version/{pending.id}"
+        )
+        assert list_resp.status_code == status.HTTP_403_FORBIDDEN
+
 
 # Clean up after tests
 @pytest.fixture(autouse=True)
@@ -512,6 +581,138 @@ class TestApprovalQueue:
 
         assert pending_version_private.id in version_ids
         assert pending_version_public.id not in version_ids
+
+    def test_visibility_filter(
+        self,
+        db_session,
+        admin_user,
+        pending_version_private,
+        pending_version_public,
+    ):
+        """visibility filter restricts queue rows by parent template visibility."""
+        client = create_client_with_user(db_session, admin_user, is_admin=True)
+
+        public_only = client.get("/api/v1/template-versions/queue?visibility=public")
+        assert public_only.status_code == status.HTTP_200_OK
+        ids_public = [v["id"] for v in public_only.json()["data"]]
+        assert pending_version_public.id in ids_public
+        assert pending_version_private.id not in ids_public
+
+        private_only = client.get("/api/v1/template-versions/queue?visibility=private")
+        assert private_only.status_code == status.HTTP_200_OK
+        ids_private = [v["id"] for v in private_only.json()["data"]]
+        assert pending_version_private.id in ids_private
+        assert pending_version_public.id not in ids_private
+
+    def test_sort_template_name_asc(
+        self,
+        db_session,
+        admin_user,
+        owner_user,
+    ):
+        """sort=template_name_asc orders rows by template.name ascending."""
+        from src.models.template_version import TemplateVersionApprovalStatus
+
+        z_template = Template(
+            name="Z-template",
+            description=None,
+            owner_id=owner_user.id,
+            repo_url="https://example.com/z",
+            visibility=TemplateVisibility.PRIVATE,
+        )
+        a_template = Template(
+            name="A-template",
+            description=None,
+            owner_id=owner_user.id,
+            repo_url="https://example.com/a",
+            visibility=TemplateVisibility.PRIVATE,
+        )
+        db_session.add_all([z_template, a_template])
+        db_session.commit()
+        db_session.refresh(z_template)
+        db_session.refresh(a_template)
+
+        for tmpl, sha in [(z_template, "z-sha"), (a_template, "a-sha")]:
+            v = TemplateVersion(
+                template_id=tmpl.id,
+                version="1.0.0",
+                git_commit_sha=sha,
+                is_active=True,
+                approval_status=TemplateVersionApprovalStatus.PENDING,
+            )
+            db_session.add(v)
+        db_session.commit()
+
+        client = create_client_with_user(db_session, admin_user, is_admin=True)
+        response = client.get(
+            "/api/v1/template-versions/queue?sort=template_name_asc"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        names_in_order = [r["template"]["name"] for r in response.json()["data"]]
+
+        a_idx = names_in_order.index("A-template")
+        z_idx = names_in_order.index("Z-template")
+        assert a_idx < z_idx
+
+    def test_parameters_inlined_from_app_yaml(
+        self,
+        db_session,
+        admin_user,
+        private_template,
+    ):
+        """Each queue row inlines `parameters` parsed from app.yaml of the version."""
+        from src.models.template_version import TemplateVersionApprovalStatus
+        from src.models.template_version_file import TemplateVersionFile, FileType
+
+        v = TemplateVersion(
+            template_id=private_template.id,
+            version="1.0.0",
+            git_commit_sha="param-sha",
+            is_active=True,
+            approval_status=TemplateVersionApprovalStatus.PENDING,
+        )
+        db_session.add(v)
+        db_session.commit()
+        db_session.refresh(v)
+
+        manifest = """
+app:
+  name: test-app
+  version: 1.0.0
+parameters:
+  - name: cpu
+    type: integer
+    default: 2
+    required: true
+  - name: ram_mb
+    type: integer
+    default: 2048
+    required: true
+"""
+        f = TemplateVersionFile(
+            template_version_id=v.id,
+            file_name="app.yaml",
+            file_type=FileType.APP_MANIFEST,
+            file_path="app.yaml",
+            content=manifest,
+            file_size=len(manifest),
+            is_primary=False,
+        )
+        db_session.add(f)
+        db_session.commit()
+
+        client = create_client_with_user(db_session, admin_user, is_admin=True)
+        response = client.get(
+            f"/api/v1/template-versions/queue?template_id={private_template.id}"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        rows = response.json()["data"]
+        assert len(rows) == 1
+
+        params = rows[0]["parameters"]
+        param_names = {p["name"] for p in params}
+        assert "cpu" in param_names
+        assert "ram_mb" in param_names
 
 
 class TestRejectVersionWithReason:

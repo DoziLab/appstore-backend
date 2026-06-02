@@ -10,7 +10,7 @@ from src.models.template_version import TemplateVersion, TemplateVersionApproval
 from src.models.template_version_file import FileType, TemplateVersionFile
 from src.models.template import Template, TemplateVisibility
 from src.models.user import UserRole
-from src.repositories.template_version_repository import TemplateVersionRepository
+from src.repositories.template_version_repository import TemplateVersionRepository, QueueSort
 from src.repositories.template_repository import TemplateRepository
 from src.repositories.template_version_file_repository import TemplateVersionFileRepository
 from src.schemas.template_version import (
@@ -511,6 +511,8 @@ class TemplateVersionService:
         skip: int = 0,
         limit: int = 100,
         template_id: Optional[str | UUID] = None,
+        visibility: Optional[TemplateVisibility] = None,
+        sort: QueueSort = "created_at_desc",
     ) -> tuple[list[tuple[TemplateVersion, Template]], int]:
         """Admin approval queue: list versions filtered by approval status.
 
@@ -524,7 +526,31 @@ class TemplateVersionService:
             skip=skip,
             limit=limit,
             template_id=template_id,
+            visibility=visibility,
+            sort=sort,
         )
+
+    def get_version_parameters(self, version_id: str | UUID) -> list[dict]:
+        """Parse app.yaml of a version and return its parameter list.
+
+        No access check - admin-only callers (e.g. the approval queue).
+        Returns `[]` if no manifest is present or parsing fails.
+        """
+        try:
+            files = self.file_repo.get_by_version_id(version_id, include_content=True)
+            manifest = next(
+                (
+                    f for f in files
+                    if f.file_type == FileType.APP_MANIFEST or f.file_name.lower() == "app.yaml"
+                ),
+                None,
+            )
+            if manifest and manifest.content:
+                parsed = AppManifestParser.parse(manifest.content)
+                return parsed.get("parameters", [])
+        except Exception as e:
+            logger.warning(f"Failed to parse manifest for version {version_id}: {e}")
+        return []
 
     def get_version_with_parameters(
         self,
