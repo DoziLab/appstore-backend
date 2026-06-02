@@ -21,7 +21,7 @@ def upgrade() -> None:
     """Per-version approval, GitHub App link, and removal of template-level approval."""
     # Create dedicated enum type for version approvals
     version_approval_enum = sa.Enum(
-        'pending', 'approved', 'rejected', 'deprecated',
+        'PENDING', 'APPROVED', 'REJECTED', 'DEPRECATED',
         name='templateversionapprovalstatus',
     )
     version_approval_enum.create(op.get_bind(), checkfirst=True)
@@ -33,7 +33,7 @@ def upgrade() -> None:
             'approval_status',
             version_approval_enum,
             nullable=False,
-            server_default='pending',
+            server_default='PENDING',
         ),
     )
     op.add_column(
