@@ -61,11 +61,10 @@ def upgrade() -> None:
     op.execute(
         """
         UPDATE template_versions tv
-        SET approval_status = 'approved'
+        SET approval_status = 'APPROVED'
         FROM templates t
         WHERE tv.template_id = t.id
           AND t.approval_status = 'APPROVED'
-        """
     )
 
     # templates: drop the legacy template-level approval column and its enum.
