@@ -2,7 +2,7 @@
 
 A FastAPI-based backend for managing deployments on Openstack.
 
-## Quick Start
+## Quick Start 
 
 ### Prerequisites
 
