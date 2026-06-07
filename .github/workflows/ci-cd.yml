@@ -90,7 +90,7 @@ jobs:
             
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
-            docker compose pull
+            docker compose pull api celery-worker
             
             docker compose up api celery-worker -d --force-recreate --remove-orphans
             
