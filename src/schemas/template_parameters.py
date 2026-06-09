@@ -12,7 +12,7 @@ class TemplateParameterSchema(BaseModel):
     type: str = Field(..., description="Parameter type (string, int, number, boolean)")
     required: bool = Field(..., description="Whether this parameter is required")
     default: Any = Field(None, description="Default value if not required")
-    description: str = Field(..., description="Human-readable description for UI")
+    description: str | None = Field(None, description="Human-readable description for UI")
     label: str | None = Field(None, description="Display label for the parameter in UI")
     step: str | None = Field(None, description="Step/group name for organizing parameters in UI")
     enum: list[Any] | None = Field(None, description="List of allowed values for this parameter")

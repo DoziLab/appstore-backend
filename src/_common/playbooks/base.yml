@@ -1,0 +1,50 @@
+---
+# DoziLab Base Playbook — läuft automatisch bei jedem Template-Deployment.
+#
+# Variablen: teacher.linux.{username, password}
+#            ssh_allow_users[]  ← Backend berechnet aus students mit ssh_access: true
+
+- name: DoziLab Base Setup
+  hosts: all
+  remote_user: ubuntu
+  become: true
+
+  tasks:
+
+    # --- Lehrer Linux-Account ---
+
+    - name: Lehrer Linux-Account erstellen
+      user:
+        name:        "{{ teacher.linux.username }}"
+        shell:       /bin/bash
+        create_home: true
+        groups:      sudo
+        append:      true
+        state:       present
+
+    - name: Lehrer Linux-Passwort setzen
+      shell: "echo '{{ teacher.linux.username }}:{{ teacher.linux.password }}' | chpasswd"
+      no_log: true
+
+    # --- SSH konfigurieren ---
+
+    - name: SSH Passwort-Login aktivieren
+      copy:
+        dest: /etc/ssh/sshd_config.d/99-dozilab.conf
+        mode: "0644"
+        content: |
+          PasswordAuthentication yes
+          KbdInteractiveAuthentication yes
+          UsePAM yes
+          PermitRootLogin no
+
+    - name: SSH auf erlaubte Benutzer einschränken
+      copy:
+        dest: /etc/ssh/sshd_config.d/98-dozilab-allowusers.conf
+        mode: "0644"
+        content: "AllowUsers ubuntu {{ teacher.linux.username }}{{ ' ' + ssh_allow_users | join(' ') if ssh_allow_users | default([]) | length > 0 else '' }}\n"
+
+    - name: SSH neu starten
+      service:
+        name:  ssh
+        state: restarted

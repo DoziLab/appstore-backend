@@ -165,6 +165,17 @@ class OpenstackProjectService:
                     "openstack_project_id": credentials.openstack_project_id,
                 }
             )
+
+            # Register Ansible keypair in the new project
+            try:
+                from src.services.ansible_keypair_service import AnsibleKeypairService
+                AnsibleKeypairService.ensure_keypair(project)
+            except Exception as keypair_error:
+                logger.warning(
+                    f"Could not register Ansible keypair in project {credentials.openstack_project_id}: {keypair_error}. "
+                    "Deployment will fail if Ansible is used. Check ANSIBLE_SSH_KEY_PATH."
+                )
+
             return project
         except Exception as e:
             # _handle_integrity_error always raises an exception, never returns
@@ -262,6 +273,16 @@ class OpenstackProjectService:
                 "openstack_project_id": credentials.openstack_project_id,
             }
         )
+
+        # Re-check keypair in case the project changed
+        try:
+            from src.services.ansible_keypair_service import AnsibleKeypairService
+            AnsibleKeypairService.ensure_keypair(project)
+        except Exception as keypair_error:
+            logger.warning(
+                f"Could not register Ansible keypair after credentials update: {keypair_error}"
+            )
+
         return project
     
     def get_credentials(

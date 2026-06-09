@@ -27,6 +27,13 @@ class DeploymentLogEventType(str, Enum):
     FAILED = "failed"
     DEPLOYMENT_DELETION_REQUESTED = "deployment_deletion_requested"
     DEPLOYMENT_DELETED = "deployment_deleted"
+    # Ansible
+    SSH_WAIT = "ssh_wait"
+    ANSIBLE_STARTED = "ansible_started"
+    ANSIBLE_TASK = "ansible_task"
+    ANSIBLE_OK = "ansible_ok"
+    ANSIBLE_FAILED = "ansible_failed"
+    ANSIBLE_COMPLETED = "ansible_completed"
 
 
 class DeploymentLog(Base):
