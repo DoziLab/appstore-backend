@@ -401,7 +401,7 @@ async def stream_deployment_logs(
 
                 # Fetch all logs and emit unseen ones
                 logs = log_service.get_deployment_logs(deployment_id)
-                new_logs = [l for l in logs if str(l.id) not in seen_ids]
+                new_logs = [log for log in logs if str(log.id) not in seen_ids]
                 for log in new_logs:
                     seen_ids.add(str(log.id))
                     payload = json.dumps({

@@ -247,6 +247,7 @@ class AnsibleService:
                 bufsize=1,
             )
 
+            assert process.stdout is not None
             for raw_line in process.stdout:
                 line = sanitize_message(raw_line.rstrip())
                 if not line:

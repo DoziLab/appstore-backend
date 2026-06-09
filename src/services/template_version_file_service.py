@@ -6,7 +6,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from src.models.template_version_file import TemplateVersionFile
+from src.models.template_version_file import TemplateVersionFile, FileType
 from src.models.template import Template, TemplateVisibility, TemplateApprovalStatus
 from src.repositories.template_version_file_repository import TemplateVersionFileRepository
 from src.repositories.template_version_repository import TemplateVersionRepository
@@ -127,7 +127,7 @@ class TemplateVersionFileService:
         file, _ = self.file_repo.upsert(
             template_version_id=file_data.template_version_id,
             file_name=file_data.file_name,
-            file_type=file_data.file_type,
+            file_type=FileType(file_data.file_type),
             file_path=file_data.file_path,
             content=file_data.content,
             file_size=file_data.file_size,

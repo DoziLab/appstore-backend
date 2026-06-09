@@ -62,7 +62,6 @@ def deploy_stack(self, deployment_id: str) -> dict:
 
         try:
             deployment_params = json.loads(deployment.deployment_parameters)
-            template_name = deployment_params.get("template_name", "unknown")
             all_parameters = deployment_params.get("parameters", {})
             stack_assignments_raw = deployment_params.get("stack_assignments", [])
             teacher_info = deployment_params.get("teacher", {})
@@ -103,7 +102,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
 
         # Parse app.yaml for credentials spec and playbook list
         app_yaml_file = next((f for f in files if f.file_name == "app.yaml"), None)
-        credentials_spec = {"per_student": [], "teacher": []}
+        credentials_spec: dict[str, list] = {"per_student": [], "teacher": []}
         playbooks: list[tuple[str, str]] = []
         scripts: dict[str, str] = {}
         template_files: dict[str, str] = {}

@@ -86,7 +86,7 @@ class DeploymentCredentialService:
 
             for cred in application.get("credentials") or []:
                 entries.append({
-                    "access_type": AccessType.WEB_URL if is_pgadmin else AccessType.DATABASE,
+                    "access_type": AccessType.DATABASE,
                     "username": cred.get("email") or cred.get("db_user") or cred.get("username"),
                     "password": cred.get("password"),
                     "connection_url": pgadmin_url if is_pgadmin else None,
@@ -96,7 +96,7 @@ class DeploymentCredentialService:
             app_admin = application.get("admin_credentials")
             if app_admin:
                 entries.append({
-                    "access_type": AccessType.WEB_URL if is_pgadmin else AccessType.DATABASE,
+                    "access_type": AccessType.DATABASE,
                     "username": app_admin.get("email") or app_admin.get("db_user") or app_admin.get("username"),
                     "password": app_admin.get("password"),
                     "connection_url": pgadmin_url if is_pgadmin else None,
