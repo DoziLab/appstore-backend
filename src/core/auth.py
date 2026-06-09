@@ -28,7 +28,10 @@ def get_keycloak_public_keys() -> dict[str, Any]:
     certs_url = f"{settings.keycloak_realm_url}/protocol/openid-connect/certs"
     
     try:
-        response = httpx.get(certs_url, timeout=10.0)
+        # SSL verification is disabled because Keycloak uses a self-signed certificate.
+        # Acceptable in a controlled university environment where the Keycloak server is
+        # trusted. Replace with a CA-signed certificate for production use.
+        response = httpx.get(certs_url, timeout=10.0, verify=False)
         response.raise_for_status()
         return response.json()
     except httpx.HTTPError as e:
