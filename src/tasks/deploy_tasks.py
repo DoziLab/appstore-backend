@@ -145,6 +145,14 @@ def deploy_stack(self, deployment_id: str) -> dict:
         openstack_project = openstack_projects[0]
         heat_service = HeatStackService(openstack_project)
 
+        # Ensure the Ansible keypair exists in OpenStack before creating stacks
+        if get_settings().ansible_ssh_private_key:
+            try:
+                from src.services.ansible_keypair_service import AnsibleKeypairService
+                AnsibleKeypairService.ensure_keypair(openstack_project)
+            except Exception as kp_err:
+                return _fail(repo, log_service, deployment_id, f"Failed to ensure Ansible keypair: {kp_err}")
+
         # SSH private key from settings (shared backend key, not per-project)
         ssh_private_key = get_settings().ansible_ssh_private_key or ""
 

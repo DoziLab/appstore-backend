@@ -13,9 +13,6 @@ from src.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-KEYPAIR_NAME = "dozilab-ansible-key"
-
-
 def _derive_public_key(private_key_content: str) -> str:
     """Derive the OpenSSH public key string from a private key."""
     private_key = load_ssh_private_key(
@@ -49,6 +46,7 @@ class AnsibleKeypairService:
         """
         settings = get_settings()
         private_key_content = settings.ansible_ssh_private_key
+        keypair_name = settings.ansible_ssh_key_name
 
         if not private_key_content:
             raise RuntimeError(
@@ -68,10 +66,10 @@ class AnsibleKeypairService:
             )
 
             # Check if keypair already exists
-            existing = conn.compute.find_keypair(KEYPAIR_NAME)
+            existing = conn.compute.find_keypair(keypair_name)
             if existing:
                 logger.info(
-                    f"Ansible keypair '{KEYPAIR_NAME}' already exists in project "
+                    f"Ansible keypair '{keypair_name}' already exists in project "
                     f"{openstack_project.openstack_project_name} — skipping."
                 )
                 return
@@ -80,11 +78,11 @@ class AnsibleKeypairService:
             public_key = _derive_public_key(private_key_content)
 
             conn.compute.create_keypair(
-                name=KEYPAIR_NAME,
+                name=keypair_name,
                 public_key=public_key,
             )
             logger.info(
-                f"Ansible keypair '{KEYPAIR_NAME}' registered in project "
+                f"Ansible keypair '{keypair_name}' registered in project "
                 f"{openstack_project.openstack_project_name}."
             )
 
