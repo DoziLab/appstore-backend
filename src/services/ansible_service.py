@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Generator
 
+from src.utils.log_sanitizer import sanitize_message
+
 from sqlalchemy.orm import Session
 
 from src.models.deployment_log import DeploymentLogEventType, DeploymentLogLevel
@@ -96,33 +98,44 @@ class AnsibleService:
             if scripts:
                 (tmp / "scripts").mkdir()
                 for name, content in scripts.items():
-                    (tmp / "scripts" / name).write_text(content)
+                    (tmp / "scripts" / name).write_text(content, encoding="utf-8")
 
             # Write files
             if files:
                 (tmp / "files").mkdir()
                 for name, content in files.items():
-                    (tmp / "files" / name).write_text(content)
+                    (tmp / "files" / name).write_text(content, encoding="utf-8")
 
             # Build a minimal playbook that copies the directories
-            copy_tasks = []
+            copy_tasks: list[dict] = [
+                {
+                    "name": "Secure /opt/dozilab root directory",
+                    "file": {
+                        "path": "/opt/dozilab",
+                        "state": "directory",
+                        "mode": "0700",
+                        "owner": "root",
+                        "group": "root",
+                    },
+                }
+            ]
             if scripts:
                 copy_tasks.append({
                     "name": "Create /opt/dozilab/scripts",
-                    "file": {"path": "/opt/dozilab/scripts", "state": "directory", "mode": "0755"},
+                    "file": {"path": "/opt/dozilab/scripts", "state": "directory", "mode": "0700", "owner": "root", "group": "root"},
                 })
                 copy_tasks.append({
                     "name": "Copy scripts",
-                    "copy": {"src": str(tmp / "scripts") + "/", "dest": "/opt/dozilab/scripts/", "mode": "0755"},
+                    "copy": {"src": str(tmp / "scripts") + "/", "dest": "/opt/dozilab/scripts/", "mode": "0700", "owner": "root", "group": "root"},
                 })
             if files:
                 copy_tasks.append({
                     "name": "Create /opt/dozilab/files",
-                    "file": {"path": "/opt/dozilab/files", "state": "directory", "mode": "0755"},
+                    "file": {"path": "/opt/dozilab/files", "state": "directory", "mode": "0700", "owner": "root", "group": "root"},
                 })
                 copy_tasks.append({
                     "name": "Copy files",
-                    "copy": {"src": str(tmp / "files") + "/", "dest": "/opt/dozilab/files/"},
+                    "copy": {"src": str(tmp / "files") + "/", "dest": "/opt/dozilab/files/", "owner": "root", "group": "root"},
                 })
 
             import yaml as _yaml
@@ -134,14 +147,14 @@ class AnsibleService:
                 "tasks": copy_tasks,
             }])
             playbook_path = tmp / "copy_assets.yml"
-            playbook_path.write_text(playbook_content)
+            playbook_path.write_text(playbook_content, encoding="utf-8")
 
             self._log(
                 DeploymentLogEventType.ANSIBLE_STARTED,
                 f"Copying {len(scripts)} scripts and {len(files)} files to VM",
             )
             for line in self._run_playbook(str(playbook_path), extra_vars={}):
-                pass  # output already logged inside _run_playbook
+                pass
 
     def run_playbooks(
         self,
@@ -162,7 +175,7 @@ class AnsibleService:
             for playbook_name, content in playbooks:
                 playbook_path = tmp / playbook_name
                 playbook_path.parent.mkdir(parents=True, exist_ok=True)
-                playbook_path.write_text(content)
+                playbook_path.write_text(content, encoding="utf-8")
 
                 self._log(
                     DeploymentLogEventType.ANSIBLE_STARTED,
@@ -235,7 +248,7 @@ class AnsibleService:
             )
 
             for raw_line in process.stdout:
-                line = raw_line.rstrip()
+                line = sanitize_message(raw_line.rstrip())
                 if not line:
                     continue
 

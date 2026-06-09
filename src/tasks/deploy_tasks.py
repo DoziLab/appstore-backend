@@ -163,6 +163,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
         failed_stacks = []
 
         for idx, stack_assignment_data in enumerate(stack_assignments_raw, start=1):
+            stack_id = None  # set after Heat succeeds
             try:
                 stack_assignment = StackAssignment(**stack_assignment_data)
 
@@ -173,24 +174,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
                     teacher=teacher,
                 )
 
-                # Build Heat extra parameter (user_json) — keep backwards compat
-                import base64
-                from src.services.template_user_management_service import TemplateUserManagementService
-                min_pw = int(base_heat_parameters.get("pw_min_length", 12))
-                user_json_data = TemplateUserManagementService.generate_user_json_for_stack(
-                    template_name=template_name,
-                    course_label=deployment.name,
-                    stack_assignment=stack_assignment,
-                    teacher=teacher,
-                    min_password_length=min_pw,
-                )
-                user_json_b64 = base64.b64encode(
-                    json.dumps(user_json_data, ensure_ascii=False).encode()
-                ).decode("ascii")
-
                 stack_params = {**base_heat_parameters}
-                if "user_json" in heat_defined_params:
-                    stack_params["user_json"] = user_json_b64
                 stack_params["key_name"] = get_settings().ansible_ssh_key_name
                 stack_name = f"{deployment.name}-s{idx}-{deployment_id[:4]}"
                 stack_name = stack_name.replace(" ", "-").replace("_", "-").lower()[:64]
@@ -230,11 +214,30 @@ def deploy_stack(self, deployment_id: str) -> dict:
                 )
 
                 try:
+                    # Build user_json from `generated` so DB passwords match what Ansible sets
+                    credentials_for_db = {
+                        "instance": {
+                            "credentials": [
+                                {
+                                    "username": s["linux"]["username"],
+                                    "password": s["linux"]["password"],
+                                }
+                                for s in generated.get("students", [])
+                                if s.get("linux", {}).get("password")
+                            ],
+                            "admin_credentials": {
+                                "username": generated["teacher"]["linux"]["username"],
+                                "password": generated["teacher"]["linux"]["password"],
+                            } if generated.get("teacher", {}).get("linux", {}).get("password") else None,
+                        },
+                    }
                     DeploymentCredentialService(db).persist_credentials_for_stack(
                         deployment_id=deployment_id,
                         stack_name=stack_name,
                         openstack_stack_id=stack_id,
-                        user_json=user_json_data,
+                        user_json=credentials_for_db,
+                        floating_ip=stack_result.get("floating_ip") or "",
+                        heat_outputs=stack_result.get("outputs") or {},
                     )
                 except Exception as cred_error:
                     logger.error(f"Failed to persist credentials for stack {idx}: {cred_error}", exc_info=True)
@@ -272,9 +275,9 @@ def deploy_stack(self, deployment_id: str) -> dict:
                             "course_label": deployment.name,
                             "stack_label": stack_name,
                             "ssh_allow_users": [
-                                s["username"]
+                                s["linux"]["username"]
                                 for s in generated.get("students", [])
-                                if "linux" in s
+                                if s.get("linux", {}).get("password")
                             ],
                         }
                         ansible.run_playbooks(playbooks=playbooks, extra_vars=extra_vars)
@@ -290,7 +293,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
                 logger.error(error_msg, exc_info=True)
                 log_service.log(
                     deployment_id=deployment_id,
-                    event_type=DeploymentLogEventType.FAILED,
+                    event_type=DeploymentLogEventType.ANSIBLE_FAILED if stack_id else DeploymentLogEventType.FAILED,
                     message=error_msg,
                     level=DeploymentLogLevel.ERROR,
                     details={"error": str(stack_error), "stack_index": idx},
@@ -313,8 +316,9 @@ def deploy_stack(self, deployment_id: str) -> dict:
             repo.update_status(deployment_id, DeploymentStatus.FAILED)
             return {"status": "failed", "error": f"All {len(failed_stacks)} stacks failed", "failed_stacks": failed_stacks}
         elif failed_stacks:
-            repo.update_status(deployment_id, DeploymentStatus.RUNNING)
-            return {"status": "partial", "created_stacks": len(created_stack_ids), "failed_stacks": failed_stacks}
+            # Some stacks failed (e.g. Ansible error) — mark as FAILED even if Heat succeeded
+            repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            return {"status": "failed", "created_stacks": len(created_stack_ids), "failed_stacks": failed_stacks}
         else:
             repo.update_status(deployment_id, DeploymentStatus.RUNNING)
             return {"status": "success", "stack_count": len(created_stack_ids), "stack_ids": created_stack_ids}
@@ -471,6 +475,26 @@ def delete_deployment(self, deployment_id: str) -> dict:
             logger.info(f"Deleted {logs_deleted} log entries for deployment {deployment_id}")
         except Exception as e:
             logger.warning(f"Failed to delete logs for deployment {deployment_id}: {e}")
+
+        # Delete deployment_instances (FK prevents deleting deployment record otherwise)
+        try:
+            from src.models.deployment_instance import DeploymentInstance
+            from src.models.deployment_instance_access import DeploymentInstanceAccess
+            instances = db.query(DeploymentInstance).filter(
+                DeploymentInstance.deployment_id == deployment_id
+            ).all()
+            for inst in instances:
+                db.query(DeploymentInstanceAccess).filter(
+                    DeploymentInstanceAccess.deployment_instance_id == inst.id
+                ).delete(synchronize_session=False)
+            db.query(DeploymentInstance).filter(
+                DeploymentInstance.deployment_id == deployment_id
+            ).delete(synchronize_session=False)
+            db.commit()
+            logger.info(f"Deleted {len(instances)} deployment instance(s) for {deployment_id}")
+        except Exception as e:
+            logger.warning(f"Failed to delete deployment instances for {deployment_id}: {e}")
+            db.rollback()
         
         # Finally delete DB record
         try:

@@ -1,7 +1,9 @@
 """Deployment API endpoints."""
 from uuid import UUID
+import asyncio
 import json
 from fastapi import APIRouter, status, Query, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from src.core.exceptions import NotFoundException
 from src.models.user import UserRole, User
 from src.core.dependencies import DBSession
@@ -343,6 +345,91 @@ async def get_deployment_logs(
         data=[DeploymentLogResponse.model_validate(log) for log in logs],
         message=f"Retrieved {len(logs)} log entries for deployment",
         request_id=request_id
+    )
+
+
+@router.get("/{deployment_id}/logs/stream")
+async def stream_deployment_logs(
+    deployment_id: str,
+    db: DBSession,
+    user: CurrentUser,
+    since_id: str = Query(None, description="Only send logs newer than this log ID"),
+):
+    """
+    Stream deployment logs as Server-Sent Events (SSE).
+
+    Sends all existing logs immediately, then polls for new ones every second
+    until the deployment reaches a terminal state (RUNNING, FAILED, DELETED).
+    The stream closes automatically when done.
+    """
+    deployment_repo = DeploymentRepository(db)
+    deployment = deployment_repo.get_by_id(deployment_id)
+
+    if not deployment:
+        raise NotFoundException(f"Deployment with ID {deployment_id} not found")
+
+    user_roles = user.get("roles", [])
+    is_admin = "admin" in [role.lower() for role in user_roles]
+    if not is_admin:
+        owner_id = get_deployment_owner_id(deployment, db)
+        if user["user_id"] != owner_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to access this deployment",
+            )
+
+    TERMINAL_STATUSES = {"RUNNING", "FAILED", "DELETED", "CANCELLED"}
+
+    async def event_generator():
+        log_service = DeploymentLogService(db)
+        seen_ids: set[str] = set()
+
+        # Seed seen_ids from since_id position
+        if since_id:
+            all_logs = log_service.get_deployment_logs(deployment_id)
+            for log in all_logs:
+                if str(log.id) == since_id:
+                    break
+                seen_ids.add(str(log.id))
+
+        try:
+            while True:
+                # Refresh deployment status
+                db.expire(deployment)
+                current = deployment_repo.get_by_id(deployment_id)
+                current_status = (current.status.value if hasattr(current.status, "value") else str(current.status)).upper()
+
+                # Fetch all logs and emit unseen ones
+                logs = log_service.get_deployment_logs(deployment_id)
+                new_logs = [l for l in logs if str(l.id) not in seen_ids]
+                for log in new_logs:
+                    seen_ids.add(str(log.id))
+                    payload = json.dumps({
+                        "id": str(log.id),
+                        "deployment_id": str(log.deployment_id),
+                        "event_type": log.event_type.value if hasattr(log.event_type, "value") else str(log.event_type),
+                        "message": log.message,
+                        "level": log.level.value if hasattr(log.level, "value") else str(log.level),
+                        "details": json.loads(log.details_json) if log.details_json else None,
+                        "created_at": log.created_at.isoformat() if hasattr(log.created_at, "isoformat") else str(log.created_at),
+                    })
+                    yield f"data: {payload}\n\n"
+
+                if current_status in TERMINAL_STATUSES:
+                    yield "event: done\ndata: {}\n\n"
+                    break
+
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

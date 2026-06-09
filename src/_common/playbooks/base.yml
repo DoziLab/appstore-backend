@@ -1,8 +1,5 @@
 ---
 # DoziLab Base Playbook — läuft automatisch bei jedem Template-Deployment.
-#
-# Variablen: teacher.linux.{username, password}
-#            ssh_allow_users[]  ← Backend berechnet aus students mit ssh_access: true
 
 - name: DoziLab Base Setup
   hosts: all
