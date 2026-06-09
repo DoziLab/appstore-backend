@@ -436,22 +436,24 @@ class TemplateVersionService:
         
         # Try to find and parse app.yaml
         parameters = []
-        
+        user_files = []
+        allow_user_files = False
+
         try:
-            # Get app manifest file
             files = self.file_repo.get_by_version_id(version_id, include_content=True)
             app_manifest_file = None
-            
+
             for file in files:
                 if file.file_type == FileType.APP_MANIFEST or file.file_name.lower() == "app.yaml":
                     app_manifest_file = file
                     break
-            
+
             if app_manifest_file and app_manifest_file.content:
-                # Parse the app.yaml content and extract only parameters
                 parsed_manifest = AppManifestParser.parse(app_manifest_file.content)
                 parameters = parsed_manifest.get("parameters", [])
-                
+                user_files = parsed_manifest.get("user_files", [])
+                allow_user_files = parsed_manifest.get("app", {}).get("allow_user_files", False)
+
                 logger.info(
                     f"Loaded {len(parameters)} parameters for version {version_id}"
                 )
@@ -459,11 +461,12 @@ class TemplateVersionService:
             logger.warning(
                 f"Failed to parse app manifest for version {version_id}: {e}"
             )
-        
-        # Build result dictionary with only parameters
+
         result_dict = {
             "version": version,
-            "parameters": parameters
+            "parameters": parameters,
+            "user_files": user_files,
+            "allow_user_files": allow_user_files,
         }
         
         if file_count is not None:

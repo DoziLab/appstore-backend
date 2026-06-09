@@ -41,8 +41,12 @@ services:
       - KEYCLOAK_URL=${KEYCLOAK_URL}
       - KEYCLOAK_REALM=${KEYCLOAK_REALM}
       - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}
-      - KEYCLOAK_JWKS_CACHE_TTL=${KEYCLOAK_JWKS_CACHE_TTL:-3600}
+      - KEYCLOAK_JWKS_CACHE_TTL=${KEYCLOAK_JWKS_CACHE_TTl:-3600}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - ANSIBLE_SSH_KEY_PATH=/run/secrets/dozilab_ansible.pem
+      - ANSIBLE_SSH_KEY_NAME=${ANSIBLE_SSH_KEY_NAME:-dozilab-ansible-key}
+    volumes:
+      - ${ANSIBLE_SSH_KEY_PATH}:/run/secrets/dozilab_ansible.pem:ro
     depends_on:
       db:
         condition: service_healthy
@@ -67,6 +71,10 @@ services:
       - KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}
       - KEYCLOAK_JWKS_CACHE_TTL=${KEYCLOAK_JWKS_CACHE_TTL:-3600}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - ANSIBLE_SSH_KEY_PATH=/run/secrets/dozilab_ansible.pem
+      - ANSIBLE_SSH_KEY_NAME=${ANSIBLE_SSH_KEY_NAME:-dozilab-ansible-key}
+    volumes:
+      - ${ANSIBLE_SSH_KEY_PATH}:/run/secrets/dozilab_ansible.pem:ro
     depends_on:
       redis:
         condition: service_healthy

@@ -5,7 +5,7 @@ from typing import Optional, Any
 
 class AppManifestParameter:
     """Represents a parameter from app.yaml."""
-    
+
     def __init__(
         self,
         name: str,
@@ -29,9 +29,8 @@ class AppManifestParameter:
         self.step = step
         self.enum = enum
         self.hidden = hidden
-    
+
     def to_dict(self) -> dict:
-        """Convert parameter to dictionary."""
         result = {
             "name": self.name,
             "type": self.type,
@@ -39,60 +38,41 @@ class AppManifestParameter:
             "required": self.required,
             "secret": self.secret,
             "label": self.label,
-            "description": self.description
+            "description": self.description,
         }
-        
-        # Add optional fields only if they are set
         if self.step is not None:
             result["step"] = self.step
         if self.enum is not None:
             result["enum"] = self.enum
         if self.hidden:
             result["hidden"] = self.hidden
-        
         return result
 
 
 class AppManifestParser:
     """Parser for app.yaml manifest files."""
-    
+
     @staticmethod
     def parse(content: str) -> dict:
-        """Parse app.yaml content and extract metadata.
-        
-        Args:
-            content: Raw YAML content of app.yaml
-            
-        Returns:
-            Dictionary containing parsed app metadata including parameters
-            
-        Raises:
-            yaml.YAMLError: If YAML parsing fails
-            ValueError: If required fields are missing
+        """Parse app.yaml and return all sections.
+
+        Returns a dict with keys:
+          app, parameters, outputs, credentials, user_files
         """
         try:
             data = yaml.safe_load(content)
-            
             if not data:
                 raise ValueError("Empty YAML content")
-            
-            # Extract app metadata
+
             app_info = data.get("app", {})
-            
-            # Extract parameters
+
+            # Parameters
             parameters = []
-            params_list = data.get("parameters", [])
-            
-            for param in params_list:
-                if not isinstance(param, dict):
+            for param in data.get("parameters", []):
+                if not isinstance(param, dict) or not param.get("name"):
                     continue
-                    
-                name = param.get("name")
-                if not name:
-                    continue
-                
-                parameter = AppManifestParameter(
-                    name=name,
+                parameters.append(AppManifestParameter(
+                    name=param["name"],
                     type=param.get("type", "string"),
                     default=param.get("default"),
                     required=param.get("required", False),
@@ -101,59 +81,68 @@ class AppManifestParser:
                     description=param.get("description"),
                     step=param.get("step"),
                     enum=param.get("enum"),
-                    hidden=param.get("hidden", False)
-                )
-                parameters.append(parameter.to_dict())
-            
-            # Extract outputs
+                    hidden=param.get("hidden", False),
+                ).to_dict())
+
+            # Outputs
             outputs = []
-            outputs_list = data.get("outputs", [])
-            
-            for output in outputs_list:
-                if not isinstance(output, dict):
+            for output in data.get("outputs", []):
+                if not isinstance(output, dict) or not output.get("name"):
                     continue
-                    
-                name = output.get("name")
-                if not name:
-                    continue
-                
                 outputs.append({
-                    "name": name,
+                    "name": output["name"],
+                    "label": output.get("label"),
                     "from_heat_output": output.get("from_heat_output"),
-                    "description": output.get("description")
+                    "description": output.get("description"),
                 })
-            
-            # Extract artifacts
-            artifacts = data.get("artifacts", {})
-            
+
+            # Credentials
+            credentials_raw = data.get("credentials") or {}
+            credentials = {
+                "per_student": credentials_raw.get("per_student") or [],
+                "teacher": credentials_raw.get("teacher") or [],
+            }
+
+            # User files
+            user_files = data.get("user_files") or []
+
             return {
                 "app": {
                     "name": app_info.get("name"),
                     "label": app_info.get("label"),
                     "version": app_info.get("version"),
                     "description": app_info.get("description"),
-                    "owner_team": app_info.get("owner_team")
+                    "owner_team": app_info.get("owner_team"),
+                    "allow_user_files": app_info.get("allow_user_files", False),
                 },
-                "artifacts": artifacts,
                 "parameters": parameters,
-                "outputs": outputs
+                "outputs": outputs,
+                "credentials": credentials,
+                "user_files": user_files,
             }
-            
-        except yaml.YAMLError as e:
-            raise ValueError(f"Failed to parse YAML: {e}")
-    
+
+        except Exception as e:
+            raise ValueError(f"Failed to parse app.yaml: {e}")
+
     @staticmethod
     def extract_parameters(content: str) -> list[dict]:
-        """Extract only parameters from app.yaml content.
-        
-        Args:
-            content: Raw YAML content of app.yaml
-            
-        Returns:
-            List of parameter dictionaries
-        """
         try:
-            parsed = AppManifestParser.parse(content)
-            return parsed.get("parameters", [])
+            return AppManifestParser.parse(content).get("parameters", [])
+        except Exception:
+            return []
+
+    @staticmethod
+    def extract_credentials(content: str) -> dict:
+        """Return the credentials block or empty structure on failure."""
+        try:
+            return AppManifestParser.parse(content).get("credentials", {"per_student": [], "teacher": []})
+        except Exception:
+            return {"per_student": [], "teacher": []}
+
+    @staticmethod
+    def extract_user_files(content: str) -> list[dict]:
+        """Return the user_files list or empty list on failure."""
+        try:
+            return AppManifestParser.parse(content).get("user_files", [])
         except Exception:
             return []

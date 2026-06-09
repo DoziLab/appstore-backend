@@ -40,19 +40,19 @@ class DeploymentCreate(BaseModel):
     name: str = Field(..., description="Deployment name for identification", max_length=255)
     template_version_id: str = Field(..., description="Template version ID to deploy")
     course_id: str = Field(..., description="Keycloak group ID for the course")
-    
-    # Heat template parameters (OpenStack)
-    heat_parameters: dict[str, Any] = Field(
-        ...,
-        description="Heat template parameters (image, flavor, network, ssh_cidr, etc.)"
+
+    # All template parameters — backend separates Heat vs Ansible automatically
+    parameters: dict[str, Any] = Field(
+        default_factory=dict,
+        description="All template parameters from app.yaml (Heat + Ansible). Backend splits them automatically."
     )
-    
+
     # Stack assignments (for user_json generation)
     stack_assignments: list[StackAssignment] = Field(
         ...,
         description="Stack assignments with groups and students"
     )
-    
+
     # Teacher info (for admin_credentials generation)
     teacher: TeacherInfo = Field(
         ...,

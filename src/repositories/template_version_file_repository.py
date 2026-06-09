@@ -140,6 +140,59 @@ class TemplateVersionFileRepository(BaseRepository[TemplateVersionFile]):
         self.db.refresh(file)
         return file
 
+    def get_by_file_path(
+        self,
+        template_version_id: str | UUID,
+        file_path: str
+    ) -> Optional[TemplateVersionFile]:
+        """Get a file by its path within a template version."""
+        return self.db.query(self.model).filter(
+            self.model.template_version_id == str(template_version_id),
+            self.model.file_path == file_path
+        ).first()
+
+    def upsert(
+        self,
+        template_version_id: str,
+        file_name: str,
+        file_type: FileType,
+        file_path: str,
+        content: Optional[str],
+        file_size: Optional[int],
+        description: Optional[str],
+        is_primary: bool,
+        order: int,
+    ) -> tuple[TemplateVersionFile, bool]:
+        """Create or update a file by (template_version_id, file_path).
+
+        Returns:
+            (file, created) — created=True if new, False if updated
+        """
+        existing = self.get_by_file_path(template_version_id, file_path)
+        if existing:
+            existing.file_name = file_name
+            existing.file_type = file_type
+            existing.content = content
+            existing.file_size = file_size
+            existing.description = description
+            existing.order = order
+            self.db.commit()
+            self.db.refresh(existing)
+            return existing, False
+        else:
+            file = self.create(
+                template_version_id=template_version_id,
+                file_name=file_name,
+                file_type=file_type,
+                file_path=file_path,
+                content=content,
+                file_size=file_size,
+                description=description,
+                is_primary=is_primary,
+                order=order,
+            )
+            return file, True
+
     def delete_by_version_id(
         self,
         template_version_id: str | UUID

@@ -1,10 +1,4 @@
-"""Persist deployment credentials produced by the per-stack ``user_json``.
-
-After a Heat stack is created, this service writes one ``DeploymentInstance``
-row per stack and one ``DeploymentInstanceAccess`` row per credential entry
-(group account, teacher admin, postgres user, pgAdmin user, ...). Passwords
-are auto-encrypted by the ``EncryptedString`` type decorator on the model.
-"""
+"""Persist deployment credentials produced by the per-stack ``user_json``."""
 from __future__ import annotations
 
 from typing import Any
@@ -15,7 +9,6 @@ from src.models.deployment_instance_access import AccessType, DeploymentInstance
 
 
 class DeploymentCredentialService:
-    """Write the credentials embedded in a stack's ``user_json`` to the database."""
 
     def __init__(self, db: Session):
         self.db = db
@@ -26,18 +19,9 @@ class DeploymentCredentialService:
         stack_name: str,
         openstack_stack_id: str,
         user_json: dict[str, Any],
+        floating_ip: str = "",
+        heat_outputs: dict[str, Any] | None = None,
     ) -> DeploymentInstance:
-        """Persist credentials for one Heat stack.
-
-        Creates a single ``DeploymentInstance`` for the stack and attaches one
-        ``DeploymentInstanceAccess`` row per credential entry found in
-        ``user_json``. Both the Ubuntu shape (credentials nested under
-        ``instance``) and the Postgres shape (credentials inside
-        ``applications[*]``) are supported.
-
-        The instance status is set to ``RUNNING`` because this is called only
-        after the Heat stack creation API returned successfully.
-        """
         instance = DeploymentInstance(
             deployment_id=deployment_id,
             vm_name=stack_name,
@@ -45,15 +29,17 @@ class DeploymentCredentialService:
             status=DeploymentInstanceStatus.RUNNING,
         )
         self.db.add(instance)
-        self.db.flush()  # populate instance.id for FK use below
+        self.db.flush()
 
-        for entry in self._extract_access_entries(user_json):
+        for entry in self._extract_access_entries(user_json, floating_ip, heat_outputs or {}):
             self.db.add(
                 DeploymentInstanceAccess(
                     deployment_instance_id=instance.id,
                     access_type=entry["access_type"],
                     username=entry.get("username"),
                     password=entry.get("password"),
+                    connection_url=entry.get("connection_url"),
+                    port=entry.get("port"),
                 )
             )
 
@@ -61,43 +47,60 @@ class DeploymentCredentialService:
         return instance
 
     @staticmethod
-    def _extract_access_entries(user_json: dict[str, Any]) -> list[dict[str, Any]]:
-        """Flatten a ``user_json`` payload into a list of access-row payloads.
-
-        Returns dicts shaped like ``{access_type, username, password}``. Username
-        for Postgres entries falls back to ``db_user`` since that's the field
-        the postgres template uses; pgAdmin entries use ``email``.
-        """
+    def _extract_access_entries(
+        user_json: dict[str, Any],
+        floating_ip: str = "",
+        heat_outputs: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         entries: list[dict[str, Any]] = []
+        heat_outputs = heat_outputs or {}
 
+        # SSH credentials (Ubuntu/Ansible templates)
         instance = user_json.get("instance") or {}
         for cred in instance.get("credentials") or []:
+            username = cred.get("username")
             entries.append({
                 "access_type": AccessType.SSH,
-                "username": cred.get("username"),
+                "username": username,
                 "password": cred.get("password"),
+                "connection_url": f"ssh {username}@{floating_ip}" if username and floating_ip else None,
+                "port": 22,
             })
         admin = instance.get("admin_credentials")
         if admin:
+            username = admin.get("username")
             entries.append({
                 "access_type": AccessType.SSH,
-                "username": admin.get("username"),
+                "username": username,
                 "password": admin.get("password"),
+                "connection_url": f"ssh {username}@{floating_ip}" if username and floating_ip else None,
+                "port": 22,
             })
 
+        # App credentials (Postgres / pgAdmin templates)
+        pgadmin_url = heat_outputs.get("pgadmin_url")
+
         for application in user_json.get("applications") or []:
+            app_name = (application.get("name") or "").lower()
+            is_pgadmin = "pgadmin" in app_name
+
             for cred in application.get("credentials") or []:
                 entries.append({
                     "access_type": AccessType.DATABASE,
-                    "username": cred.get("db_user") or cred.get("email") or cred.get("username"),
+                    "username": cred.get("email") or cred.get("db_user") or cred.get("username"),
                     "password": cred.get("password"),
+                    "connection_url": pgadmin_url if is_pgadmin else None,
+                    "port": 80 if is_pgadmin else None,
                 })
+
             app_admin = application.get("admin_credentials")
             if app_admin:
                 entries.append({
                     "access_type": AccessType.DATABASE,
-                    "username": app_admin.get("db_user") or app_admin.get("email") or app_admin.get("username"),
+                    "username": app_admin.get("email") or app_admin.get("db_user") or app_admin.get("username"),
                     "password": app_admin.get("password"),
+                    "connection_url": pgadmin_url if is_pgadmin else None,
+                    "port": 80 if is_pgadmin else None,
                 })
 
         return [e for e in entries if e.get("password")]

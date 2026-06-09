@@ -83,14 +83,20 @@ async def get_version(
         )
         version = result_with_params["version"]
         parameters = result_with_params.get("parameters", [])
+        user_files = result_with_params.get("user_files", [])
+        allow_user_files = result_with_params.get("allow_user_files", False)
 
         if with_file_count:
             version_data = TemplateVersionWithFilesResponse.model_validate(version).model_dump(mode="json")
             version_data["file_count"] = result_with_params["file_count"]
             version_data["parameters"] = parameters
+            version_data["user_files"] = user_files
+            version_data["allow_user_files"] = allow_user_files
         else:
             version_data = TemplateVersionResponse.model_validate(version).model_dump(mode="json")
             version_data["parameters"] = parameters
+            version_data["user_files"] = user_files
+            version_data["allow_user_files"] = allow_user_files
         
         return ResponseBuilder.success(
             data=version_data,
@@ -162,6 +168,8 @@ async def list_template_versions(
             )
             version_data = TemplateVersionResponse.model_validate(result["version"]).model_dump(mode="json")
             version_data["parameters"] = result.get("parameters", [])
+            version_data["user_files"] = result.get("user_files", [])
+            version_data["allow_user_files"] = result.get("allow_user_files", False)
             version_responses.append(version_data)
     else:
         version_responses = [
@@ -215,6 +223,8 @@ async def get_active_version(
         )
         version_data = TemplateVersionResponse.model_validate(result["version"]).model_dump(mode="json")
         version_data["parameters"] = result.get("parameters", [])
+        version_data["user_files"] = result.get("user_files", [])
+        version_data["allow_user_files"] = result.get("allow_user_files", False)
         
         return ResponseBuilder.success(
             data=version_data,

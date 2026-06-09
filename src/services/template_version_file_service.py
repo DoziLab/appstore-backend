@@ -6,7 +6,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from src.models.template_version_file import TemplateVersionFile
+from src.models.template_version_file import TemplateVersionFile, FileType
 from src.models.template import Template, TemplateVisibility, TemplateApprovalStatus
 from src.repositories.template_version_file_repository import TemplateVersionFileRepository
 from src.repositories.template_version_repository import TemplateVersionRepository
@@ -108,35 +108,32 @@ class TemplateVersionFileService:
         self,
         file_data: TemplateVersionFileCreate
     ) -> TemplateVersionFile:
-        """Create a new template version file.
-        
-        Args:
-            file_data: File creation data
-            
-        Returns:
-            Created file
-            
+        """Create or update a template version file (upsert by file_path).
+
+        If a file with the same (template_version_id, file_path) already exists
+        it is updated instead of creating a duplicate.
+
         Raises:
             BadRequestException: If trying to set multiple primary files
         """
         # Check if setting as primary and another primary file exists
         if file_data.is_primary:
             existing_primary = self.file_repo.get_primary_file(file_data.template_version_id)
-            if existing_primary:
+            if existing_primary and existing_primary.file_path != file_data.file_path:
                 raise BadRequestException(
                     f"Template version {file_data.template_version_id} already has a primary file: {existing_primary.file_name}"
                 )
-        
-        file = self.file_repo.create(
+
+        file, _ = self.file_repo.upsert(
             template_version_id=file_data.template_version_id,
             file_name=file_data.file_name,
-            file_type=file_data.file_type,
+            file_type=FileType(file_data.file_type),
             file_path=file_data.file_path,
             content=file_data.content,
             file_size=file_data.file_size,
             description=file_data.description,
             is_primary=file_data.is_primary,
-            order=file_data.order
+            order=file_data.order,
         )
         return file
 

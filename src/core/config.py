@@ -29,6 +29,27 @@ class Settings(BaseSettings):
     
     # Encryption key for secrets (Fernet key)
     encryption_key: str | None = None
+
+    # Ansible SSH key — Pfad zur privaten Key-Datei (chmod 600)
+    # Der zugehörige Public Key muss in OpenStack als key_name registriert sein.
+    ansible_ssh_key_path: str | None = None
+    ansible_ssh_key_name: str = "dozilab-ansible-key"  # Name des keypairs in OpenStack
+
+    # Pfad zum appstore-apps Verzeichnis (für _common Playbooks)
+    appstore_apps_path: str = "/app/appstore-apps"
+
+    @property
+    def ansible_ssh_private_key(self) -> str | None:
+        """Read SSH private key content from file path."""
+        if not self.ansible_ssh_key_path:
+            return None
+        try:
+            from pathlib import Path
+            return Path(self.ansible_ssh_key_path).read_text()
+        except OSError as e:
+            import logging
+            logging.getLogger(__name__).error(f"Cannot read SSH key from {self.ansible_ssh_key_path}: {e}")
+            return None
     
     @property
     def database_url(self) -> str:

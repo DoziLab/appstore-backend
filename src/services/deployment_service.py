@@ -60,28 +60,32 @@ class DeploymentService:
                 skip_access_check=True
             )
             template_params_map = {p.name: p for p in template_params_resp.parameters}
-            required_params = [p.name for p in template_params_resp.parameters if p.required]
         except NotFoundException:
             raise
         except Exception as e:
             raise BadRequestException(f"Failed to read template parameters: {e}")
 
-        provided = deployment_data.heat_parameters or {}
-        
-        # Check for missing required parameters (excluding user_json and admin_credentials which we generate)
+        provided = deployment_data.parameters or {}
+
+        # Backend always injects these — never required from the caller
+        backend_managed = {"user_json", "admin_credentials", "key_name"}
+
+        # Validate all required parameters from app.yaml are provided
+        required_params = [
+            p.name for p in template_params_resp.parameters
+            if p.required and p.name not in backend_managed
+        ]
         if required_params:
-            missing = [p for p in required_params if p not in provided and p not in ["user_json", "admin_credentials"] and provided.get(p) is None]
+            missing = [p for p in required_params if p not in provided]
             if missing:
                 raise BadRequestException(f"Missing required template parameters: {', '.join(missing)}")
-        
+
         # Type validation for provided parameters
         type_errors = []
         for param_name, param_value in provided.items():
             if param_name not in template_params_map:
                 continue
-            
             expected_type = template_params_map[param_name].type.lower()
-            
             if expected_type == "boolean":
                 if not isinstance(param_value, bool):
                     type_errors.append(f"{param_name}: expected boolean, got {type(param_value).__name__}")
@@ -91,7 +95,6 @@ class DeploymentService:
             elif expected_type == "string":
                 if not isinstance(param_value, str):
                     type_errors.append(f"{param_name}: expected string, got {type(param_value).__name__}")
-        
         if type_errors:
             raise BadRequestException(f"Type validation errors: {'; '.join(type_errors)}")
 
@@ -125,10 +128,9 @@ class DeploymentService:
             self.db.flush()  # Get the ID without committing
         
         # Store complete deployment info as JSON
-        # Note: user_json will be generated per-stack during deployment task
         deployment_parameters = json.dumps({
             "template_name": template.name,
-            "heat_parameters": provided,
+            "parameters": provided,
             "stack_assignments": [sa.model_dump() for sa in deployment_data.stack_assignments],
             "teacher": deployment_data.teacher.model_dump()
         })
@@ -155,7 +157,7 @@ class DeploymentService:
                 "keycloak_group_id": deployment_data.course_id,
                 "stack_count": len(deployment_data.stack_assignments),
                 "total_groups": sum(len(sa.groups) for sa in deployment_data.stack_assignments),
-                "has_heat_parameters": bool(deployment_data.heat_parameters)
+                "has_parameters": bool(deployment_data.parameters)
             },
             request_id=request_id
         )

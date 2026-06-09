@@ -1616,27 +1616,410 @@ def create_lecturer_user(db: Session) -> User:
     return user
 
 
+ANSIBLE_MULTIUSER_APP_YAML = """
+app:
+  name: ansible-multiuser
+  label: Ansible Multi-User Ubuntu
+  version: 2.0.0
+  description: >
+    Ubuntu VM mit mehreren Benutzerkonten, verwaltet durch Ansible.
+    Pro Gruppe wird ein Linux-Account mit eigenem Arbeitsverzeichnis erstellt.
+  owner_team: dozilab-app-team
+
+  allow_user_files: true
+
+parameters:
+
+  - name: stack_label
+    label: Stack-Label
+    step: template
+    type: string
+    default: ansible
+    required: true
+    description: "Kurzes Label für diesen Stack (z.B. kurs-ws2026)."
+
+  - name: image
+    label: Betriebssystem-Image
+    step: konfiguration
+    type: string
+    default: "Ubuntu 22.04 2025-01"
+    required: true
+    enum:
+      - "Ubuntu 22.04 2025-01"
+      - "Ubuntu 24.04 2025-01"
+      - "Ubuntu 24.04 2026-01"
+
+  - name: flavor
+    label: VM-Größe (Flavor)
+    step: konfiguration
+    type: string
+    default: "gp1.small"
+    required: true
+    enum:
+      - "gp1.small"
+      - "gp1.medium"
+
+  - name: ssh_cidr
+    label: SSH-Zugriff (CIDR)
+    step: netzwerk
+    type: string
+    default: "141.72.0.0/16"
+    required: true
+    description: "Nur dieses Netz darf per SSH zugreifen. Standard: DHBW/VPN."
+
+  - name: force_password_change
+    label: Passwort-Änderung beim ersten Login erzwingen
+    step: zugriff
+    type: boolean
+    default: true
+    required: true
+
+credentials:
+
+  per_student:
+    - linux:
+        username: "{{ username }}"
+        password: generate
+
+  teacher:
+
+user_files:
+  - name:        aufgabe_pdf
+    label:       "Aufgabenstellung (PDF)"
+    description: "Wird auf alle VMs kopiert — gleiche Aufgabe für alle Gruppen."
+    required:    false
+    accept:      "*.pdf"
+    destination: /opt/dozilab/user-files/aufgabe.pdf
+    mode:        all_stacks
+
+  - name:        material_gruppe
+    label:       "Gruppenmaterial"
+    description: "Pro Gruppe eigene Dateien — z.B. unterschiedliche Datensätze oder Aufgaben."
+    required:    false
+    accept:      "*"
+    destination: /opt/dozilab/user-files/{{ group_name }}/material
+    mode:        per_group
+
+outputs:
+  - name: floating_ip
+    label: Floating IP
+    from_heat_output: floating_ip
+
+  - name: server_id
+    label: Server ID
+    from_heat_output: server_id
+"""
+
+ANSIBLE_MULTIUSER_HEAT_TEMPLATE = """
+heat_template_version: 2018-08-31
+
+description: >
+  DoziLab Ansible Multi-User VM.
+  Nur Infrastruktur — keine user_data, keine cloud-init.
+  Konfiguration übernimmt Ansible vom Backend aus per SSH.
+
+parameters:
+  image:
+    type: string
+    default: "Ubuntu 22.04 2025-01"
+    constraints:
+      - allowed_values:
+          - "Ubuntu 22.04 2025-01"
+          - "Ubuntu 24.04 2025-01"
+          - "Ubuntu 24.04 2026-01"
+
+  flavor:
+    type: string
+    default: "gp1.small"
+    constraints:
+      - allowed_values: ["gp1.small", "gp1.medium"]
+
+  ssh_cidr:
+    type: string
+    default: "141.72.0.0/16"
+    constraints:
+      - allowed_pattern: '^(\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$'
+
+  stack_label:
+    type: string
+    default: "ansible"
+    constraints:
+      - allowed_pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+
+  network:
+    type: string
+    default: "NAT"
+    constraints:
+      - allowed_values: ["NAT"]
+
+  external_network:
+    type: string
+    default: "DHBW"
+    constraints:
+      - allowed_values: ["DHBW"]
+
+  key_name:
+    type: string
+
+resources:
+  secgroup:
+    type: OS::Neutron::SecurityGroup
+    properties:
+      description: SSH + ICMP aus erlaubtem CIDR
+      rules:
+        - direction: ingress
+          protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+          remote_ip_prefix: { get_param: ssh_cidr }
+        - direction: ingress
+          protocol: icmp
+          remote_ip_prefix: { get_param: ssh_cidr }
+
+  port:
+    type: OS::Neutron::Port
+    properties:
+      network: { get_param: network }
+      security_groups:
+        - { get_resource: secgroup }
+
+  server:
+    type: OS::Nova::Server
+    properties:
+      name:
+        str_replace:
+          template: "dozilab-LABEL"
+          params:
+            LABEL: { get_param: stack_label }
+      image:    { get_param: image }
+      flavor:   { get_param: flavor }
+      key_name: { get_param: key_name }
+      networks:
+        - port: { get_resource: port }
+
+  fip:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: { get_param: external_network }
+
+  fip_assoc:
+    type: OS::Neutron::FloatingIPAssociation
+    properties:
+      floatingip_id: { get_resource: fip }
+      port_id:       { get_resource: port }
+
+outputs:
+  floating_ip:
+    value: { get_attr: [fip, floating_ip_address] }
+
+  server_id:
+    value: { get_resource: server }
+"""
+
+ANSIBLE_MULTIUSER_PLAYBOOK = """
+---
+- name: DoziLab Multi-User Setup
+  hosts: all
+  remote_user: ubuntu
+  become: true
+
+  tasks:
+
+    - name: /opt/dozilab nur für root zugänglich machen
+      file:
+        path:  /opt/dozilab
+        state: directory
+        owner: root
+        group: root
+        mode:  "0700"
+
+    - name: Student Accounts erstellen
+      user:
+        name:        "{{ item.username }}"
+        shell:       /bin/bash
+        create_home: true
+        state:       present
+      loop: "{{ students }}"
+      no_log: true
+
+    - name: Passwörter setzen
+      user:
+        name:     "{{ item.username }}"
+        password: "{{ item.linux.password | password_hash('sha512') }}"
+        update_password: always
+      loop: "{{ students }}"
+      no_log: true
+
+    - name: Passwort-Änderung beim ersten Login erzwingen
+      command: chage -d 0 {{ item.username }}
+      loop: "{{ students }}"
+      no_log: true
+      when: force_password_change | bool
+
+    - name: Arbeitsverzeichnis erstellen
+      file:
+        path:  "/home/{{ item.username }}/work"
+        state: directory
+        owner: "{{ item.username }}"
+        group: "{{ item.username }}"
+        mode:  "0700"
+      loop: "{{ students }}"
+      no_log: true
+
+    - name: .bashrc für jeden Student setzen
+      copy:
+        src:   /opt/dozilab/files/bashrc
+        dest:  "/home/{{ item.username }}/.bashrc"
+        owner: "{{ item.username }}"
+        group: "{{ item.username }}"
+        mode:  "0644"
+        remote_src: true
+      loop: "{{ students }}"
+      no_log: true
+
+    - name: MOTD setzen
+      shell: |
+        sed 's/__STACK_LABEL__/{{ stack_label }}/g' \\
+          /opt/dozilab/files/motd > /etc/update-motd.d/99-dozilab
+        chmod +x /etc/update-motd.d/99-dozilab
+
+    - name: Scripts ausführbar machen
+      file:
+        path:  "{{ item }}"
+        mode:  "0755"
+      loop:
+        - /opt/dozilab/scripts/check_student_setup.sh
+        - /opt/dozilab/scripts/reset_password.sh
+
+    - name: Student-Setup verifizieren
+      command: /opt/dozilab/scripts/check_student_setup.sh {{ item.username }}
+      loop: "{{ students }}"
+      register: check_result
+      changed_when: false
+      no_log: true
+
+    - name: Aufgabenstellung in Arbeitsverzeichnis kopieren
+      copy:
+        src:   /opt/dozilab/user-files/aufgabe.pdf
+        dest:  "/home/{{ item.username }}/work/aufgabe.pdf"
+        owner: "{{ item.username }}"
+        mode:  "0644"
+        remote_src: true
+      loop: "{{ students }}"
+      no_log: true
+      when: user_files.aufgabe_pdf.exists | default(false)
+
+    - name: Gruppenverzeichnis für Material erstellen
+      file:
+        path:  "/home/{{ item.username }}/work/material"
+        state: directory
+        owner: "{{ item.username }}"
+        mode:  "0700"
+      loop: "{{ students }}"
+      no_log: true
+      when: user_files.material_gruppe[item.group_name].exists | default(false)
+
+    - name: Gruppenmaterial in Arbeitsverzeichnis kopieren
+      copy:
+        src:   "/opt/dozilab/user-files/{{ item.group_name }}/material"
+        dest:  "/home/{{ item.username }}/work/material/"
+        owner: "{{ item.username }}"
+        mode:  "0600"
+        remote_src: true
+      loop: "{{ students }}"
+      no_log: true
+      when: user_files.material_gruppe[item.group_name].exists | default(false)
+"""
+
+
+ANSIBLE_MULTIUSER_BASHRC = """# ==============================================================================
+# DoziLab: .bashrc für Student-Accounts
+# ==============================================================================
+export HISTSIZE=1000
+export HISTFILESIZE=2000
+export EDITOR=nano
+
+force_color_prompt=yes
+PS1='\\[\\033[01;32m\\]\\u@\\h\\[\\033[00m\\]:\\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\$ '
+
+alias ll='ls -alF'
+alias la='ls -A'
+alias l='ls -CF'
+alias ..='cd ..'
+alias work='cd ~/work'
+
+echo ""
+echo "  Willkommen, $(whoami)!"
+echo "  Dein Arbeitsverzeichnis: ~/work"
+echo ""
+"""
+
+ANSIBLE_MULTIUSER_MOTD = """#!/usr/bin/env bash
+# ==============================================================================
+# DoziLab: Message of the Day
+# Platzhalter __STACK_LABEL__ wird vom Playbook ersetzt.
+# ==============================================================================
+echo ""
+echo "  ██████╗  ██████╗ ███████╗██╗██╗      █████╗ ██████╗ "
+echo "  ██╔══██╗██╔═══██╗╚══███╔╝██║██║     ██╔══██╗██╔══██╗"
+echo "  ██║  ██║██║   ██║  ███╔╝ ██║██║     ███████║██████╔╝"
+echo "  ██║  ██║██║   ██║ ███╔╝  ██║██║     ██╔══██║██╔══██╗"
+echo "  ██████╔╝╚██████╔╝███████╗██║███████╗██║  ██║██████╔╝"
+echo "  ╚═════╝  ╚═════╝ ╚══════╝╚═╝╚══════╝╚═╝  ╚═╝╚═════╝ "
+echo ""
+echo "  Kurs:    __STACK_LABEL__"
+echo "  Support: Wende dich an deinen Dozenten"
+echo ""
+"""
+
+ANSIBLE_MULTIUSER_CHECK_SCRIPT = """#!/usr/bin/env bash
+set -euo pipefail
+USERNAME="${1:?Usage: check_student_setup.sh <username>}"
+ERRORS=0
+
+check() {
+    local desc="$1"; local result="$2"
+    if [[ "$result" == "ok" ]]; then echo "  ✓ $desc"
+    else echo "  ✗ $desc → $result"; ERRORS=$((ERRORS + 1)); fi
+}
+
+echo "Checking setup for: $USERNAME"
+id "$USERNAME" &>/dev/null && check "Account existiert" "ok" || check "Account existiert" "nicht gefunden"
+[[ -d "/home/$USERNAME" ]] && check "Home-Verzeichnis" "ok" || check "Home-Verzeichnis" "fehlt"
+[[ -d "/home/$USERNAME/work" ]] && check "Arbeitsverzeichnis" "ok" || check "Arbeitsverzeichnis" "fehlt"
+passwd -S "$USERNAME" 2>/dev/null | grep -qv " L " && check "Passwort gesetzt" "ok" || check "Passwort gesetzt" "gesperrt"
+SHELL=$(getent passwd "$USERNAME" | cut -d: -f7)
+[[ "$SHELL" == "/bin/bash" ]] && check "Shell ist /bin/bash" "ok" || check "Shell ist /bin/bash" "ist $SHELL"
+
+echo ""
+if [[ $ERRORS -eq 0 ]]; then echo "✓ Setup OK für $USERNAME"; exit 0
+else echo "✗ $ERRORS Fehler für $USERNAME"; exit 1; fi
+"""
+
+ANSIBLE_MULTIUSER_RESET_SCRIPT = """#!/usr/bin/env bash
+set -euo pipefail
+USERNAME="${1:?Usage: reset_password.sh <username> <new_password>}"
+NEW_PASSWORD="${2:?Usage: reset_password.sh <username> <new_password>}"
+if ! id "$USERNAME" &>/dev/null; then echo "ERROR: Account '$USERNAME' nicht gefunden" >&2; exit 1; fi
+echo "${USERNAME}:${NEW_PASSWORD}" | chpasswd
+echo "✓ Passwort für '$USERNAME' zurückgesetzt"
+chage -d 0 "$USERNAME"
+echo "✓ Passwort-Änderung beim nächsten Login erzwungen"
+"""
+
+
 def create_mock_templates(db: Session, owner_id: str) -> list[Template]:
     """Create mock templates."""
     templates_data = [
         {
-            "name": "Multi-User Ubuntu",
-            "description": "Deploy one Ubuntu VM for a course with multiple local student accounts (username/password), SSH allowed only from DHBW/VPN",
+            "name": "Ansible Multi-User Ubuntu",
+            "description": "Ubuntu VM mit mehreren Benutzerkonten, verwaltet durch Ansible. Pro Gruppe wird ein Linux-Account mit eigenem Arbeitsverzeichnis erstellt.",
             "repo_url": "https://github.com/dozilab/appstore-templates",
-            "icon_url": "mdi:server-network",
-            "visibility": TemplateVisibility.PUBLIC,
-            "approval_status": TemplateApprovalStatus.APPROVED,
-        },
-        {
-            "name": "PostgreSQL Group Database",
-            "description": "Deploy a PostgreSQL database server where each student group gets its own database and role. Optional pgAdmin4 web interface for database management",
-            "repo_url": "https://github.com/dozilab/appstore-templates",
-            "icon_url": "mdi:database",
+            "icon_url": "mdi:ansible",
             "visibility": TemplateVisibility.PUBLIC,
             "approval_status": TemplateApprovalStatus.APPROVED,
         }
-            
-      ]
+    ]
     
     templates = []
     for data in templates_data:
@@ -1729,16 +2112,10 @@ def create_mock_template_files(db: Session, versions: list[TemplateVersion]) -> 
             logger.info(f"Creating files for version {version.id} (template: {template.name})")
             
             # Determine which template files to use based on template name
-            if template.name == "Multi-User Ubuntu":
-                app_yaml_content = MULTISTUDENT_APP_YAML
-                heat_template_content = MULTISTUDENT_HEAT_TEMPLATE
-                cloud_init_content = MULTISTUDENT_CLOUD_INIT
-                heat_file_name = "main.yaml"
-                heat_file_path = "heat/main.yaml"
-            elif template.name == "PostgreSQL Group Database":
-                app_yaml_content = POSTGRES_APP_YAML
-                heat_template_content = POSTGRES_HEAT_TEMPLATE
-                cloud_init_content = POSTGRES_CLOUD_INIT
+            if template.name == "Ansible Multi-User Ubuntu":
+                app_yaml_content = ANSIBLE_MULTIUSER_APP_YAML
+                heat_template_content = ANSIBLE_MULTIUSER_HEAT_TEMPLATE
+                cloud_init_content = None
                 heat_file_name = "main.yaml"
                 heat_file_path = "heat/main.yaml"
             else:
@@ -1757,7 +2134,7 @@ def create_mock_template_files(db: Session, versions: list[TemplateVersion]) -> 
             )
             db.add(app_yaml)
             logger.debug(f"Added app.yaml for version {version.id}")
-            
+
             # Create heat template
             heat_template = TemplateVersionFile(
                 template_version_id=version.id,
@@ -1769,22 +2146,64 @@ def create_mock_template_files(db: Session, versions: list[TemplateVersion]) -> 
             )
             db.add(heat_template)
             logger.debug(f"Added heat template for version {version.id}")
-            
-            # Create cloud-init user-data
-            cloud_init = TemplateVersionFile(
-                template_version_id=version.id,
-                file_name="user-data.yaml",
-                file_type=FileType.CLOUD_INIT,
-                file_path="cloud-init/user-data.yaml",
-                content=cloud_init_content,
-                is_primary=False
-            )
-            db.add(cloud_init)
-            logger.debug(f"Added cloud-init for version {version.id}")
-            
+
+            files_in_version = 2
+
+            # Create cloud-init user-data (only for templates that use it)
+            if cloud_init_content is not None:
+                cloud_init = TemplateVersionFile(
+                    template_version_id=version.id,
+                    file_name="user-data.yaml",
+                    file_type=FileType.CLOUD_INIT,
+                    file_path="cloud-init/user-data.yaml",
+                    content=cloud_init_content,
+                    is_primary=False
+                )
+                db.add(cloud_init)
+                logger.debug(f"Added cloud-init for version {version.id}")
+                files_in_version += 1
+
+            # Create ansible playbook (only for ansible-based templates)
+            if template.name == "Ansible Multi-User Ubuntu":
+                playbook = TemplateVersionFile(
+                    template_version_id=version.id,
+                    file_name="main.yml",
+                    file_type=FileType.ANSIBLE_PLAYBOOK,
+                    file_path="playbooks/main.yml",
+                    content=ANSIBLE_MULTIUSER_PLAYBOOK,
+                    is_primary=False
+                )
+                db.add(playbook)
+                files_in_version += 1
+
+                for name, content in [("bashrc", ANSIBLE_MULTIUSER_BASHRC), ("motd", ANSIBLE_MULTIUSER_MOTD)]:
+                    db.add(TemplateVersionFile(
+                        template_version_id=version.id,
+                        file_name=name,
+                        file_type=FileType.CONFIG_FILE,
+                        file_path=f"files/{name}",
+                        content=content,
+                        is_primary=False
+                    ))
+                    files_in_version += 1
+
+                for name, content in [
+                    ("check_student_setup.sh", ANSIBLE_MULTIUSER_CHECK_SCRIPT),
+                    ("reset_password.sh", ANSIBLE_MULTIUSER_RESET_SCRIPT),
+                ]:
+                    db.add(TemplateVersionFile(
+                        template_version_id=version.id,
+                        file_name=name,
+                        file_type=FileType.SHELL_SCRIPT,
+                        file_path=f"scripts/{name}",
+                        content=content,
+                        is_primary=False
+                    ))
+                    files_in_version += 1
+
             db.commit()
             files_created += 1
-            logger.info(f"✅ Created 3 files for version: {version.id} (template: {template.name})")
+            logger.info(f"✅ Created {files_in_version} files for version: {version.id} (template: {template.name})")
             
         except Exception as e:
             logger.error(f"❌ Failed to create files for version {version.id}: {e}", exc_info=True)

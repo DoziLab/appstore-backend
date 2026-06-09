@@ -113,15 +113,33 @@ class HeatStackService:
             
             # Create stack
             stack = conn.orchestration.create_stack(preview=False, **stack_params)
-            
             logger.info(f"Heat stack created successfully: {stack.id}")
-            
+
+            # Wait until CREATE_COMPLETE — SDK polls every 5s, timeout 30min
+            logger.info(f"Waiting for stack {stack.id} to reach CREATE_COMPLETE...")
+            stack = conn.orchestration.wait_for_status(
+                stack,
+                status="CREATE_COMPLETE",
+                failures=["CREATE_FAILED"],
+                interval=5,
+                wait=1800,
+            )
+            logger.info(f"Stack {stack.id} reached status: {stack.status}")
+
+            # Read outputs (floating_ip, server_id, etc.)
+            outputs = {}
+            if stack.outputs:
+                for output in stack.outputs:
+                    outputs[output["output_key"]] = output["output_value"]
+
             return {
                 'stack_id': stack.id,
                 'stack_name': stack.name,
                 'status': stack.status,
                 'status_reason': stack.status_reason,
                 'creation_time': str(stack.created_at) if stack.created_at else None,
+                'floating_ip': outputs.get('floating_ip'),
+                'outputs': outputs,
             }
             
         except HttpException as e:

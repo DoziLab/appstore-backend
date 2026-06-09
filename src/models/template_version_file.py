@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
-from sqlalchemy import String, DateTime, Text, ForeignKey, Enum as SQLEnum, Integer
+from sqlalchemy import String, DateTime, Text, ForeignKey, Enum as SQLEnum, Integer, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
@@ -29,6 +29,9 @@ class TemplateVersionFile(Base):
     """
     
     __tablename__ = "template_version_files"
+    __table_args__ = (
+        UniqueConstraint('template_version_id', 'file_path', name='uq_template_version_file_path'),
+    )
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     template_version_id: Mapped[str] = mapped_column(String(36), ForeignKey("template_versions.id"), nullable=False)
