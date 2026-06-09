@@ -1,0 +1,51 @@
+meta {
+  name: Reject Template Version
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{base_url}}/api/v1/template-versions/{{version_id}}/reject
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "reason": "app.yaml is missing required parameters"
+  }
+}
+
+docs {
+  # Reject Template Version (Admin)
+
+  Rejects a single template version. Sets:
+
+  - `approval_status = rejected`
+  - `approved_by_id` = current admin user (reviewer)
+  - `approved_at` = now()
+  - `rejection_reason` = the optional `reason` body, persisted for the
+    submitter to see in the UI.
+
+  The body is optional; sending `{}` or no body at all also works.
+
+  ## Permissions
+
+  ADMIN-only.
+
+  ## Path Parameters
+
+  - `version_id` (UUID) — the version to reject
+
+  ## Body (optional)
+
+  - `reason` (string, ≤ 2000 chars) — admin-provided rejection reason.
+
+  ## Returns
+
+  Updated TemplateVersion with `approval_status='rejected'` and `rejection_reason` populated.
+}

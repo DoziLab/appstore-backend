@@ -1,0 +1,80 @@
+meta {
+  name: Create Template Version With Files
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/api/v1/template-versions/with-files
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "template_id": "{{template_id}}",
+    "version": "1.2.0",
+    "git_commit_sha": "manual-edit-2026-06-09T12:00:00Z",
+    "is_active": true,
+    "base_version_id": null,
+    "files": [
+      {
+        "file_name": "app.yaml",
+        "file_type": "APP_MANIFEST",
+        "file_path": "app.yaml",
+        "content": "app:\n  name: demo-from-bruno\n  version: 1.2.0\n  description: Created via Bruno test\n\nparameters:\n  - name: image\n    type: string\n    default: Ubuntu 22.04\n    required: true\n  - name: cpu_cores\n    type: integer\n    default: 2\n    required: true\n",
+        "description": "App manifest",
+        "is_primary": false,
+        "order": 0
+      },
+      {
+        "file_name": "init.sh",
+        "file_type": "SCRIPT",
+        "file_path": "scripts/init.sh",
+        "content": "#!/usr/bin/env bash\necho hello from bruno\n",
+        "is_primary": false,
+        "order": 1
+      }
+    ]
+  }
+}
+
+script:post-response {
+  if (res.status === 201 && res.body && res.body.data && res.body.data.id) {
+    bru.setEnvVar("version_id", res.body.data.id);
+    console.log("Saved version_id =", res.body.data.id);
+  }
+}
+
+docs {
+  # Create Template Version With Files
+
+  Create a new TemplateVersion atomically together with all its files.
+  Used for the "user edits a template in the UI -> save as new version" flow.
+
+  ## Body
+
+  - `template_id` (required) UUID of parent template
+  - `version` (required) semver string
+  - `git_commit_sha` (required) opaque marker (synthetic ok for inline edits)
+  - `is_active` (default true)
+  - `base_version_id` (optional) copy this version's files first; entries in
+    `files` then overlay them by `file_path`.
+  - `files[]` (default `[]`) inline files. Each requires `file_name`,
+    `file_type` (FileType enum), `file_path`, `content`. The set must contain
+    exactly ONE `APP_MANIFEST` (unless inherited from `base_version_id`).
+
+  ## Permissions
+
+  Owner-or-admin. Approval defaults to PENDING unless the user is an admin
+  AND the parent template is public.
+
+  ## Returns
+
+  201 Created with the new version. The post-response script saves
+  `version_id` for follow-up requests.
+}

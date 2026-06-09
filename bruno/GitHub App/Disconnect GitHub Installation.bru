@@ -1,0 +1,32 @@
+meta {
+  name: Disconnect GitHub Installation
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{base_url}}/api/v1/auth/github/installation
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # Disconnect GitHub Installation
+
+  Clears `users.github_installation_id` for the current user and best-effort
+  revokes the install on GitHub. The revoke is best-effort: failures are
+  logged but never block the disconnect (the local link is the source of
+  truth for whether we attempt to use the App).
+
+  ## Permissions
+
+  ADMIN or LECTURER.
+
+  ## Returns
+
+  `204 No Content` on success (also when the user had no installation linked).
+}

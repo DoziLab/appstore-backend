@@ -1,13 +1,17 @@
 meta {
   name: Get Active Template Version
   type: http
-  seq: 4
+  seq: 5
 }
 
 get {
-  url: {{base_url}}/api/v1/template-versions/template/{{template_id}}/active
+  url: {{base_url}}/api/v1/template-versions/template/{{template_id}}/active?include_parameters=true
   body: none
   auth: bearer
+}
+
+params:query {
+  include_parameters: true
 }
 
 auth:bearer {
@@ -16,12 +20,20 @@ auth:bearer {
 
 docs {
   # Get Active Template Version
-  
-  Retrieves the currently active version for a specific template.
-  Returns null if no active version exists.
-  
-  **Path Parameters:**
+
+  Retrieves the currently active version for a specific template, or `null`
+  if no active version exists.
+
+  ## Path Parameters
+
   - `template_id`: UUID of the template
-  
-  **Returns:** Active template version or null
+
+  ## Query Parameters
+
+  - `include_parameters` (default `true`) — inline `parameters` parsed from
+    the active version's `app.yaml`.
+
+  ## Returns
+
+  Active TemplateVersion (with `parameters` when requested) or null.
 }
