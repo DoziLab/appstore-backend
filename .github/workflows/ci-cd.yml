@@ -63,7 +63,7 @@ jobs:
           images: ghcr.io/dozilab/appstore-backend
           tags: |
             type=ref,event=branch
-            type=sha,prefix={{branch}}-
+            type=sha,prefix={{branch}}-,enable=${{ github.ref_type == 'branch' }}
             type=semver,pattern={{version}}
             type=raw,value=latest,enable={{is_default_branch}}
 
