@@ -185,7 +185,7 @@ class ResponseBuilder:
         return ResponseBuilder.error(
             message=message,
             errors=errors,
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             request_id=request_id,
         )
     
