@@ -18,7 +18,7 @@ dependencies = [
     "httpx>=0.25.0",
     "openstacksdk>=3.3.0",
     "python-heatclient>=3.5.0",
-    "prometheus-fastapi-instrumentator>=7.0.0",
+    "prometheus-fastapi-instrumentator>=7.0.0,<8.0.0",
 ]
 
 [project.optional-dependencies]
