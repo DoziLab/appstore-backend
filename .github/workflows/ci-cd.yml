@@ -26,6 +26,17 @@ jobs:
           ruff check src/ tests/
           mypy src/
       - name: Tests
+        env:
+          REDIS_URL: redis://localhost:6379/0
+          DB_USER: test_user
+          DB_PASSWORD: test_password
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_NAME: test_db
+          KEYCLOAK_URL: http://localhost:8080
+          KEYCLOAK_REALM: test_realm
+          KEYCLOAK_CLIENT_ID: test_client
+          ENCRYPTION_KEY: dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleXQ=
         run: pytest tests/ --cov=src --cov-report=xml
       - uses: codecov/codecov-action@v4
         with:
