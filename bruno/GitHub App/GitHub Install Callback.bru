@@ -1,0 +1,47 @@
+meta {
+  name: GitHub Install Callback
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/api/v1/auth/github/install-callback?state=REPLACE_WITH_SIGNED_STATE&installation_id=12345&setup_action=install
+  body: none
+  auth: none
+}
+
+params:query {
+  state: REPLACE_WITH_SIGNED_STATE
+  installation_id: 12345
+  setup_action: install
+}
+
+docs {
+  # GitHub Install Callback (browser-driven)
+
+  GitHub redirects the user's browser here after install/de-install. **You
+  normally don't call this from Bruno** — exposed for debugging / inspecting
+  the redirect target. Auth is via the signed `state` query param (no Keycloak
+  token, the browser-side redirect can't carry one).
+
+  ## Query Parameters
+
+  - `state` (required) — HMAC-signed state from `POST /auth/github/install`
+  - `installation_id` (optional integer) — the GitHub installation that was
+    just created or updated. Missing when GitHub posts back without an install
+    (e.g. `setup_action=request`).
+  - `setup_action` (optional) — `install`, `update`, `request`, …
+
+  ## Behavior
+
+  - Verifies `state`. Bad/expired state → 302 to
+    `{frontend_base_url}/github/connected?status=error&reason=invalid_state`.
+  - `setup_action=request` → 302 with `reason=request_pending`.
+  - Missing `installation_id` → 302 with `reason=missing_installation_id`.
+  - Otherwise persists `users.github_installation_id` and 302s with
+    `status=ok`.
+
+  ## Returns
+
+  Always a `302 Found` redirect to the frontend.
+}

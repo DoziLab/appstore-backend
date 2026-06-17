@@ -1,0 +1,72 @@
+meta {
+  name: Import Template From GitHub
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{base_url}}/api/v1/templates/import-from-github
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "name": "Postgres Group DB",
+    "description": "Provision a Postgres VM via the appstore",
+    "icon_url": "mdi:database",
+    "github_url": "https://github.com/dozilab/templates",
+    "app_yaml_path": "postgres/app.yaml"
+  }
+}
+
+script:post-response {
+  if (res.status === 201 && res.body && res.body.data && res.body.data.id) {
+    bru.setEnvVar("template_id", res.body.data.id);
+    if (res.body.data.versions && res.body.data.versions.length > 0) {
+      bru.setEnvVar("version_id", res.body.data.versions[0].id);
+    }
+    console.log("Saved template_id =", res.body.data.id);
+  }
+}
+
+docs {
+  # Import Template From GitHub
+
+  Creates a new template AND its first version by reading `app.yaml` (and the
+  rest of the files in the same folder) from a GitHub repo.
+
+  ## URL Forms Accepted (`github_url`)
+
+  - Repo root: `https://github.com/owner/repo` (defaults to default branch)
+  - Branch / tag: `https://github.com/owner/repo/tree/<ref>`
+  - Direct file: `https://github.com/owner/repo/blob/<ref>/<path>/app.yaml`
+    (in this case `app_yaml_path` is inferred and may be omitted)
+
+  ## Body
+
+  - `name` (required, ≤ 255)
+  - `description` (optional)
+  - `icon_url` (optional, ≤ 500)
+  - `github_url` (required, ≤ 1000)
+  - `app_yaml_path` (optional) — defaults to `app.yaml` (root) if not given
+    and the URL is the repo/branch root.
+
+  ## Permissions
+
+  ADMIN or LECTURER. Template is always created `visibility=private`. Admins
+  can promote later via PATCH.
+
+  Private repos require the user to have linked the GitHub App via
+  `POST /auth/github/install`. Public repos work without an install (subject
+  to GitHub's 60/h unauthenticated rate limit).
+
+  ## Returns
+
+  201 Created with the new Template (and its initial Version inlined).
+  The post-response script saves `template_id` (and `version_id` if available).
+}

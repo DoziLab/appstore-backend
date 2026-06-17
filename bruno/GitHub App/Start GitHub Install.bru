@@ -1,0 +1,42 @@
+meta {
+  name: Start GitHub Install
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/api/v1/auth/github/install
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.data && res.body.data.install_url) {
+    bru.setEnvVar("github_install_url", res.body.data.install_url);
+    console.log("Open this URL in a browser to complete install:", res.body.data.install_url);
+  }
+}
+
+docs {
+  # Start GitHub Install
+
+  Returns a signed GitHub App install URL for the calling user. The URL embeds
+  an HMAC-signed `state` carrying the user id; the frontend redirects the
+  browser to it. After the user picks repos in GitHub's UI, GitHub redirects
+  back to `GET /auth/github/install-callback` (which is browser-driven, not
+  called from Bruno).
+
+  ## Permissions
+
+  ADMIN or LECTURER.
+
+  ## Returns
+
+  `{ install_url: "https://github.com/apps/<slug>/installations/new?state=..." }`
+
+  Errors with 400 if `GITHUB_APP_SLUG` is not configured on the backend.
+}

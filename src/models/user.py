@@ -1,12 +1,18 @@
 """User database model."""
 from datetime import datetime, timezone
 from enum import Enum
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import String, DateTime
+from sqlalchemy import String, DateTime, BigInteger
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
+
+if TYPE_CHECKING:
+    from src.models.course_member import CourseMember
+    from src.models.openstack_project import OpenstackProject
+    from src.models.template import Template
 
 
 class UserRole(str, Enum):
@@ -74,10 +80,20 @@ class User(Base):
     
     # Audit: When did user last login?
     last_login_at: Mapped[datetime] = mapped_column(
-        DateTime, 
+        DateTime,
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
         comment="Last successful login timestamp"
+    )
+
+    # GitHub App installation linking the user to a GitHub install of our App.
+    # Used by /import-from-github to mint short-lived installation tokens with
+    # `Contents: Read-only` permission. Not a secret (just an identifier);
+    # the actual token is minted server-side and never stored.
+    github_installation_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+        comment="GitHub App installation ID for this user; null if not connected",
     )
     
     # Relationships (reason this table exists)
