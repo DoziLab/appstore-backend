@@ -232,3 +232,5 @@ all_issues.md
 loki-data/
 grafana-data/
 promtail-positions.yaml
+
+.DS_Store
