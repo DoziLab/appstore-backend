@@ -8,6 +8,12 @@ from src.core.dependencies import get_current_user
 from src.models.user import UserRole
 
 
+# Local DB id of the active OpenstackProject — required field on every create
+# payload since the FK was added. Tests pass a fixed UUID; the service is
+# fully mocked so the value just needs to satisfy the schema.
+TEST_OS_PROJECT_ID = "11111111-1111-1111-1111-111111111111"
+
+
 def mock_authenticated_user():
     """Mock authenticated user with LECTURER role."""
     return {
@@ -52,6 +58,9 @@ def mock_deployment():
 @patch("src.api.deployments.DeploymentService")
 def test_create_deployment_success(mock_service_class, mock_deployment):
     """Test successful deployment creation."""
+    # Re-apply override per-test: other test modules call dependency_overrides.clear()
+    # in their cleanup, which would otherwise leave us 401-unauthenticated.
+    app.dependency_overrides[get_current_user] = mock_authenticated_user
     # Configure the service instance to return the mock deployment
     mock_service_class.return_value.create_deployment.return_value = mock_deployment
     
@@ -60,6 +69,7 @@ def test_create_deployment_success(mock_service_class, mock_deployment):
         "name": "Test Deployment",
         "template_version_id": "version-123",
         "course_id": "course-456",
+        "openstack_project_id": TEST_OS_PROJECT_ID,
         "heat_parameters": {
             "image": "Ubuntu 22.04",
             "flavor": "gp1.small",
@@ -112,6 +122,7 @@ def test_create_deployment_success(mock_service_class, mock_deployment):
 @patch("src.api.deployments.DeploymentService")
 def test_create_deployment_with_heat_parameters(mock_service_class, mock_deployment):
     """Test deployment creation with Heat template parameters."""
+    app.dependency_overrides[get_current_user] = mock_authenticated_user
     # Configure deployment with heat parameters
     heat_params_json = '{"instance_name": "test-vm", "flavor": "gp1.small", "db_password": "secret123"}'
     mock_deployment_with_params = MockDeployment(deployment_parameters=heat_params_json)
@@ -122,6 +133,7 @@ def test_create_deployment_with_heat_parameters(mock_service_class, mock_deploym
         "name": "Database Deployment",
         "template_version_id": "version-123",
         "course_id": "course-456",
+        "openstack_project_id": TEST_OS_PROJECT_ID,
         "heat_parameters": {
             "instance_name": "test-vm",
             "flavor": "gp1.small",
@@ -165,6 +177,7 @@ def test_create_deployment_with_heat_parameters(mock_service_class, mock_deploym
 @patch("src.api.deployments.DeploymentService")
 def test_create_deployment_with_both_config_and_parameters(mock_service_class, mock_deployment):
     """Test deployment with required fields."""
+    app.dependency_overrides[get_current_user] = mock_authenticated_user
     heat_params_json = '{"instance_name": "vm1"}'
     mock_deployment_with_params = MockDeployment(deployment_parameters=heat_params_json)
     mock_service_class.return_value.create_deployment.return_value = mock_deployment_with_params
@@ -174,6 +187,7 @@ def test_create_deployment_with_both_config_and_parameters(mock_service_class, m
         "name": "VM Deployment",
         "template_version_id": "version-123",
         "course_id": "course-456",
+        "openstack_project_id": TEST_OS_PROJECT_ID,
         "heat_parameters": {
             "instance_name": "vm1"
         },
@@ -211,6 +225,7 @@ def test_create_deployment_with_both_config_and_parameters(mock_service_class, m
 @patch("src.api.deployments.DeploymentService")
 def test_create_deployment_without_parameters(mock_service_class, mock_deployment):
     """Test deployment creation fails without required fields."""
+    app.dependency_overrides[get_current_user] = mock_authenticated_user
     minimal_deployment = MockDeployment(deployment_parameters=None)
     mock_service_class.return_value.create_deployment.return_value = minimal_deployment
     
