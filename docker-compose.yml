@@ -45,6 +45,12 @@ services:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - ANSIBLE_SSH_KEY_PATH=/run/secrets/dozilab_ansible.pem
       - ANSIBLE_SSH_KEY_NAME=${ANSIBLE_SSH_KEY_NAME:-dozilab-ansible-key}
+      # GitHub App (used by /auth/github/* and /templates/import-from-github)
+      - GITHUB_APP_ID=${GITHUB_APP_ID:-}
+      - GITHUB_APP_SLUG=${GITHUB_APP_SLUG:-}
+      - GITHUB_APP_PRIVATE_KEY=${GITHUB_APP_PRIVATE_KEY:-}
+      - GITHUB_APP_STATE_SECRET=${GITHUB_APP_STATE_SECRET:-}
+      - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-http://localhost:5173}
     volumes:
       - ${ANSIBLE_SSH_KEY_PATH}:/run/secrets/dozilab_ansible.pem:ro
     depends_on:
