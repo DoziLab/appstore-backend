@@ -106,6 +106,11 @@ class AppManifestParser:
             # User files
             user_files = data.get("user_files") or []
 
+            # Artifacts (preserve YAML insertion order — used by GitHub import to
+            # type and order linked files; see get_linked_files()).
+            artifacts_raw = data.get("artifacts") or {}
+            artifacts = artifacts_raw if isinstance(artifacts_raw, dict) else {}
+
             return {
                 "app": {
                     "name": app_info.get("name"),
@@ -119,6 +124,7 @@ class AppManifestParser:
                 "outputs": outputs,
                 "credentials": credentials,
                 "user_files": user_files,
+                "artifacts": artifacts,
             }
 
         except Exception as e:
