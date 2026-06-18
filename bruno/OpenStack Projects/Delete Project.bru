@@ -5,7 +5,7 @@ meta {
 }
 
 delete {
-  url: {{base_url}}/api/v1/openstack-projects/{{project_id}}
+  url: {{base_url}}/api/v1/openstack-projects/{{openstack_project_local_id}}
   body: none
   auth: bearer
 }
@@ -17,7 +17,7 @@ auth:bearer {
 script:post-response {
   if (res.status === 204 || res.status === 200) {
     console.log("✅ Project deleted successfully");
-    bru.setEnvVar("project_id", "");
+    bru.setEnvVar("openstack_project_local_id", "");
   } else {
     console.log("❌ Project deletion failed:", res.status, res.body);
   }
@@ -36,5 +36,5 @@ docs {
   - Credentials are permanently removed
   
   **Variables used:**
-  - `project_id`: Set automatically after creating a project
+  - `openstack_project_local_id`: Local DB id of the project. Set automatically after creating a project; cleared after deletion.
 }

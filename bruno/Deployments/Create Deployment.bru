@@ -19,6 +19,7 @@ body:json {
     "name": "SQL Kurs - Herbst 2026",
     "template_version_id": "{{template_version_id}}",
     "course_id": "keycloak-group-id-123",
+    "openstack_project_id": "{{openstack_project_local_id}}",
     "heat_parameters": {
       "stack_label": "my-postgres",
       "volume_size": 16,
@@ -78,7 +79,7 @@ body:json {
 }
 
 vars:pre-request {
-  template_version_id: 74007335-ed37-42c4-bb6f-3160f7b98ef8
+  template_version_id: 3793fb63-b723-4033-a0ed-153d33fc9447
 }
 
 script:post-response {
@@ -104,6 +105,7 @@ docs {
   - `name`: Deployment name for identification
   - `template_version_id`: ID of the template version to deploy
   - `course_id`: Keycloak group ID for the course
+  - `openstack_project_id`: Local DB id of the OpenStack project to deploy against (NOT the Keystone tenant UUID). Must belong to the requesting teacher. Set via env var `openstack_project_local_id`.
   - `heat_parameters`: Heat template parameters as dict (image, flavor, network, etc.)
   - `stack_assignments`: Array of stack assignments with groups and students
   - `teacher`: Teacher/lecturer information from Keycloak

@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: {{base_url}}/api/v1/deployments/{{deployment_id}}/restart
+  url: {{base_url}}/api/v1/deployments/{{deployment_id}}/restart?openstack_project_id={{openstack_project_local_id}}
   body: none
   auth: bearer
 }
@@ -14,8 +14,12 @@ auth:bearer {
   token: {{access_token}}
 }
 
+params:query {
+  openstack_project_id: {{openstack_project_local_id}}
+}
+
 params:path {
-  deployment_id: 
+  deployment_id:
 }
 
 docs {

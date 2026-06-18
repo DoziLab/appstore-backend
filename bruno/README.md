@@ -12,11 +12,12 @@
    - `password` - Keycloak user password
    - `openstack_username` 
    - `openstack_password` 
-   - `openstack_project_id` 
+   - `openstack_project_id` - **Keystone tenant UUID** from your `clouds.yaml` (the OpenStack-side project id)
    - `openstack_project_name` 
    - `openstack_auth_url`
    - `openstack_user_domain_name`
    - `openstack_region_name`
+   - `openstack_project_local_id` - **Local DB primary key** of your OpenStack project row (from `GET /openstack-projects`). Used by all Deployment requests as the `openstack_project_id` query parameter / body field. NOT the same as `openstack_project_id` above — the backend tracks both.
 
    **These secrets will NOT be committed to Git** - Bruno automatically excludes `vars:secret` from version control.
 
@@ -27,7 +28,7 @@
 
 4. **Use the API:**
    - All requests use `{{access_token}}` automatically
-   - `project_id` is automatically saved after creating a project
+   - `openstack_project_local_id` is automatically saved after creating an OpenStack project
 
 ## Environments
 
@@ -73,7 +74,7 @@
 1. Switch to `local` environment
 2. Configure secret variables in Bruno (right-click environment → Edit)
 3. Run `Auth/Keycloak Login` → saves access_token
-4. Run `Create Project` → saves project_id
+4. Run `Create Project` → saves openstack_project_local_id
 5. Run `Get Project` → see masked credentials
 6. Run `Update Project` → update credentials
 7. Run `Delete Project` → cleanup

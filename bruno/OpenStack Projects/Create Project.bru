@@ -29,7 +29,10 @@ body:json {
 script:post-response {
   if (res.status === 201) {
     const data = res.body.data;
-    bru.setEnvVar("project_id", data.id);
+    // The local DB id is what every Deployment request needs as
+    // ?openstack_project_id=... — distinct from the Keystone tenant UUID
+    // (which lives under data.openstack_project_id and isn't useful here).
+    bru.setEnvVar("openstack_project_local_id", data.id);
     console.log("✅ Project created! ID:", data.id);
     console.log("Username (masked):", data.username);
     console.log("Password (masked):", data.password);

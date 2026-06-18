@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: {{base_url}}/api/v1/deployments?page=1&page_size=10
+  url: {{base_url}}/api/v1/deployments?page=1&page_size=10&openstack_project_id={{openstack_project_local_id}}
   body: none
   auth: bearer
 }
@@ -13,8 +13,9 @@ get {
 params:query {
   page: 1
   page_size: 10
-  ~course_id: 
-  ~status: 
+  openstack_project_id: {{openstack_project_local_id}}
+  ~course_id:
+  ~status:
 }
 
 auth:bearer {
@@ -23,17 +24,18 @@ auth:bearer {
 
 docs {
   # List Deployments
-  
+
   Lists all deployments with optional filters and pagination.
-  
+
   **Required Role:** Admin or Lecturer
-  
+
   **Query Parameters:**
   - `page`: Page number (default: 1)
   - `page_size`: Items per page (default: 10, max: 100)
+  - `openstack_project_id`: Local DB id of the OpenStack project (REQUIRED for non-admin users; admins may omit it). Set via env var `openstack_project_local_id`. NOT the Keystone tenant UUID.
   - `course_id`: Filter by course ID (optional)
   - `template_id`: Filter by template ID (optional)
   - `status`: Filter by deployment status (optional)
-  
+
   **Returns:** Paginated list of deployments with metadata
 }

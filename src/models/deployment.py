@@ -30,17 +30,24 @@ class Deployment(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False, comment="Deployment name for identification")
     template_version_id: Mapped[str] = mapped_column(String(36), ForeignKey("template_versions.id"), nullable=False)
     course_id: Mapped[str] = mapped_column(String(36), ForeignKey("courses.id"), nullable=False, comment="Course ID (auto-created from Keycloak course_id)")
+    openstack_project_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("openstack_projects.id"),
+        nullable=False,
+        comment="FK to openstack_projects.id (local DB primary key, NOT the Keystone tenant UUID)",
+    )
     status: Mapped[DeploymentStatus] = mapped_column(
-        SQLEnum(DeploymentStatus), 
+        SQLEnum(DeploymentStatus),
         default=DeploymentStatus.QUEUED
     )
     openstack_stack_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     deployment_parameters: Mapped[Optional[str]] = mapped_column(String, nullable=True, comment="Heat parameters, stack_assignments, and teacher info as JSON")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-    
+
     # Relationships
     course: Mapped["Course"] = relationship("Course", back_populates="deployments")
     template_version: Mapped["TemplateVersion"] = relationship("TemplateVersion", back_populates="deployments")
+    openstack_project: Mapped["OpenstackProject"] = relationship("OpenstackProject", back_populates="deployments")
     instances: Mapped[list["DeploymentInstance"]] = relationship("DeploymentInstance", back_populates="deployment")
     logs: Mapped[list["DeploymentLog"]] = relationship("DeploymentLog", back_populates="deployment")

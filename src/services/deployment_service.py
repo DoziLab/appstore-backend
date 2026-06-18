@@ -127,6 +127,31 @@ class DeploymentService:
             self.db.add(course)
             self.db.flush()  # Get the ID without committing
         
+        # Resolve and validate the target OpenStack project: must belong to the
+        # teacher submitting this request. Persisting the local FK here makes the
+        # deployment-to-project relationship explicit instead of re-deriving it
+        # from teacher.id at every read site (deploy/restart/delete tasks).
+        from src.models.user import User as UserModel
+        teacher_user = self.db.query(UserModel).filter(
+            UserModel.external_id == deployment_data.teacher.id
+        ).first()
+        if not teacher_user:
+            raise NotFoundException(
+                f"Teacher user not found for Keycloak ID {deployment_data.teacher.id}"
+            )
+
+        openstack_project = self.openstack_repo.get_by_id(
+            deployment_data.openstack_project_id
+        )
+        if not openstack_project:
+            raise NotFoundException(
+                f"OpenStack project {deployment_data.openstack_project_id} not found"
+            )
+        if openstack_project.owner_user_id != teacher_user.id:
+            raise BadRequestException(
+                "OpenStack project does not belong to teacher"
+            )
+
         # Store complete deployment info as JSON
         deployment_parameters = json.dumps({
             "template_name": template.name,
@@ -134,13 +159,14 @@ class DeploymentService:
             "stack_assignments": [sa.model_dump() for sa in deployment_data.stack_assignments],
             "teacher": deployment_data.teacher.model_dump()
         })
-        
+
         # Create deployment record with initial status QUEUED
         # Use course.id (DB ID) instead of keycloak_course_id
         deployment = self.deployment_repo.create(
             name=deployment_data.name,
             template_version_id=deployment_data.template_version_id,
             course_id=str(course.id),  # Use DB course ID, not Keycloak group ID
+            openstack_project_id=openstack_project.id,
             status=DeploymentStatus.QUEUED,
             deployment_parameters=deployment_parameters,
         )
@@ -221,28 +247,14 @@ class DeploymentService:
             return deployment_dict
         
         try:
-            # Get lecturer's OpenStack project from deployment_parameters
-            deployment_params = json.loads(deployment.deployment_parameters) if deployment.deployment_parameters else {}
-            teacher_info = deployment_params.get("teacher", {})
-            lecturer_keycloak_id = teacher_info.get("id")
-            
-            if not lecturer_keycloak_id:
+            # Use the deployment's persisted OpenStack project (FK) instead of
+            # re-deriving it from teacher.id and grabbing the user's first
+            # OpenstackProject row — which silently picked the wrong one
+            # whenever a user had more than one.
+            openstack_project = deployment.openstack_project
+            if not openstack_project:
                 return deployment_dict
-            
-            # Map Keycloak ID to local user ID
-            from src.models.user import User
-            lecturer_user = self.db.query(User).filter(User.external_id == lecturer_keycloak_id).first()
-            
-            if not lecturer_user:
-                return deployment_dict
-            
-            lecturer_id = lecturer_user.id
-            openstack_projects = self.openstack_repo.get_by_owner(lecturer_id)
-            
-            if not openstack_projects:
-                return deployment_dict
-            
-            openstack_project = openstack_projects[0]
+
             heat_service = HeatStackService(openstack_project)
             
             # Fetch live stack data from OpenStack

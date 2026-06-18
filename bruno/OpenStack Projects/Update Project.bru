@@ -5,7 +5,7 @@ meta {
 }
 
 put {
-  url: {{base_url}}/api/v1/openstack-projects/{{project_id}}
+  url: {{base_url}}/api/v1/openstack-projects/{{openstack_project_local_id}}
   body: json
   auth: bearer
 }
@@ -39,5 +39,5 @@ docs {
   - Update is logged for audit
   
   **Variables used:**
-  - `project_id`: Set automatically after creating a project
+  - `openstack_project_local_id`: Local DB id of the project. Set automatically after creating a project.
 }
