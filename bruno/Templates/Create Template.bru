@@ -18,25 +18,39 @@ body:json {
   {
     "name": "Python Flask Template",
     "description": "A template for Flask web applications",
-    "repo_url": "https://github.com/example/flask-template"
+    "repo_url": "https://github.com/example/flask-template",
+    "icon_url": "mdi:flask"
+  }
+}
+
+script:post-response {
+  if (res.status === 201 && res.body && res.body.data && res.body.data.id) {
+    bru.setEnvVar("template_id", res.body.data.id);
+    console.log("Saved template_id =", res.body.data.id);
   }
 }
 
 docs {
   # Create Template
-  
-  Creates a new template with visibility 'private' and approval status 'pending'.
-  Templates must be approved by an admin before becoming publicly available.
-  
-  **Note:** Templates are ALWAYS created as private, regardless of input.
-  Use the approve endpoint to make them public.
-  
-  **Required Role:** ADMIN or LECTURER
-  
-  **Request Body:**
-  - `name`: Template name (required, max 255 chars)
-  - `description`: Template description (optional)
-  - `repo_url`: Git repository URL (required, max 500 chars)
-  
-  **Returns:** Created template with visibility='private' and approval_status='pending'
+
+  Creates a new template. Templates are always created with `visibility=private`.
+  Approval gating now lives on each TemplateVersion (see /template-versions
+  endpoints) — there is no per-template `approval_status` anymore.
+
+  ## Required Role
+
+  ADMIN or LECTURER.
+
+  ## Body
+
+  - `name` (required, ≤ 255)
+  - `description` (optional)
+  - `repo_url` (required, ≤ 500)
+  - `icon_url` (optional, ≤ 500) — e.g. `mdi:flask`, `🚀`, `/icons/template.svg`
+  - `visibility` (ignored on create; backend pins to `private`)
+
+  ## Returns
+
+  Created Template with `visibility='private'`. The post-response script saves
+  `template_id` for follow-up requests.
 }

@@ -106,6 +106,11 @@ class AppManifestParser:
             # User files
             user_files = data.get("user_files") or []
 
+            # Artifacts (preserve YAML insertion order — used by GitHub import to
+            # type and order linked files; see get_linked_files()).
+            artifacts_raw = data.get("artifacts") or {}
+            artifacts = artifacts_raw if isinstance(artifacts_raw, dict) else {}
+
             return {
                 "app": {
                     "name": app_info.get("name"),
@@ -119,6 +124,7 @@ class AppManifestParser:
                 "outputs": outputs,
                 "credentials": credentials,
                 "user_files": user_files,
+                "artifacts": artifacts,
             }
 
         except Exception as e:
@@ -126,6 +132,14 @@ class AppManifestParser:
 
     @staticmethod
     def extract_parameters(content: str) -> list[dict]:
+        """Extract only parameters from app.yaml content.
+
+        Args:
+            content: Raw YAML content of app.yaml
+
+        Returns:
+            List of parameter dictionaries
+        """
         try:
             return AppManifestParser.parse(content).get("parameters", [])
         except Exception:
@@ -146,3 +160,52 @@ class AppManifestParser:
             return AppManifestParser.parse(content).get("user_files", [])
         except Exception:
             return []
+
+    # Mapping from artifacts: keys in app.yaml to TemplateVersionFile.FileType values.
+    # Order in this dict is also the deployment execution order suggested in the README.
+    ARTIFACT_KEY_TO_FILE_TYPE: dict[str, str] = {
+        "heat_template": "HEAT_TEMPLATE",
+        "cloud_init": "CLOUD_INIT",
+        "ansible_playbook": "ANSIBLE_PLAYBOOK",
+        "ansible": "ANSIBLE_PLAYBOOK",
+        "helm_chart": "HELM_CHART",
+        "helm": "HELM_CHART",
+        "shell_script": "SHELL_SCRIPT",
+        "config_file": "CONFIG_FILE",
+    }
+
+    PRIMARY_ARTIFACT_KEY: str = "heat_template"
+
+    @staticmethod
+    def get_linked_files(parsed: dict) -> list[dict]:
+        """Convert the artifacts dict from a parsed app.yaml into an ordered list
+        of file descriptors that the GitHub-import service can fetch.
+
+        Each entry contains:
+          - artifact_key: original key in artifacts (e.g. "heat_template")
+          - file_type:    FileType enum value (string, e.g. "HEAT_TEMPLATE")
+          - relative_path: path relative to the directory containing app.yaml
+          - is_primary:   True for the heat_template artifact (deployment entrypoint)
+          - order:        position from artifacts dict (insertion order)
+
+        The ordering is preserved from the YAML so that deployment runs files in
+        the order their authors specified - matching the user-supplied app.yaml
+        contract.
+        """
+        artifacts = parsed.get("artifacts") if isinstance(parsed, dict) else None
+        if not isinstance(artifacts, dict):
+            return []
+
+        result: list[dict] = []
+        for index, (key, value) in enumerate(artifacts.items()):
+            if not isinstance(value, str) or not value.strip():
+                continue
+            file_type = AppManifestParser.ARTIFACT_KEY_TO_FILE_TYPE.get(key, "OTHER")
+            result.append({
+                "artifact_key": key,
+                "file_type": file_type,
+                "relative_path": value.strip(),
+                "is_primary": key == AppManifestParser.PRIMARY_ARTIFACT_KEY,
+                "order": index + 1,
+            })
+        return result

@@ -1,38 +1,41 @@
 meta {
   name: Get Template Version
   type: http
-  seq: 2
+  seq: 3
 }
 
 get {
-  url: {{base_url}}/api/v1/template-versions/{{version_id}}?with_file_count=false
+  url: {{base_url}}/api/v1/template-versions/{{version_id}}?with_file_count=false&include_parameters=true
   body: none
   auth: bearer
 }
 
 params:query {
-  ~with_file_count: false
+  with_file_count: false
+  include_parameters: true
 }
 
 auth:bearer {
   token: {{access_token}}
 }
 
-vars:pre-request {
-  version_id: 04b5d4c5-cb5c-406d-8186-bffb2cfe3626
-}
-
 docs {
   # Get Template Version
-  
+
   Retrieves details of a specific template version by its ID.
-  Optionally includes the count of files associated with this version.
-  
-  **Path Parameters:**
+
+  ## Path Parameters
+
   - `version_id`: UUID of the template version
-  
-  **Query Parameters:**
-  - `with_file_count`: Include file count in response (default: false)
-  
-  **Returns:** Template version details
+
+  ## Query Parameters
+
+  - `with_file_count` (default `false`) — include file count in response
+  - `include_parameters` (default `true`) — inline `parameters` parsed from the
+    version's `app.yaml` (CPU/RAM/disk/etc.). Set to `false` to skip parsing
+    when you only need raw fields.
+
+  ## Returns
+
+  Template version details, optionally including `parameters` and/or `file_count`.
 }

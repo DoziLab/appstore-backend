@@ -15,4 +15,5 @@ os.environ.setdefault("DB_NAME", "test_db")
 os.environ.setdefault("KEYCLOAK_URL", "http://localhost:8080")
 os.environ.setdefault("KEYCLOAK_REALM", "test_realm")
 os.environ.setdefault("KEYCLOAK_CLIENT_ID", "test_client")
+os.environ.setdefault("GITHUB_APP_STATE_SECRET", "test-state-secret-do-not-use-in-prod")
 

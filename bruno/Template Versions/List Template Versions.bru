@@ -1,17 +1,18 @@
 meta {
   name: List Template Versions
   type: http
-  seq: 3
+  seq: 4
 }
 
 get {
-  url: {{base_url}}/api/v1/template-versions/template/{{template_id}}?active_only=false
+  url: {{base_url}}/api/v1/template-versions/template/{{template_id}}?active_only=false&include_parameters=false
   body: none
   auth: bearer
 }
 
 params:query {
-  ~active_only: false
+  active_only: false
+  include_parameters: false
 }
 
 auth:bearer {
@@ -20,16 +21,22 @@ auth:bearer {
 
 docs {
   # List Template Versions
-  
-  Lists all versions for a specific template.
-  Returns versions ordered by creation date (newest first).
-  Can be filtered to show only active versions.
-  
-  **Path Parameters:**
+
+  Lists all versions for a specific template, ordered by creation date
+  (newest first). Optionally filters to active-only and inlines parameters
+  parsed from `app.yaml` for each version.
+
+  ## Path Parameters
+
   - `template_id`: UUID of the template
-  
-  **Query Parameters:**
-  - `active_only`: Return only active versions (default: false)
-  
-  **Returns:** List of template versions
+
+  ## Query Parameters
+
+  - `active_only` (default `false`) — only active versions
+  - `include_parameters` (default `false`) — inline `parameters` parsed from
+    each version's `app.yaml`. Off by default because parsing is per-version.
+
+  ## Returns
+
+  Array of template versions.
 }

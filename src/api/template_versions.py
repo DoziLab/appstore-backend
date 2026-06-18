@@ -1,15 +1,22 @@
 """Template Version API endpoints."""
+from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, status, Query, Depends
 
 from src.core.response_builder import ResponseBuilder
-from src.core.dependencies import DBSession, RequestID, require_roles, CurrentUser
+from src.core.dependencies import DBSession, RequestID, Pagination, require_roles, CurrentUser
+from src.models.template import TemplateVisibility
+from src.models.template_version import TemplateVersionApprovalStatus
 from src.schemas.template_version import (
     TemplateVersionCreate,
     TemplateVersionUpdate,
     TemplateVersionResponse,
-    TemplateVersionWithFilesResponse
+    TemplateVersionWithFilesCreate,
+    TemplateVersionWithFilesResponse,
+    TemplateVersionQueueItem,
+    TemplateQueueInfo,
+    TemplateVersionRejectRequest,
 )
 from src.services.template_version_service import TemplateVersionService
 from src.models.user import UserRole
@@ -30,27 +37,126 @@ async def create_version(
     current_user: CurrentUser,
 ):
     """Create a new template version.
-    
+
     Only template owners or admins can create versions.
     If set as active, automatically deactivates other versions of the same template.
-    
+
     Requires authentication. Permission checks enforce ownership or admin role.
     """
     service = TemplateVersionService(db)
-    
+
     is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
-    
+
     version = service.create_version(
         version_data,
         user_id=current_user["user_id"],
-        is_admin=is_admin
+        is_admin=is_admin,
+        user_roles=current_user.get("roles", []),
     )
-    
+
     version_response = TemplateVersionResponse.model_validate(version)
-    
+
     return ResponseBuilder.created(
         data=version_response.model_dump(mode="json"),
         message="Template version created successfully",
+        request_id=request_id,
+    )
+
+
+@router.post("/with-files", status_code=status.HTTP_201_CREATED, response_model=None)
+async def create_version_with_files(
+    payload: TemplateVersionWithFilesCreate,
+    db: DBSession,
+    request_id: RequestID,
+    current_user: CurrentUser,
+):
+    """Create a new template version together with all its files in one transaction.
+
+    Used by the "user edits a template in the UI -> save as new version" flow.
+    Optional `base_version_id` copies that version's files first; entries in
+    `files` overlay them by `file_path`. Owner-or-admin only. Approval defaults
+    to PENDING unless the user is an admin and the template is public.
+    """
+    service = TemplateVersionService(db)
+    version = service.create_version_with_files(
+        payload,
+        user_id=current_user["user_id"],
+        user_roles=current_user.get("roles", []),
+    )
+    version_response = TemplateVersionResponse.model_validate(version)
+    return ResponseBuilder.created(
+        data=version_response.model_dump(mode="json"),
+        message="Template version created with files",
+        request_id=request_id,
+    )
+
+
+@router.get(
+    "/queue",
+    response_model=None,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+async def list_approval_queue(
+    pagination: Pagination,
+    db: DBSession,
+    request_id: RequestID,
+    approval_status: TemplateVersionApprovalStatus = Query(
+        TemplateVersionApprovalStatus.PENDING,
+        alias="status",
+        description="Filter by approval status (default: pending)",
+    ),
+    template_id: Optional[UUID] = Query(
+        None,
+        description="Optional: limit the queue to a single template",
+    ),
+    visibility: Optional[TemplateVisibility] = Query(
+        None,
+        description="Optional: filter by parent template visibility (private/public)",
+    ),
+    sort: Literal[
+        "created_at_desc",
+        "created_at_asc",
+        "template_name_asc",
+        "template_name_desc",
+    ] = Query(
+        "created_at_desc",
+        description="Sort order. Defaults to newest-first.",
+    ),
+):
+    """Admin approval queue: list template versions filtered by approval status.
+
+    Returns versions across ALL templates so admins can triage submissions in
+    one view. Each row inlines:
+    - The parent template's metadata (`template.{name, owner_id, visibility}`)
+    - The parsed `parameters` from app.yaml (resource requirements)
+
+    Filters: `status`, `template_id`, `visibility`. Sortable via `sort`.
+    Admin-only.
+    """
+    service = TemplateVersionService(db)
+
+    rows, total = service.list_versions_by_approval_status(
+        approval_status=approval_status,
+        skip=(pagination.page - 1) * pagination.page_size,
+        limit=pagination.page_size,
+        template_id=str(template_id) if template_id else None,
+        visibility=visibility,
+        sort=sort,
+    )
+
+    items = []
+    for version, template in rows:
+        item = TemplateVersionResponse.model_validate(version).model_dump(mode="json")
+        item["template"] = TemplateQueueInfo.model_validate(template).model_dump(mode="json")
+        item["parameters"] = service.get_version_parameters(version.id)
+        items.append(TemplateVersionQueueItem.model_validate(item).model_dump(mode="json"))
+
+    return ResponseBuilder.paginated(
+        data=items,
+        page=pagination.page,
+        page_size=pagination.page_size,
+        total=total,
+        message="Approval queue retrieved successfully",
         request_id=request_id,
     )
 
@@ -333,5 +439,61 @@ async def delete_version(
         user_id=current_user["user_id"],
         is_admin=is_admin
     )
-    
+
     return None
+
+
+@router.post(
+    "/{version_id}/approve",
+    response_model=None,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+async def approve_version(
+    version_id: UUID,
+    db: DBSession,
+    request_id: RequestID,
+    current_user: CurrentUser,
+):
+    """Approve a template version. Admin-only.
+
+    Sets approval_status=APPROVED and records approver + timestamp.
+    """
+    service = TemplateVersionService(db)
+    version = service.approve_version(str(version_id), admin_user_id=current_user["user_id"])
+    version_response = TemplateVersionResponse.model_validate(version)
+    return ResponseBuilder.success(
+        data=version_response.model_dump(mode="json"),
+        message="Template version approved successfully",
+        request_id=request_id,
+    )
+
+
+@router.post(
+    "/{version_id}/reject",
+    response_model=None,
+    dependencies=[Depends(require_roles(UserRole.ADMIN))],
+)
+async def reject_version(
+    version_id: UUID,
+    db: DBSession,
+    request_id: RequestID,
+    current_user: CurrentUser,
+    payload: Optional[TemplateVersionRejectRequest] = None,
+):
+    """Reject a template version. Admin-only.
+
+    Sets approval_status=REJECTED and records reviewer + timestamp. The optional
+    `reason` body is persisted on the version for the submitter to see.
+    """
+    service = TemplateVersionService(db)
+    version = service.reject_version(
+        str(version_id),
+        admin_user_id=current_user["user_id"],
+        reason=payload.reason if payload else None,
+    )
+    version_response = TemplateVersionResponse.model_validate(version)
+    return ResponseBuilder.success(
+        data=version_response.model_dump(mode="json"),
+        message="Template version rejected successfully",
+        request_id=request_id,
+    )

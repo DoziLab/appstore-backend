@@ -6,8 +6,16 @@ from fastapi import APIRouter, status, Query, Depends
 
 from src.core.response_builder import ResponseBuilder
 from src.core.dependencies import DBSession, RequestID, Pagination, require_roles, CurrentUser
-from src.schemas.template import TemplateCreate, TemplateUpdate, TemplateResponse
+from src.schemas.template import (
+    TemplateCreate,
+    TemplateUpdate,
+    TemplateResponse,
+    GithubImportNewTemplate,
+    GithubImportNewVersion,
+)
+from src.schemas.template_version import TemplateVersionResponse
 from src.services.template_service import TemplateService
+from src.services.github_import_service import GithubImportService
 from src.models.user import UserRole
 
 
@@ -24,31 +32,32 @@ async def list_templates(
     db: DBSession,
     request_id: RequestID,
     current_user: CurrentUser,
-    status_filter: Optional[str] = Query(None, description="Filter by approval status (pending/approved/rejected/deprecated)", alias="status"),
     visibility: Optional[str] = Query(None, description="Filter by visibility (private/public)"),
     owner_id: Optional[str] = Query(None, description="Filter by owner ID"),
     search: Optional[str] = Query(None, description="Search in name and description"),
 ):
     """List all templates with optional filters and pagination.
-    
-    Admins see all templates. Lecturers see only approved public templates and their own templates.
-    
+
+    Admins see all templates. Lecturers see their own templates plus public
+    templates that have at least one APPROVED version (safety net — public
+    templates whose versions are all still pending/rejected stay hidden from
+    non-owners). Per-version approval gating is then enforced when the user
+    fetches a specific TemplateVersion.
+
     Supports filtering by:
-    - Approval status (pending, approved, rejected, deprecated)
     - Visibility (private, public)
     - Owner ID
     - Search term (searches name and description)
-    
+
     Returns paginated results with total count.
     """
     service = TemplateService(db)
-    
+
     is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
-    
+
     templates, total = service.list_templates(
         skip=(pagination.page - 1) * pagination.page_size,
         limit=pagination.page_size,
-        status=status_filter,
         visibility=visibility,
         owner_id=owner_id,
         search=search,
@@ -80,8 +89,10 @@ async def get_template(
     current_user: CurrentUser,
 ):
     """Get a single template by ID.
-    
-    Admins can view any template. Lecturers can only view approved public templates or their own templates.
+
+    Admins can view any template. Lecturers can view their own templates plus
+    public templates with at least one APPROVED version. Per-version approval
+    is then enforced when fetching a specific TemplateVersion.
     Returns complete template details including metadata and timestamps.
     """
     service = TemplateService(db)
@@ -105,21 +116,21 @@ async def create_template(
     current_user: CurrentUser,
 ):
     """Create a new template.
-    
-    Templates are created with visibility 'private' and approval status 'pending'.
-    They must be approved by an admin before becoming publicly available.
-    
+
+    Templates are created with visibility 'private'. Approval gating lives on
+    each TemplateVersion (see /template-versions endpoints).
+
     Requires authentication. The authenticated user becomes the template owner.
     """
     service = TemplateService(db)
-    
+
     template = service.create_template(template_data, owner_id=current_user["user_id"])
-    
+
     template_response = TemplateResponse.model_validate(template)
-    
+
     return ResponseBuilder.created(
         data=template_response.model_dump(mode="json"),
-        message="Template created successfully with status 'pending'",
+        message="Template created successfully",
         request_id=request_id,
     )
 
@@ -189,61 +200,79 @@ async def delete_template(
 
 
 @router.post(
-    "/{template_id}/approve",
+    "/import-from-github",
+    status_code=status.HTTP_201_CREATED,
     response_model=None,
-    dependencies=[Depends(require_roles(UserRole.ADMIN))],  # Only ADMIN can approve
 )
-async def approve_template(
-    template_id: UUID,
+async def import_template_from_github(
+    payload: GithubImportNewTemplate,
     db: DBSession,
     request_id: RequestID,
     current_user: CurrentUser,
 ):
-    """Approve a template for public use.
-    
-    Only admins can approve templates.
-    Automatically sets visibility to 'public' and approval status to 'approved'.
-    Approved templates become available to all lecturers.
-    
-    Requires authentication with admin role.
+    """Create a new template plus its first version from a GitHub repository.
+
+    The template is always created with `visibility=private` (matching
+    `POST /templates`); admins can promote to public later via PATCH. The first
+    version follows the standard per-version approval rules.
+
+    For private repos the calling user must have linked our GitHub App via
+    `POST /auth/github/install`. Public repos work without an installation
+    (subject to GitHub's 60/h unauthenticated rate limit). The endpoint
+    resolves the repo's commit SHA, fetches `app.yaml`, and persists every
+    file in the same folder as a new Template + TemplateVersion + files.
     """
-    service = TemplateService(db)
-    template = service.approve_template(str(template_id))
-    
+    service = GithubImportService(db)
+    template = service.import_to_new_template(
+        github_url=payload.github_url,
+        app_yaml_path=payload.app_yaml_path,
+        name=payload.name,
+        description=payload.description,
+        icon_url=payload.icon_url,
+        owner_user_id=current_user["user_id"],
+        owner_user_roles=current_user.get("roles", []),
+    )
+
     template_response = TemplateResponse.model_validate(template)
-    
-    return ResponseBuilder.success(
+    return ResponseBuilder.created(
         data=template_response.model_dump(mode="json"),
-        message="Template approved successfully",
+        message="Template imported from GitHub successfully",
         request_id=request_id,
     )
 
 
 @router.post(
-    "/{template_id}/reject",
+    "/{template_id}/import-from-github",
+    status_code=status.HTTP_201_CREATED,
     response_model=None,
-    dependencies=[Depends(require_roles(UserRole.ADMIN))],  # Only ADMIN can reject
 )
-async def reject_template(
+async def import_new_version_from_github(
     template_id: UUID,
+    payload: GithubImportNewVersion,
     db: DBSession,
     request_id: RequestID,
     current_user: CurrentUser,
 ):
-    """Reject a template.
-    
-    Only admins can reject templates.
-    Rejected templates remain visible to owners but are not publicly available.
-    
-    Requires authentication with admin role.
+    """Append a new version to an existing template, populated from GitHub.
+
+    Owner-or-admin only. For private repos the calling user must have linked
+    our GitHub App via `POST /auth/github/install`. Approval defaults to
+    PENDING unless the user is an admin and the parent template is public,
+    in which case the new version is auto-approved.
     """
-    service = TemplateService(db)
-    template = service.reject_template(str(template_id))
-    
-    template_response = TemplateResponse.model_validate(template)
-    
-    return ResponseBuilder.success(
-        data=template_response.model_dump(mode="json"),
-        message="Template rejected successfully",
+    service = GithubImportService(db)
+    version = service.import_to_existing_template(
+        template_id=str(template_id),
+        github_url=payload.github_url,
+        app_yaml_path=payload.app_yaml_path,
+        is_active=payload.is_active,
+        user_id=current_user["user_id"],
+        user_roles=current_user.get("roles", []),
+    )
+
+    version_response = TemplateVersionResponse.model_validate(version)
+    return ResponseBuilder.created(
+        data=version_response.model_dump(mode="json"),
+        message="Template version imported from GitHub successfully",
         request_id=request_id,
     )

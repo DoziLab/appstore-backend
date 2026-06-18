@@ -1,0 +1,40 @@
+meta {
+  name: Approve Template Version
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{base_url}}/api/v1/template-versions/{{version_id}}/approve
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # Approve Template Version (Admin)
+
+  Approves a single template version. Sets:
+
+  - `approval_status = approved`
+  - `approved_by_id` = current admin user
+  - `approved_at` = now()
+
+  Approval is per-version. The parent template's visibility is independent and
+  unchanged by this call.
+
+  ## Permissions
+
+  ADMIN-only.
+
+  ## Path Parameters
+
+  - `version_id` (UUID) — the version to approve
+
+  ## Returns
+
+  Updated TemplateVersion with `approval_status='approved'`.
+}

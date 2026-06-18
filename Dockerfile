@@ -9,15 +9,21 @@ RUN apt-get update && apt-get install -y \
     openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
 # Copy project files
-COPY pyproject.toml .
+COPY pyproject.toml uv.lock ./
 COPY alembic.ini .
 COPY alembic/ ./alembic/
 COPY src/ ./src/
 COPY tests/ ./tests/
 
-# Install Python dependencies (including dev extras for running tests inside container)
-RUN pip install --no-cache-dir ".[dev]"
+# Install Python dependencies
+RUN uv sync --frozen --extra dev
+
+# Make uv-managed binaries available in PATH
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Expose port
 EXPOSE 8000

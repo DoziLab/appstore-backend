@@ -1,0 +1,54 @@
+meta {
+  name: List Approval Queue
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{base_url}}/api/v1/template-versions/queue?status=pending&page=1&page_size=20&sort=created_at_desc
+  body: none
+  auth: bearer
+}
+
+params:query {
+  status: pending
+  page: 1
+  page_size: 20
+  sort: created_at_desc
+  ~template_id:
+  ~visibility:
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # Approval Queue (Admin)
+
+  Lists template versions filtered by approval status across ALL templates so
+  admins can triage submissions in one view. Each row inlines:
+
+  - `template` — parent template metadata (`id, name, owner_id, visibility`)
+  - `parameters` — parsed `parameters` from `app.yaml` (CPU/RAM/disk/etc.)
+
+  ## Query Parameters
+
+  - `status` (default `pending`) — `pending | approved | rejected | deprecated`
+  - `template_id` (optional UUID) — limit queue to a single template
+  - `visibility` (optional) — filter by parent template visibility (`private` / `public`)
+  - `sort` — one of:
+    - `created_at_desc` (default, newest first)
+    - `created_at_asc`
+    - `template_name_asc`
+    - `template_name_desc`
+  - `page`, `page_size` — pagination
+
+  ## Permissions
+
+  ADMIN-only.
+
+  ## Returns
+
+  Paginated list with the queue rows.
+}
