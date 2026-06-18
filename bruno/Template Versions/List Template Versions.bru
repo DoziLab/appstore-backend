@@ -25,22 +25,22 @@ vars:pre-request {
 
 docs {
   # List Template Versions
-  
+
   Lists all versions for a specific template, ordered by creation date
   (newest first). Optionally filters to active-only and inlines parameters
   parsed from `app.yaml` for each version.
-  
+
   ## Path Parameters
-  
+
   - `template_id`: UUID of the template
-  
+
   ## Query Parameters
-  
+
   - `active_only` (default `false`) — only active versions
   - `include_parameters` (default `false`) — inline `parameters` parsed from
     each version's `app.yaml`. Off by default because parsing is per-version.
-  
+
   ## Returns
-  
+
   Array of template versions.
 }
