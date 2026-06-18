@@ -1,7 +1,7 @@
 """per_version_approval_and_github_app
 
 Revision ID: a7c4f2b91d34
-Revises: 66e4c3287d2d
+Revises: c1b8339e71ad
 Create Date: 2026-06-01 12:00:00.000000
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision: str = 'a7c4f2b91d34'
-down_revision: Union[str, Sequence[str], None] = '66e4c3287d2d'
+down_revision: Union[str, Sequence[str], None] = 'c1b8339e71ad'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
