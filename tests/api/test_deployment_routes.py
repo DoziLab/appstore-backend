@@ -265,7 +265,8 @@ def test_list_deployments_filter_by_course(mock_deployments):
     mock_query.limit.return_value = mock_query
     mock_query.all.return_value = filtered
     mock_db.query.return_value = mock_query
-    mock_user = MagicMock(); mock_user.id = 1
+    mock_user = MagicMock()
+    mock_user.id = 1
     mock_query.filter.return_value.first.return_value = mock_user
 
     # Override dependencies
@@ -304,7 +305,8 @@ def test_list_deployments_filter_by_status(mock_deployments):
     mock_query.limit.return_value = mock_query
     mock_query.all.return_value = filtered
     mock_db.query.return_value = mock_query
-    mock_user = MagicMock(); mock_user.id = 1
+    mock_user = MagicMock()
+    mock_user.id = 1
     mock_query.filter.return_value.first.return_value = mock_user
 
     # Override dependencies
@@ -345,7 +347,8 @@ def test_list_deployments_pagination(mock_deployments):
     # return all owned deployments here — slicing happens in the endpoint.
     mock_query.all.return_value = lecturer_deployments
     mock_db.query.return_value = mock_query
-    mock_user = MagicMock(); mock_user.id = 1
+    mock_user = MagicMock()
+    mock_user.id = 1
     mock_query.filter.return_value.first.return_value = mock_user
 
     # Override dependencies
@@ -389,7 +392,8 @@ def test_list_deployments_combined_filters(mock_deployments):
     mock_query.limit.return_value = mock_query
     mock_query.all.return_value = filtered
     mock_db.query.return_value = mock_query
-    mock_user = MagicMock(); mock_user.id = 1
+    mock_user = MagicMock()
+    mock_user.id = 1
     mock_query.filter.return_value.first.return_value = mock_user
 
     # Override dependencies
@@ -485,7 +489,8 @@ def test_list_deployments_filter_by_template_id(mock_deployments):
     mock_query.limit.return_value = mock_query
     mock_query.all.return_value = filtered
     mock_db.query.return_value = mock_query
-    mock_user = MagicMock(); mock_user.id = 1
+    mock_user = MagicMock()
+    mock_user.id = 1
     mock_query.filter.return_value.first.return_value = mock_user
 
     # Override dependencies
@@ -533,7 +538,8 @@ def test_get_deployment_as_owner(mock_repo_class):
 
     # User-lookup return: same id as mock_lecturer_user (1)
     mock_db = MagicMock()
-    mock_user = MagicMock(); mock_user.id = 1
+    mock_user = MagicMock()
+    mock_user.id = 1
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
     app.dependency_overrides[get_db] = lambda: mock_db
 
@@ -683,7 +689,8 @@ def test_get_deployment_forbidden(mock_repo_class):
 
     # User-lookup: returns id=999, NOT 1, so owner check fails.
     mock_db = MagicMock()
-    mock_other_user = MagicMock(); mock_other_user.id = 999
+    mock_other_user = MagicMock()
+    mock_other_user.id = 999
     mock_db.query.return_value.filter.return_value.first.return_value = mock_other_user
     app.dependency_overrides[get_db] = lambda: mock_db
 
