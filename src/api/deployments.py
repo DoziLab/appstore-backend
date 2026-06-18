@@ -36,14 +36,14 @@ router = APIRouter(
 
 def get_deployment_owner_id(deployment: Deployment, db) -> str:
     """Extract deployment owner's user_id from deployment_parameters.
-    
+
     Args:
         deployment: Deployment model with deployment_parameters JSON
         db: Database session
-        
+
     Returns:
         Local user_id of the deployment owner (teacher)
-        
+
     Raises:
         HTTPException: If teacher information is missing or user not found
     """
@@ -53,28 +53,81 @@ def get_deployment_owner_id(deployment: Deployment, db) -> str:
         params = json.loads(deployment.deployment_parameters)
         teacher_info = params.get("teacher", {})
         teacher_keycloak_id = teacher_info.get("id")
-        
+
         if not teacher_keycloak_id:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Deployment missing teacher information"
             )
-        
+
         # Map Keycloak ID to local user ID
         teacher_user = db.query(User).filter(User.external_id == teacher_keycloak_id).first()
-        
+
         if not teacher_user:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Teacher user not found for Keycloak ID {teacher_keycloak_id}"
             )
-        
+
         return teacher_user.id
-        
+
     except json.JSONDecodeError:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Invalid deployment_parameters JSON"
+        )
+
+
+def authorize_deployment_access(
+    deployment: Deployment,
+    user: dict,
+    openstack_project_id: UUID | None,
+    db,
+) -> None:
+    """Authorize a non-admin user to access a single deployment.
+
+    Admins bypass all checks. Non-admins must:
+    1. Pass an ``openstack_project_id`` query parameter (else 400).
+    2. Be the deployment's owner (teacher.id maps to their local user_id; else 403).
+    3. Have the deployment belong to the project they're currently scoped to (else 403).
+
+    The same three checks are needed by every per-deployment endpoint
+    (get/logs/stream/credentials/stack/restart/delete), so they live here once
+    instead of being copy-pasted seven times.
+
+    Args:
+        deployment: The Deployment row in question.
+        user: ``CurrentUser`` dict (with ``roles`` and ``user_id``).
+        openstack_project_id: Query parameter from the request; ``None`` for admins is fine.
+        db: Database session, forwarded to ``get_deployment_owner_id``.
+
+    Raises:
+        HTTPException 400: Non-admin caller did not pass ``openstack_project_id``.
+        HTTPException 403: Non-admin caller is not the owner, or the deployment
+            belongs to a different OpenStack project.
+    """
+    user_roles = user.get("roles", [])
+    is_admin = "admin" in [role.lower() for role in user_roles]
+    if is_admin:
+        return
+
+    if openstack_project_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="openstack_project_id query parameter is required",
+        )
+
+    owner_id = get_deployment_owner_id(deployment, db)
+    if user["user_id"] != owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to access this deployment",
+        )
+
+    if str(deployment.openstack_project_id) != str(openstack_project_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Deployment belongs to a different OpenStack project",
         )
 
 
@@ -87,38 +140,71 @@ async def list_deployments(
     course_id: UUID | None = Query(None, description="Filter by course ID"),
     template_id: UUID | None = Query(None, description="Filter by template ID"),
     status_filter: str | None = Query(None, description="Filter by deployment status (e.g., RUNNING, FAILED)", alias="status"),
+    openstack_project_id: UUID | None = Query(
+        None,
+        description=(
+            "OpenStack project (local DB id) whose deployments to list. "
+            "Required for non-admin users; ignored for admins unless provided."
+        ),
+    ),
 ):
     """List all deployments for the current user.
-    
+
     Fetches deployments from database and enriches them with current OpenStack stack status.
     Only shows deployments created through the App Store, not all OpenStack resources.
-    
+
     Returns deployment information including:
     - Deployment metadata (name, mode, parameters)
     - Current status from database
     - Associated course and template information
     - OpenStack stack ID (if available)
-    
+
     Optional filters:
     - Course ID: Only show deployments for a specific course
     - Template ID: Only show deployments using a specific template
     - Status: Filter by deployment status (e.g., RUNNING, FAILED)
-    
+
+    Authorization & visibility:
+    - Admins see all deployments (optionally filtered by openstack_project_id).
+    - Non-admins (lecturers) MUST pass openstack_project_id and see only the
+      deployments they own (teacher.id == them) within that project.
+
     Returns paginated results with total count.
     """
-    
-    # Build query: admins get all deployments, lecturers only their own
-    # Note: Since we removed Course FK, we can't filter by lecturer anymore
-    # We'll need to use openstack_project or another mechanism in the future
+
+    user_roles = user.get("roles", [])
+    is_admin = "admin" in [role.lower() for role in user_roles]
+
+    # Non-admins must scope by OpenStack project; otherwise we'd be in the same
+    # situation as before (lecturer seeing every other lecturer's deployments).
+    if not is_admin and openstack_project_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="openstack_project_id query parameter is required",
+        )
+
+    # Validate that the project belongs to the requesting non-admin user.
+    if not is_admin and openstack_project_id is not None:
+        openstack_repo = OpenstackProjectRepository(db)
+        proj = openstack_repo.get_by_id(str(openstack_project_id))
+        if not proj or proj.owner_user_id != user["user_id"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="OpenStack project does not belong to user",
+            )
+
     query = db.query(Deployment)
-    
+
     # Apply filters
     if course_id:
         query = query.filter(Deployment.course_id == str(course_id))
-    
+
     if template_id:
         query = query.join(TemplateVersion).filter(TemplateVersion.template_id == template_id)
-    
+
+    if openstack_project_id is not None:
+        query = query.filter(Deployment.openstack_project_id == str(openstack_project_id))
+
     if status_filter:
         try:
             status_enum = DeploymentStatus(status_filter.lower())
@@ -133,18 +219,34 @@ async def list_deployments(
                 message=f"Invalid status filter: {status_filter}",
                 request_id=request_id,
             )
-    
-    # Get total count before pagination
-    total = query.count()
-    
-    # Apply pagination
-    deployments = (
-        query
-        .order_by(Deployment.created_at.desc())
-        .offset((pagination.page - 1) * pagination.page_size)
-        .limit(pagination.page_size)
-        .all()
-    )
+
+    if is_admin:
+        # Admins see everything; paginate in SQL.
+        total = query.count()
+        deployments = (
+            query
+            .order_by(Deployment.created_at.desc())
+            .offset((pagination.page - 1) * pagination.page_size)
+            .limit(pagination.page_size)
+            .all()
+        )
+    else:
+        # Non-admin: project filter already applied in SQL above. Owner-by-teacher
+        # lives in deployment_parameters JSON, so we filter in Python via the
+        # existing get_deployment_owner_id helper. Deployments with malformed or
+        # missing teacher info are silently dropped so a single broken record
+        # cannot break the whole listing.
+        all_deployments = query.order_by(Deployment.created_at.desc()).all()
+        owned: list[Deployment] = []
+        for d in all_deployments:
+            try:
+                if get_deployment_owner_id(d, db) == user["user_id"]:
+                    owned.append(d)
+            except (HTTPException, ValueError, json.JSONDecodeError):
+                continue
+        total = len(owned)
+        start = (pagination.page - 1) * pagination.page_size
+        deployments = owned[start : start + pagination.page_size]
     
     # Convert to response format
     deployment_list = []
@@ -215,41 +317,50 @@ async def get_deployment(
     db: DBSession,
     request_id: RequestID,
     user: CurrentUser,
+    openstack_project_id: UUID | None = Query(
+        None,
+        description=(
+            "OpenStack project (local DB id) the deployment must belong to. "
+            "Required for non-admin users."
+        ),
+    ),
 ):
     """Get detailed information about a single deployment.
-    
+
     Returns complete deployment details including:
     - Deployment metadata and configuration
     - Current status and timestamps
     - Associated template version and course
     - OpenStack Heat stack information (if available)
     - Deployment instances with access URLs
-    
-    **Authorization:** Owner (lecturer) or Admin only.
-    
+
+    **Authorization:** Owner (lecturer) or Admin only. Non-admin callers must
+    additionally pass openstack_project_id matching the deployment; cross-project
+    access via direct URL is rejected with 403.
+
     Args:
         deployment_id: ID of the deployment
         db: Database session
         request_id: Request correlation ID
         user: Authenticated user
-        
+
     Returns:
         Detailed deployment information with instances
-        
+
     Raises:
         NotFoundException: If deployment does not exist
         HTTPException: If user lacks permission to access this deployment
     """
     deployment_repo = DeploymentRepository(db)
     deployment = deployment_repo.get_by_id(deployment_id)
-    
+
     if not deployment:
         raise NotFoundException(f"Deployment with ID {deployment_id} not found")
-    
-    # Check authorization: Lecturers can only see their own deployments
-    # Note: Since we removed Course FK, authorization is simplified for now
-    # Future: Check via openstack_project relationship
-    
+
+    # Authorization: admins see all; lecturers must own the deployment AND be
+    # currently scoped to the OpenStack project the deployment lives in.
+    authorize_deployment_access(deployment, user, openstack_project_id, db)
+
     # Build response with deployment details
     deployment_dict = DeploymentResponse.model_validate(deployment).model_dump(mode="json")
     
@@ -299,20 +410,24 @@ async def get_deployment_logs(
     db: DBSession,
     request_id: RequestID,
     user: CurrentUser,
+    openstack_project_id: UUID | None = Query(
+        None,
+        description="OpenStack project (local DB id) the deployment must belong to. Required for non-admin users.",
+    ),
 ):
     """
     Get all logs for a specific deployment.
-    
+
     Returns logs in chronological order (oldest first).
-    
+
     Args:
         deployment_id: ID of the deployment
         db: Database session
         request_id: Request ID for tracing
-        
+
     Returns:
         List of deployment log entries
-        
+
     Raises:
         NotFoundException: If deployment does not exist
         HTTPException: If access is forbidden
@@ -320,22 +435,11 @@ async def get_deployment_logs(
     # Verify deployment exists
     deployment_repo = DeploymentRepository(db)
     deployment = deployment_repo.get_by_id(deployment_id)
-    
+
     if not deployment:
         raise NotFoundException(f"Deployment with ID {deployment_id} not found")
-    
-    # Check authorization: Lecturers can only see their own deployments
-    user_roles = user.get("roles", [])
-    is_admin = "admin" in [role.lower() for role in user_roles]
-    
-    if not is_admin:
-        # Non-admin users can only access their own deployments
-        owner_id = get_deployment_owner_id(deployment, db)
-        if user["user_id"] != owner_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have permission to access this deployment"
-            )
+
+    authorize_deployment_access(deployment, user, openstack_project_id, db)
     
     # Get logs
     log_service = DeploymentLogService(db)
@@ -354,6 +458,10 @@ async def stream_deployment_logs(
     db: DBSession,
     user: CurrentUser,
     since_id: str = Query(None, description="Only send logs newer than this log ID"),
+    openstack_project_id: UUID | None = Query(
+        None,
+        description="OpenStack project (local DB id) the deployment must belong to. Required for non-admin users.",
+    ),
 ):
     """
     Stream deployment logs as Server-Sent Events (SSE).
@@ -368,15 +476,7 @@ async def stream_deployment_logs(
     if not deployment:
         raise NotFoundException(f"Deployment with ID {deployment_id} not found")
 
-    user_roles = user.get("roles", [])
-    is_admin = "admin" in [role.lower() for role in user_roles]
-    if not is_admin:
-        owner_id = get_deployment_owner_id(deployment, db)
-        if user["user_id"] != owner_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have permission to access this deployment",
-            )
+    authorize_deployment_access(deployment, user, openstack_project_id, db)
 
     TERMINAL_STATUSES = {"RUNNING", "FAILED", "DELETED", "CANCELLED"}
 
@@ -439,6 +539,10 @@ async def get_deployment_credentials(
     db: DBSession,
     request_id: RequestID,
     user: CurrentUser,
+    openstack_project_id: UUID | None = Query(
+        None,
+        description="OpenStack project (local DB id) the deployment must belong to. Required for non-admin users.",
+    ),
 ):
     """Return generated user credentials for a deployment.
 
@@ -450,15 +554,7 @@ async def get_deployment_credentials(
     if not deployment:
         raise NotFoundException(f"Deployment with ID {deployment_id} not found")
 
-    user_roles = user.get("roles", [])
-    is_admin = "admin" in [role.lower() for role in user_roles]
-    if not is_admin:
-        owner_id = get_deployment_owner_id(deployment, db)
-        if user["user_id"] != owner_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have permission to access this deployment"
-            )
+    authorize_deployment_access(deployment, user, openstack_project_id, db)
 
     instances = (
         db.query(DeploymentInstance)
@@ -503,20 +599,24 @@ async def get_deployment_stack(
     db: DBSession,
     request_id: RequestID,
     user: dict = Depends(require_roles(UserRole.ADMIN, UserRole.LECTURER)),
+    openstack_project_id: UUID | None = Query(
+        None,
+        description="OpenStack project (local DB id) the deployment must belong to. Required for non-admin users.",
+    ),
 ):
     """Get OpenStack Heat stack information for a deployment.
-    
+
     Returns current stack status, resources, and outputs.
-    
+
     Args:
         deployment_id: ID of the deployment
         db: Database session
         request_id: Request ID for tracing
         user: Authenticated user
-        
+
     Returns:
         Stack information including status and resources
-        
+
     Raises:
         NotFoundException: If deployment does not exist
         HTTPException: If stack information cannot be retrieved or access is forbidden
@@ -524,22 +624,11 @@ async def get_deployment_stack(
     # Verify deployment exists
     deployment_repo = DeploymentRepository(db)
     deployment = deployment_repo.get_by_id(deployment_id)
-    
+
     if not deployment:
         raise NotFoundException(f"Deployment with ID {deployment_id} not found")
-    
-    # Check authorization: Lecturers can only see their own deployments
-    user_roles = user.get("roles", [])
-    is_admin = "admin" in [role.lower() for role in user_roles]
-    
-    if not is_admin:
-        # Non-admin users can only access their own deployments
-        owner_id = get_deployment_owner_id(deployment, db)
-        if user["user_id"] != owner_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have permission to access this deployment"
-            )
+
+    authorize_deployment_access(deployment, user, openstack_project_id, db)
     
     if not deployment.openstack_stack_id:
         raise HTTPException(
@@ -547,19 +636,16 @@ async def get_deployment_stack(
             detail="No Heat stack associated with this deployment"
         )
     
-    # Get deployment owner's OpenStack project
-    openstack_repo = OpenstackProjectRepository(db)
-    owner_id = get_deployment_owner_id(deployment, db)
-    openstack_projects = openstack_repo.get_by_owner(owner_id)
-    
-    if not openstack_projects:
+    # Use the deployment's persisted OpenStack project (FK) instead of
+    # re-deriving it from teacher.id — same reason as in deploy_tasks: the
+    # old [0]-pick was wrong whenever a user had more than one project.
+    openstack_project = deployment.openstack_project
+    if not openstack_project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No OpenStack project found for owner {owner_id}"
+            detail=f"Deployment {deployment_id} has no openstack_project_id set",
         )
-    
-    openstack_project = openstack_projects[0]
-    
+
     try:
         heat_service = HeatStackService(openstack_project)
         
@@ -611,44 +697,38 @@ async def restart_deployment(
     db: DBSession,
     request_id: RequestID,
     user: CurrentUser,
+    openstack_project_id: UUID | None = Query(
+        None,
+        description="OpenStack project (local DB id) the deployment must belong to. Required for non-admin users.",
+    ),
 ):
     """Restart a deployment by updating the Heat stack.
-    
+
     Triggers a Heat stack update to restart the deployment's resources.
     This is useful for recovering from transient errors or applying updates.
-    
+
     **Authorization:** Owner (lecturer) or Admin only.
-    
+
     Args:
         deployment_id: ID of the deployment to restart
         db: Database session
         request_id: Request correlation ID
         user: Authenticated user
-        
+
     Returns:
         Acknowledgment that restart has been queued
-        
+
     Raises:
         NotFoundException: If deployment does not exist
         HTTPException: If user lacks permission or deployment is in invalid state
     """
     deployment_repo = DeploymentRepository(db)
     deployment = deployment_repo.get_by_id(deployment_id)
-    
+
     if not deployment:
         raise NotFoundException(f"Deployment with ID {deployment_id} not found")
-    
-    # Check authorization: Lecturers can only restart their own deployments
-    user_roles = user.get("roles", [])
-    is_admin = "admin" in [role.lower() for role in user_roles]
-    
-    if not is_admin:
-        owner_id = get_deployment_owner_id(deployment, db)
-        if user["user_id"] != owner_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have permission to restart this deployment"
-            )
+
+    authorize_deployment_access(deployment, user, openstack_project_id, db)
     
     # Validate deployment state: cannot restart if already in a transitional state
     transitional_states = [DeploymentStatus.CREATING, DeploymentStatus.DELETING, DeploymentStatus.RESTARTING]
@@ -698,6 +778,10 @@ async def delete_deployment(
     db: DBSession,
     request_id: RequestID,
     user: CurrentUser,
+    openstack_project_id: UUID | None = Query(
+        None,
+        description="OpenStack project (local DB id) the deployment must belong to. Required for non-admin users.",
+    ),
 ):
     """Request deletion of a deployment.
 
@@ -712,17 +796,7 @@ async def delete_deployment(
     if not deployment:
         raise NotFoundException(f"Deployment with ID {deployment_id} not found")
 
-    # Authorization: Lecturers may delete only their own deployments
-    user_roles = user.get("roles", [])
-    is_admin = "admin" in [role.lower() for role in user_roles]
-
-    if not is_admin:
-        owner_id = get_deployment_owner_id(deployment, db)
-        if user["user_id"] != owner_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have permission to delete this deployment",
-            )
+    authorize_deployment_access(deployment, user, openstack_project_id, db)
 
     # Enqueue Celery task to perform deletion asynchronously
     try:

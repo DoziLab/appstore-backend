@@ -40,6 +40,14 @@ class DeploymentCreate(BaseModel):
     name: str = Field(..., description="Deployment name for identification", max_length=255)
     template_version_id: str = Field(..., description="Template version ID to deploy")
     course_id: str = Field(..., description="Keycloak group ID for the course")
+    openstack_project_id: str = Field(
+        ...,
+        description=(
+            "OpenStack project (local DB primary key from openstack_projects.id, "
+            "NOT the Keystone tenant UUID) this deployment should run against. "
+            "Must belong to the requesting teacher."
+        ),
+    )
 
     # All template parameters — backend separates Heat vs Ansible automatically
     parameters: dict[str, Any] = Field(

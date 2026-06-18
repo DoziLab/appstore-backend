@@ -42,3 +42,4 @@ class OpenstackProject(Base):
     
     # Relationships
     owner_user: Mapped["User"] = relationship("User", back_populates="openstack_projects")
+    deployments: Mapped[list["Deployment"]] = relationship("Deployment", back_populates="openstack_project")
