@@ -22,8 +22,11 @@ COPY tests/ ./tests/
 # Install Python dependencies
 RUN uv sync --frozen --extra dev
 
+# Make uv-managed binaries available in PATH
+ENV PATH="/app/.venv/bin:$PATH"
+
 # Expose port
 EXPOSE 8000
 
 # Default command (can be overridden in docker-compose)
-CMD ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
