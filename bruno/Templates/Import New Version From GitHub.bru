@@ -1,0 +1,59 @@
+meta {
+  name: Import New Version From GitHub
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{base_url}}/api/v1/templates/{{template_id}}/import-from-github
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "github_url": "https://github.com/dozilab/templates/tree/v1.1",
+    "app_yaml_path": "postgres/app.yaml",
+    "is_active": true
+  }
+}
+
+script:post-response {
+  if (res.status === 201 && res.body && res.body.data && res.body.data.id) {
+    bru.setEnvVar("version_id", res.body.data.id);
+    console.log("Saved version_id =", res.body.data.id);
+  }
+}
+
+docs {
+  # Import New Version From GitHub
+
+  Appends a new version to an existing template, populated from a GitHub
+  source (repo root, branch/tag, or direct `app.yaml` file URL).
+
+  ## Path Parameters
+
+  - `template_id` (UUID) — parent template
+
+  ## Body
+
+  - `github_url` (required, ≤ 1000)
+  - `app_yaml_path` (optional, ≤ 500)
+  - `is_active` (default `true`) — mark imported version as active
+
+  ## Permissions
+
+  Owner-or-admin. Approval defaults to PENDING unless caller is an admin AND
+  the parent template is public, in which case the new version is auto-approved.
+  Private repos require the GitHub App install to be linked
+  (`POST /auth/github/install`).
+
+  ## Returns
+
+  201 Created with the new TemplateVersion. The post-response script saves
+  `version_id`.
+}

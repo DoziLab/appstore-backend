@@ -1,0 +1,42 @@
+meta {
+  name: GitHub Installation Status
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/api/v1/auth/github/installation-status
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+docs {
+  # GitHub Installation Status
+
+  Returns the current user's GitHub App linkage and the repos the install
+  covers.
+
+  ## Permissions
+
+  ADMIN or LECTURER.
+
+  ## Returns
+
+  ```
+  {
+    "connected": true,
+    "installation_id": 78901234,
+    "repos": [
+      { "owner": "octocat", "name": "demo", "full_name": "octocat/demo", "private": false }
+    ]
+  }
+  ```
+
+  When the user has not linked the App, `connected=false`, `installation_id=null`,
+  and `repos=[]`. When linked but the App is misconfigured server-side or
+  GitHub's token-mint fails, `connected=true` with an empty `repos` list.
+}

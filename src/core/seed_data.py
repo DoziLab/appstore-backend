@@ -2,7 +2,7 @@
 import logging
 from sqlalchemy.orm import Session
 
-from src.models.template import Template, TemplateVisibility, TemplateApprovalStatus
+from src.models.template import Template, TemplateVisibility
 from src.models.template_version import TemplateVersion
 from src.models.template_version_file import TemplateVersionFile, FileType
 from src.models.user import User
@@ -2015,9 +2015,15 @@ def create_mock_templates(db: Session, owner_id: str) -> list[Template]:
             "name": "Ansible Multi-User Ubuntu",
             "description": "Ubuntu VM mit mehreren Benutzerkonten, verwaltet durch Ansible. Pro Gruppe wird ein Linux-Account mit eigenem Arbeitsverzeichnis erstellt.",
             "repo_url": "https://github.com/dozilab/appstore-templates",
-            "icon_url": "mdi:ansible",
+            "icon_url": "mdi:server-network",
             "visibility": TemplateVisibility.PUBLIC,
-            "approval_status": TemplateApprovalStatus.APPROVED,
+        },
+        {
+            "name": "PostgreSQL Group Database",
+            "description": "Deploy a PostgreSQL database server where each student group gets its own database and role. Optional pgAdmin4 web interface for database management",
+            "repo_url": "https://github.com/dozilab/appstore-templates",
+            "icon_url": "mdi:database",
+            "visibility": TemplateVisibility.PUBLIC,
         }
     ]
     
