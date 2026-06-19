@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: {{base_url}}/api/v1/courses?page=1&page_size=10
+  url: {{base_url}}/api/v1/courses?page=1&page_size=10&openstack_project_id={{openstack_project_local_id}}
   body: none
   auth: bearer
 }
@@ -13,9 +13,8 @@ get {
 params:query {
   page: 1
   page_size: 10
-  ~semester: WS2024
-  ~search: 
-  ~lecturer_id: 
+  openstack_project_id: {{openstack_project_local_id}}
+  ~search:
 }
 
 auth:bearer {
@@ -24,18 +23,23 @@ auth:bearer {
 
 docs {
   # List Courses
-  
-  Lists all courses with optional filters and pagination.
-  
-  **Required Role:** Authenticated user
-  
+
+  Lists all courses with optional filters and pagination. The embedded
+  `deployments` collection is scoped to the calling user and the active
+  OpenStack project.
+
+  **Required Role:** Authenticated user (lecturer or admin)
+
   **Query Parameters:**
   - `page`: Page number (default: 1)
   - `page_size`: Items per page (default: 10)
-  - `semester`: Filter by semester (e.g., WS2024, SS2025)
-  - `search`: Search in course name
-  - `lecturer_id`: Filter by lecturer ID
-  
+  - `search`: Search in course name or Keycloak course ID
+  - `openstack_project_id`: Local DB id of the active OpenStack project.
+    Required for non-admins (400 if missing); ignored for admins unless set.
+    Restricts each course's embedded `deployments` to (project = arg) AND
+    (teacher.id = caller).
+
   **Response:**
-  - Paginated list of courses with total count
+  - Paginated list of courses with total count. Each course's
+    `deployments` array obeys the scoping above.
 }

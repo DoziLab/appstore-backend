@@ -5,9 +5,13 @@ meta {
 }
 
 get {
-  url: {{base_url}}/api/v1/courses/{{course_id}}
+  url: {{base_url}}/api/v1/courses/{{course_id}}?openstack_project_id={{openstack_project_local_id}}
   body: none
   auth: bearer
+}
+
+params:query {
+  openstack_project_id: {{openstack_project_local_id}}
 }
 
 auth:bearer {
@@ -16,14 +20,22 @@ auth:bearer {
 
 docs {
   # Get Course
-  
-  Retrieves a single course by ID.
-  
-  **Required Role:** Authenticated user
-  
+
+  Retrieves a single course by ID. The embedded `deployments` collection
+  follows the same scoping rules as `List Courses`.
+
+  **Required Role:** Authenticated user (lecturer or admin)
+
+  **Query Parameters:**
+  - `openstack_project_id`: Local DB id of the active OpenStack project.
+    Required for non-admins (400 if missing); ignored for admins unless set.
+
   **Response:**
-  - Complete course details including metadata and timestamps
-  
+  - Complete course details including metadata and timestamps. The
+    `deployments` array is filtered to (project = arg) AND (teacher.id = caller)
+    for non-admins.
+
   **Variables used:**
   - `course_id`: Set automatically after creating a course
+  - `openstack_project_local_id`: Set after creating an OpenStack project
 }
