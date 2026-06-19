@@ -2,11 +2,10 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, status, Query, Depends
+from fastapi import APIRouter, status, Query, Depends, HTTPException
 
 from src.core.response_builder import ResponseBuilder
-from src.core.dependencies import DBSession, RequestID, Pagination, CurrentUser
-from src.core.auth import require_roles
+from src.core.dependencies import DBSession, RequestID, Pagination, CurrentUser, require_roles
 from src.core.exceptions import NotFoundException
 from src.schemas.course import CourseCreate, CourseUpdate, CourseResponse, CourseGroupCreate, CourseGroupResponse, CourseMemberResponse, GroupMemberAdd
 from src.services.course_service import CourseService
@@ -14,6 +13,8 @@ from src.models.user import UserRole
 from src.models.course_group import CourseGroup
 from src.models.course_member import CourseMember
 from src.models.group_member import GroupMember
+from src.repositories.openstack_project_repository import OpenstackProjectRepository
+from src.api.deployments import get_deployment_owner_id
 from sqlalchemy.orm import joinedload
 
 
@@ -24,6 +25,68 @@ router = APIRouter(
 )
 
 
+def _authorize_courses_scope(
+    current_user: dict,
+    openstack_project_id: Optional[UUID],
+    db,
+) -> bool:
+    """Validate the OpenStack-project scoping for course-list/detail reads.
+
+    Mirrors the auth block in ``list_deployments``: non-admins MUST pass an
+    ``openstack_project_id`` and that project must belong to them. Returns
+    ``is_admin`` so the caller can decide whether to apply the embedded
+    Owner-filter.
+    """
+    user_roles = current_user.get("roles", [])
+    is_admin = "admin" in [r.lower() for r in user_roles]
+    if is_admin:
+        return True
+
+    if openstack_project_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="openstack_project_id query parameter is required",
+        )
+
+    openstack_repo = OpenstackProjectRepository(db)
+    proj = openstack_repo.get_by_id(str(openstack_project_id))
+    if not proj or proj.owner_user_id != current_user["user_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="OpenStack project does not belong to user",
+        )
+    return False
+
+
+def _filter_deployments_by_owner(courses, current_user_id: str, db) -> None:
+    """In-place restrict each course's embedded deployments to the caller.
+
+    The repository already filtered the eager-loaded list by
+    ``openstack_project_id``; this strips out any deployment whose
+    ``deployment_parameters.teacher.id`` does not resolve to the calling user.
+    Owner-resolution lives in ``deployment_parameters`` JSON, not on a column,
+    so this stays in Python (same trade-off as PR #137).
+
+    Unlike the per-deployment endpoints (which use ``get_deployment_owner_id``
+    to *authorize* access and want to surface a 500 on a missing teacher
+    record), here we are *filtering* a list. A single deployment with a stale
+    or unresolvable teacher.id (e.g. user deleted from the local DB but row
+    still here) must not fail the whole listing — we drop it instead, which is
+    also the safer default for a leak fix.
+    """
+    for course in courses:
+        kept = []
+        for d in course.deployments:
+            try:
+                owner_id = get_deployment_owner_id(d, db)
+            except HTTPException:
+                # Owner not resolvable — drop the row (safer than leaking it).
+                continue
+            if owner_id == current_user_id:
+                kept.append(d)
+        course.deployments = kept
+
+
 @router.get("", response_model=None)
 async def list_courses(
     pagination: Pagination,
@@ -31,27 +94,46 @@ async def list_courses(
     request_id: RequestID,
     current_user: CurrentUser,
     search: Optional[str] = Query(None, description="Search in course name or Keycloak course ID"),
+    openstack_project_id: UUID | None = Query(
+        None,
+        description=(
+            "OpenStack project (local DB id) whose deployments to embed in each course. "
+            "Required for non-admin users; ignored for admins unless provided."
+        ),
+    ),
 ):
     """List all courses with optional filters and pagination.
-    
+
     Supports filtering by:
     - Search term (searches course name or keycloak_course_id)
-    
+
+    Authorization & visibility:
+    - Admins see all courses. If ``openstack_project_id`` is passed, the
+      embedded deployments are restricted to that project; otherwise all.
+    - Non-admins (lecturers) MUST pass ``openstack_project_id`` and only see
+      deployments that they own (teacher.id == them) within that project
+      embedded under each course.
+
     Returns paginated results with total count.
     """
+    is_admin = _authorize_courses_scope(current_user, openstack_project_id, db)
+
     service = CourseService(db)
-    
     courses, total = service.list_courses(
         skip=(pagination.page - 1) * pagination.page_size,
         limit=pagination.page_size,
         search=search,
+        openstack_project_id=str(openstack_project_id) if openstack_project_id else None,
     )
-    
+
+    if not is_admin:
+        _filter_deployments_by_owner(courses, current_user["user_id"], db)
+
     course_responses = [
         CourseResponse.model_validate(course).model_dump(mode="json")
         for course in courses
     ]
-    
+
     return ResponseBuilder.paginated(
         data=course_responses,
         page=pagination.page,
@@ -67,16 +149,33 @@ async def get_course(
     db: DBSession,
     request_id: RequestID,
     current_user: CurrentUser,
+    openstack_project_id: UUID | None = Query(
+        None,
+        description=(
+            "OpenStack project (local DB id) whose deployments to embed. "
+            "Required for non-admin users; ignored for admins unless provided."
+        ),
+    ),
 ):
     """Get a single course by ID.
-    
-    Returns complete course details including metadata and timestamps.
+
+    Returns complete course details including metadata and timestamps. The
+    embedded ``deployments`` collection follows the same scoping rules as
+    ``GET /courses``.
     """
+    is_admin = _authorize_courses_scope(current_user, openstack_project_id, db)
+
     service = CourseService(db)
-    course = service.get_course(str(course_id))
-    
+    course = service.get_course(
+        str(course_id),
+        openstack_project_id=str(openstack_project_id) if openstack_project_id else None,
+    )
+
+    if not is_admin:
+        _filter_deployments_by_owner([course], current_user["user_id"], db)
+
     course_response = CourseResponse.model_validate(course)
-    
+
     return ResponseBuilder.success(
         data=course_response.model_dump(mode="json"),
         message="Course retrieved successfully",

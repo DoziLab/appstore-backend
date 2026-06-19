@@ -40,19 +40,32 @@ class CourseService:
         )
         return course
 
-    def get_course(self, course_id: str | UUID) -> Course:
+    def get_course(
+        self,
+        course_id: str | UUID,
+        openstack_project_id: Optional[str] = None,
+    ) -> Course:
         """Get a course by ID.
-        
+
         Args:
             course_id: Course ID
-            
+            openstack_project_id: If set, the embedded ``deployments`` collection
+                is restricted to that OpenStack project. ``None`` returns all
+                deployments (admin path / call sites that don't care).
+
         Returns:
             Course instance
-            
+
         Raises:
             NotFoundException: If course not found
         """
-        course = self.course_repo.get_by_id(course_id)
+        if openstack_project_id is not None:
+            course = self.course_repo.get_by_id_with_deployments(
+                str(course_id),
+                openstack_project_id=openstack_project_id,
+            )
+        else:
+            course = self.course_repo.get_by_id(course_id)
         if not course:
             raise NotFoundException(f"Course with ID {course_id} not found")
         return course
@@ -62,14 +75,18 @@ class CourseService:
         skip: int = 0,
         limit: int = 100,
         search: Optional[str] = None,
+        openstack_project_id: Optional[str] = None,
     ) -> tuple[list[Course], int]:
         """List courses with filters and pagination.
-        
+
         Args:
             skip: Number of records to skip
             limit: Maximum number of records to return
             search: Search term for course name or keycloak_course_id
-            
+            openstack_project_id: If set, restricts the embedded ``deployments``
+                collection to that OpenStack project. Courses themselves are
+                always returned.
+
         Returns:
             Tuple of (list of courses, total count)
         """
@@ -77,6 +94,7 @@ class CourseService:
             skip=skip,
             limit=limit,
             search=search,
+            openstack_project_id=openstack_project_id,
         )
 
     def update_course(
