@@ -1,6 +1,74 @@
 """OpenStack Resources schemas for quota and usage responses."""
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+
+
+class FlavorDto(BaseModel):
+    """Schema for a single Nova flavor (compute size offering).
+
+    Mirrors the fields the frontend needs to resolve a flavor name
+    (e.g. ``gp1.small``) to actual vCPU / RAM / disk numbers, instead of
+    the previously hardcoded multipliers in ``DeploymentDetailsPage`` and
+    ``AdminMonitoring``.
+    """
+
+    id: str = Field(..., description="Nova flavor ID (UUID or numeric string)")
+    name: str = Field(..., description="Flavor name (e.g. 'gp1.small')")
+    vcpus: int = Field(..., description="Number of virtual CPUs")
+    ram_mb: int = Field(..., description="RAM in megabytes")
+    disk_gb: int = Field(..., description="Root disk size in gigabytes")
+    ephemeral_gb: int = Field(0, description="Ephemeral disk size in gigabytes")
+    is_public: bool = Field(True, description="Whether the flavor is publicly visible")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": "1",
+                "name": "gp1.small",
+                "vcpus": 2,
+                "ram_mb": 4096,
+                "disk_gb": 20,
+                "ephemeral_gb": 0,
+                "is_public": True,
+            }
+        }
+    }
+
+
+class FlavorsResponse(BaseModel):
+    """Schema for the list-flavors endpoint response."""
+
+    project_id: str = Field(..., description="OpenStack project ID the flavors were fetched from")
+    project_name: str = Field(..., description="OpenStack project name")
+    owner_user_id: Optional[str] = Field(None, description="Owner user ID (only set for admin access)")
+    flavors: List[FlavorDto] = Field(default_factory=list, description="List of available flavors")
+    fetched_at: Optional[str] = Field(None, description="Timestamp when data was fetched (ISO format)")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "project_id": "abc123def456",
+                "project_name": "my_project_ws2024",
+                "owner_user_id": None,
+                "flavors": [
+                    {"id": "1", "name": "gp1.small", "vcpus": 2, "ram_mb": 4096, "disk_gb": 20, "ephemeral_gb": 0, "is_public": True},
+                    {"id": "2", "name": "gp1.medium", "vcpus": 4, "ram_mb": 8192, "disk_gb": 40, "ephemeral_gb": 0, "is_public": True},
+                ],
+                "fetched_at": "2024-11-27T10:00:00Z",
+            }
+        }
+    }
+
+    @classmethod
+    def from_service_dict(cls, data: Dict[str, Any], owner_user_id: Optional[str] = None) -> "FlavorsResponse":
+        """Create FlavorsResponse from service dictionary."""
+        return cls(
+            project_id=data.get("project_id", ""),
+            project_name=data.get("project_name", ""),
+            owner_user_id=owner_user_id,
+            flavors=[FlavorDto(**f) for f in data.get("flavors", [])],
+            fetched_at=data.get("fetched_at"),
+        )
 
 
 class QuotaResource(BaseModel):

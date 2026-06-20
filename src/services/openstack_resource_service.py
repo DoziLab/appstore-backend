@@ -340,6 +340,87 @@ class OpenstackResourceService:
             logger.error(f"OpenStack SDK error retrieving quotas: {e}")
             raise BadRequestException(f"Failed to retrieve quotas: {str(e)}")
     
+    def get_flavors(
+        self,
+        user_id: str,
+        project_id: Optional[str] = None,
+        allow_admin_access: bool = False,
+    ) -> dict:
+        """Get available Nova flavors for a project.
+
+        Proxies ``conn.compute.flavors(details=True)`` so the frontend can
+        resolve flavor names (``gp1.small`` …) to actual vCPU / RAM / disk
+        numbers. Replaces the hardcoded ``*2 / *4 / *20`` multiplier used
+        in ``DeploymentDetailsPage.tsx`` / ``AdminMonitoring.tsx``.
+
+        Args:
+            user_id: User ID to look up the OpenStack project for
+            project_id: Optional specific project ID (defaults to user's first project)
+            allow_admin_access: Allow admin to access any user's project
+
+        Returns:
+            Dict with project metadata and a flat ``flavors`` list:
+            {
+                'project_id': str,
+                'project_name': str,
+                'owner_user_id': str,
+                'flavors': [
+                    {'id', 'name', 'vcpus', 'ram_mb', 'disk_gb', 'ephemeral_gb', 'is_public'},
+                    ...
+                ],
+                'fetched_at': str,
+            }
+
+        Raises:
+            NotFoundException: No project found for user
+            ForbiddenException: User does not own the requested project
+            BadRequestException: OpenStack connection or API call failed
+        """
+        project = self._get_project_for_user(user_id, project_id, allow_admin_access)
+
+        try:
+            conn = self._get_connection(project)
+
+            flavors_list = []
+            for f in conn.compute.flavors(details=True):
+                flavors_list.append({
+                    'id': str(f.id),
+                    'name': f.name,
+                    'vcpus': f.vcpus or 0,
+                    'ram_mb': f.ram or 0,
+                    'disk_gb': f.disk or 0,
+                    'ephemeral_gb': getattr(f, 'ephemeral', 0) or 0,
+                    'is_public': getattr(f, 'is_public', True),
+                })
+
+            # Sort by vcpus then ram so the frontend can render them in a sensible order
+            flavors_list.sort(key=lambda x: (x['vcpus'], x['ram_mb']))
+
+            result = {
+                'project_id': project.openstack_project_id,
+                'project_name': project.openstack_project_name,
+                'owner_user_id': project.owner_user_id,
+                'flavors': flavors_list,
+                'fetched_at': datetime.now(timezone.utc).isoformat(),
+            }
+
+            logger.info(
+                f"Retrieved {len(flavors_list)} flavors for user {user_id}",
+                extra={"user_id": user_id, "project_id": project.openstack_project_id, "flavor_count": len(flavors_list)},
+            )
+
+            return result
+
+        except BadRequestException:
+            # Re-raise BadRequestException from _get_connection
+            raise
+        except HttpException as e:
+            logger.error(f"OpenStack API error retrieving flavors: {e}")
+            raise BadRequestException(f"Failed to retrieve flavors: {str(e)}")
+        except SDKException as e:
+            logger.error(f"OpenStack SDK error retrieving flavors: {e}")
+            raise BadRequestException(f"Failed to retrieve flavors: {str(e)}")
+
     def check_availability(
         self,
         user_id: str,

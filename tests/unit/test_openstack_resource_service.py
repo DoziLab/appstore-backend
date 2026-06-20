@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from src.services.openstack_resource_service import OpenstackResourceService
 from src.models.openstack_project import OpenstackProject
 from src.core.exceptions import NotFoundException, BadRequestException, ForbiddenException
+from openstack.exceptions import HttpException, SDKException
 
 
 @pytest.fixture
@@ -106,8 +107,142 @@ class TestGetQuotas:
                 with patch.object(resource_service, '_get_connection', side_effect=BadRequestException("Failed to connect to OpenStack: Connection failed")):
                     with pytest.raises(BadRequestException) as exc_info:
                         resource_service.get_quotas(user_id="user-123", force_refresh=True)
-                    
+
                     assert "Failed to connect" in str(exc_info.value)
+
+
+def _mock_flavor(flavor_id, name, vcpus, ram, disk, ephemeral=0, is_public=True):
+    """Build a Mock that mimics the openstacksdk Flavor object."""
+    flavor = MagicMock()
+    flavor.id = flavor_id
+    flavor.name = name
+    flavor.vcpus = vcpus
+    flavor.ram = ram
+    flavor.disk = disk
+    flavor.ephemeral = ephemeral
+    flavor.is_public = is_public
+    return flavor
+
+
+class TestGetFlavors:
+    """Tests for get_flavors method."""
+
+    def test_get_flavors_success(self, resource_service, mock_db_session, mock_openstack_project):
+        """Returns a sorted list of flavors with the expected fields."""
+        mock_conn = MagicMock()
+        # Intentionally out of order to verify sorting (vcpus asc, then ram asc)
+        mock_conn.compute.flavors.return_value = iter([
+            _mock_flavor("2", "gp1.medium", vcpus=4, ram=8192, disk=40),
+            _mock_flavor("1", "gp1.small", vcpus=2, ram=4096, disk=20),
+            _mock_flavor("3", "gp1.large", vcpus=8, ram=16384, disk=80, ephemeral=10, is_public=False),
+        ])
+
+        with patch.object(resource_service.repository, 'get_by_owner', return_value=[mock_openstack_project]):
+            with patch.object(resource_service, '_get_connection', return_value=mock_conn):
+                result = resource_service.get_flavors(user_id="user-123")
+
+        assert result['project_id'] == "openstack-proj-123"
+        assert result['project_name'] == "test-project"
+        assert result['owner_user_id'] == "user-123"
+        assert 'fetched_at' in result
+        assert len(result['flavors']) == 3
+
+        # Sorted by (vcpus, ram_mb)
+        names = [f['name'] for f in result['flavors']]
+        assert names == ["gp1.small", "gp1.medium", "gp1.large"]
+
+        small = result['flavors'][0]
+        assert small == {
+            'id': "1",
+            'name': "gp1.small",
+            'vcpus': 2,
+            'ram_mb': 4096,
+            'disk_gb': 20,
+            'ephemeral_gb': 0,
+            'is_public': True,
+        }
+
+        # Non-public flavor surfaced correctly
+        large = result['flavors'][2]
+        assert large['ephemeral_gb'] == 10
+        assert large['is_public'] is False
+        assert large['id'] == "3"  # IDs are stringified even if SDK returns int
+
+    def test_get_flavors_empty_list(self, resource_service, mock_db_session, mock_openstack_project):
+        """Returns an empty list when the project has no visible flavors."""
+        mock_conn = MagicMock()
+        mock_conn.compute.flavors.return_value = iter([])
+
+        with patch.object(resource_service.repository, 'get_by_owner', return_value=[mock_openstack_project]):
+            with patch.object(resource_service, '_get_connection', return_value=mock_conn):
+                result = resource_service.get_flavors(user_id="user-123")
+
+        assert result['flavors'] == []
+        assert result['project_id'] == "openstack-proj-123"
+
+    def test_get_flavors_no_project_for_user(self, resource_service, mock_db_session):
+        """Raises NotFoundException when the user has no OpenStack project."""
+        with patch.object(resource_service.repository, 'get_by_owner', return_value=[]):
+            with pytest.raises(NotFoundException) as exc_info:
+                resource_service.get_flavors(user_id="user-123")
+
+            assert "No OpenStack projects found" in str(exc_info.value)
+
+    def test_get_flavors_forbidden_other_project(self, resource_service, mock_db_session, mock_openstack_project):
+        """Raises ForbiddenException when a non-admin requests another user's project."""
+        # mock_openstack_project.owner_user_id == 'user-123', caller is 'user-456'
+        with patch.object(resource_service.repository, 'get_by_id', return_value=mock_openstack_project):
+            with pytest.raises(ForbiddenException) as exc_info:
+                resource_service.get_flavors(
+                    user_id="user-456",
+                    project_id="project-123",
+                    allow_admin_access=False,
+                )
+
+            assert "do not have permission" in str(exc_info.value)
+
+    def test_get_flavors_admin_access_to_other_project(self, resource_service, mock_db_session, mock_openstack_project):
+        """Admin (allow_admin_access=True) can read flavors of any project."""
+        mock_conn = MagicMock()
+        mock_conn.compute.flavors.return_value = iter([
+            _mock_flavor("1", "gp1.small", vcpus=2, ram=4096, disk=20),
+        ])
+
+        with patch.object(resource_service.repository, 'get_by_id', return_value=mock_openstack_project):
+            with patch.object(resource_service, '_get_connection', return_value=mock_conn):
+                result = resource_service.get_flavors(
+                    user_id="user-456",  # not the owner
+                    project_id="project-123",
+                    allow_admin_access=True,
+                )
+
+        assert len(result['flavors']) == 1
+        assert result['owner_user_id'] == "user-123"  # actual owner surfaced
+
+    def test_get_flavors_connection_failure(self, resource_service, mock_db_session, mock_openstack_project):
+        """Connection errors from _get_connection bubble up as BadRequestException."""
+        with patch.object(resource_service.repository, 'get_by_owner', return_value=[mock_openstack_project]):
+            with patch.object(
+                resource_service,
+                '_get_connection',
+                side_effect=BadRequestException("Failed to connect to OpenStack: down"),
+            ):
+                with pytest.raises(BadRequestException) as exc_info:
+                    resource_service.get_flavors(user_id="user-123")
+
+                assert "Failed to connect" in str(exc_info.value)
+
+    def test_get_flavors_sdk_error(self, resource_service, mock_db_session, mock_openstack_project):
+        """SDKException from the Nova call is mapped to BadRequestException."""
+        mock_conn = MagicMock()
+        mock_conn.compute.flavors.side_effect = SDKException("nova exploded")
+
+        with patch.object(resource_service.repository, 'get_by_owner', return_value=[mock_openstack_project]):
+            with patch.object(resource_service, '_get_connection', return_value=mock_conn):
+                with pytest.raises(BadRequestException) as exc_info:
+                    resource_service.get_flavors(user_id="user-123")
+
+                assert "Failed to retrieve flavors" in str(exc_info.value)
 
 
 class TestCheckAvailability:
