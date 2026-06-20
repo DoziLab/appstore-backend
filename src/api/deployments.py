@@ -11,7 +11,7 @@ from src.core.response_builder import ResponseBuilder
 from src.core.dependencies import RequestID, Pagination, CurrentUser, require_roles
 from src.repositories.deployment_repository import DeploymentRepository
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
-from src.schemas.deployment import DeploymentResponse, DeploymentCreate
+from src.schemas.deployment import DeploymentResponse, DeploymentCreate, DeploymentExtend
 from src.services.deployment_service import DeploymentService
 from src.services.deployment_log_service import DeploymentLogService
 from src.services.openstack_heat_service import HeatStackService
@@ -380,6 +380,7 @@ async def get_deployment(
             "openstack_instance_id": instance.openstack_server_id,
             "status": instance.status.value if instance.status else None,
             "ip_address": instance.ip_address,
+            "flavor": instance.flavor,
             "access_urls": [
                 {
                     "id": str(access.id),
@@ -759,6 +760,63 @@ async def restart_deployment(
         message="Restart requested; operation is in progress",
         request_id=request_id,
         status_code=status.HTTP_202_ACCEPTED,
+    )
+
+
+@router.patch(
+    "/{deployment_id}/extend",
+    summary="Extend a deployment's lifetime",
+    responses={
+        200: {"description": "Lifetime extended; new expires_at returned"},
+        400: {"description": "Deployment is already deleted or runtime_months invalid"},
+        403: {"description": "Forbidden - not owner or insufficient role"},
+        404: {"description": "Deployment not found"},
+    },
+)
+async def extend_deployment(
+    deployment_id: str,
+    payload: DeploymentExtend,
+    db: DBSession,
+    request_id: RequestID,
+    user: CurrentUser,
+    openstack_project_id: UUID | None = Query(
+        None,
+        description="OpenStack project (local DB id) the deployment must belong to. Required for non-admin users.",
+    ),
+):
+    """Push the deployment's ``expires_at`` out by ``runtime_months`` months.
+
+    Anchored on ``max(now, current_expires_at)``: if the deployment is still
+    valid, the new window stacks on top of its existing end date; if it has
+    already expired (but not yet been swept by the daily beat job), the
+    extension counts from now. Companion ``expiry_warning_at`` is recomputed
+    so the UI banner timing matches the new lifetime.
+
+    **Authorization:** Owner (lecturer) or Admin only.
+    """
+    deployment_repo = DeploymentRepository(db)
+    deployment = deployment_repo.get_by_id(deployment_id)
+
+    if not deployment:
+        raise NotFoundException(f"Deployment with ID {deployment_id} not found")
+
+    authorize_deployment_access(deployment, user, openstack_project_id, db)
+
+    service = DeploymentService(db)
+    updated = service.extend_deployment(
+        deployment_id=deployment_id,
+        runtime_months=payload.runtime_months,
+    )
+
+    return ResponseBuilder.success(
+        data={
+            "deployment_id": str(updated.id),
+            "expires_at": updated.expires_at.isoformat() if updated.expires_at else None,
+            "expiry_warning_at": updated.expiry_warning_at.isoformat() if updated.expiry_warning_at else None,
+            "runtime_months_added": payload.runtime_months,
+        },
+        message=f"Deployment lifetime extended by {payload.runtime_months} months",
+        request_id=request_id,
     )
 
 

@@ -28,27 +28,35 @@ class UserRole(str, Enum):
 
 
 class User(Base):
-    """Minimal user record for database relationships only.
-    
+    """Minimal user record for database relationships + cached display fields.
+
     DESIGN PRINCIPLE:
     =================
-    This table stores ONLY what's needed for foreign key relationships.
-    All user attributes (email, name, roles) come from Keycloak token.
-    
+    This table stores what's needed for foreign key relationships, plus a
+    small set of CACHED display fields (display_name, email, username) so
+    the API can render owner names without round-tripping to Keycloak on
+    every request.
+
+    Source of truth for everything user-related is still the Keycloak JWT
+    token. Roles in particular are NEVER read from this table — they come
+    exclusively from `realm_access.roles` on the token, on every request.
+    The cached fields below may be stale until the user logs in again.
+
     Why this table exists:
     - Enable foreign keys: courses.lecturer_id → users.id
     - Referential integrity in PostgreSQL
     - Audit trail: Track who created resources
-    
+    - Cached display fields for owner-name lookups (e.g. Template approval
+      cards), refreshed on every login
+
     What this table does NOT store:
-    - email (read from token)
-    - name (read from token)
     - roles (read from token - Keycloak is source of truth)
     - is_active (read from token)
-    
+
     User sync on login:
-    - First login → User created with external_id from token
-    - Subsequent logins → last_login_at updated
+    - First login → User created with external_id + display fields from token
+    - Subsequent logins → last_login_at updated; display fields refreshed
+      if the token claims differ
     """
     
     __tablename__ = "users"
@@ -63,13 +71,31 @@ class User(Base):
     
     # Keycloak user ID (token 'sub' claim) - links to Keycloak
     external_id: Mapped[str] = mapped_column(
-        String(255), 
-        nullable=False, 
+        String(255),
+        nullable=False,
         unique=True,
         index=True,
         comment="Keycloak user UUID (sub claim) - IMMUTABLE"
     )
-    
+
+    # Cached display fields, refreshed from the JWT on every login.
+    # Display-only — never used for authorization. Source of truth is Keycloak.
+    display_name: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Cached full name from Keycloak token 'name' claim; nullable for legacy rows"
+    )
+    email: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Cached email from Keycloak token; nullable for legacy rows"
+    )
+    username: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Cached preferred_username from Keycloak token; nullable for legacy rows"
+    )
+
     # Audit: When was user first seen?
     created_at: Mapped[datetime] = mapped_column(
         DateTime, 

@@ -1,7 +1,13 @@
 """Deployment schemas for request/response validation."""
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from datetime import datetime
 from typing import Optional, Any
+
+
+# Allowed lifetime presets matching the Wizard dropdown.
+# Keep this in sync with appstore-frontend/src/pages/DeploymentWizard.tsx.
+ALLOWED_RUNTIME_MONTHS = (1, 3, 4, 6, 12, 24)
+DEFAULT_RUNTIME_MONTHS = 4
 
 
 class StudentInfo(BaseModel):
@@ -66,6 +72,29 @@ class DeploymentCreate(BaseModel):
         ...,
         description="Teacher/lecturer information for admin access"
     )
+
+    # Lifetime: how many months until the deployment is hard-deleted by the
+    # daily expire_deployments_task. Must be one of ALLOWED_RUNTIME_MONTHS.
+    # Defaults to 4 months when omitted (matches Wizard default).
+    runtime_months: int = Field(
+        default=DEFAULT_RUNTIME_MONTHS,
+        description=(
+            f"Deployment lifetime in months. Must be one of "
+            f"{list(ALLOWED_RUNTIME_MONTHS)}. After this many months the "
+            f"deployment is hard-deleted (Heat-stack down + DB row removed) "
+            f"by the daily expire_deployments_task. Default: "
+            f"{DEFAULT_RUNTIME_MONTHS} months."
+        ),
+    )
+
+    @field_validator("runtime_months")
+    @classmethod
+    def _runtime_months_in_allowed_set(cls, v: int) -> int:
+        if v not in ALLOWED_RUNTIME_MONTHS:
+            raise ValueError(
+                f"runtime_months must be one of {list(ALLOWED_RUNTIME_MONTHS)}, got {v}"
+            )
+        return v
     
     model_config = ConfigDict(
         json_schema_extra={
@@ -122,9 +151,20 @@ class DeploymentResponse(BaseModel):
     status: str = Field(..., description="Current status")
     openstack_stack_id: Optional[str] = Field(None, description="OpenStack Heat stack ID")
     deployment_parameters: Optional[str] = Field(None, description="Heat template parameters as JSON string")
+    expires_at: Optional[datetime] = Field(
+        None,
+        description="Hard-delete timestamp (NULL = never expires).",
+    )
+    expiry_warning_at: Optional[datetime] = Field(
+        None,
+        description=(
+            "When the UI should start showing the expiry warning. Frontend "
+            "renders the banner/icon when now() > expiry_warning_at."
+        ),
+    )
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
-    
+
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={
@@ -136,10 +176,43 @@ class DeploymentResponse(BaseModel):
                 "status": "queued",
                 "openstack_stack_id": None,
                 "deployment_parameters": '{"image": "Ubuntu 22.04", "flavor": "gp1.small"}',
+                "expires_at": "2026-10-27T10:00:00Z",
+                "expiry_warning_at": "2026-10-13T10:00:00Z",
                 "created_at": "2024-11-27T10:00:00Z",
                 "updated_at": "2024-11-27T10:00:00Z"
             }
         }
+    )
+
+
+class DeploymentExtend(BaseModel):
+    """Body for ``PATCH /deployments/{id}/extend``.
+
+    Pushes ``expires_at`` out by ``runtime_months``, anchored at
+    ``max(now, expires_at)`` so that an already-expired-but-not-yet-deleted
+    deployment is extended from now (not from the past), and a still-valid
+    deployment is extended from its existing end date.
+    """
+
+    runtime_months: int = Field(
+        default=DEFAULT_RUNTIME_MONTHS,
+        description=(
+            f"Months to add to the deployment lifetime. Must be one of "
+            f"{list(ALLOWED_RUNTIME_MONTHS)}."
+        ),
+    )
+
+    @field_validator("runtime_months")
+    @classmethod
+    def _runtime_months_in_allowed_set(cls, v: int) -> int:
+        if v not in ALLOWED_RUNTIME_MONTHS:
+            raise ValueError(
+                f"runtime_months must be one of {list(ALLOWED_RUNTIME_MONTHS)}, got {v}"
+            )
+        return v
+
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"runtime_months": 4}}
     )
 
 

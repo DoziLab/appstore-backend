@@ -1,7 +1,7 @@
 """Template schemas for request/response validation."""
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, computed_field
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from src.schemas.template_version import TemplateVersionResponse
 
 
@@ -65,6 +65,36 @@ class TemplateResponse(BaseModel):
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 
+    # The owning User ORM instance is held internally so we can derive the
+    # display fields below without re-querying. It is excluded from the
+    # serialized response — only `owner_name`, `owner_email`, and
+    # `owner_username` are exposed to clients.
+    owner: Any = Field(default=None, exclude=True, repr=False)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def owner_name(self) -> Optional[str]:
+        """Cached display name of the template owner.
+
+        Sourced from the Keycloak token's `name` claim and refreshed on every
+        login (see ``UserSyncService``). May be ``None`` for legacy users who
+        have not logged in since this column was introduced — clients should
+        fall back to ``owner_id`` in that case.
+        """
+        return getattr(self.owner, "display_name", None) if self.owner else None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def owner_email(self) -> Optional[str]:
+        """Cached email of the template owner; ``None`` for legacy users."""
+        return getattr(self.owner, "email", None) if self.owner else None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def owner_username(self) -> Optional[str]:
+        """Cached preferred_username of the owner; ``None`` for legacy users."""
+        return getattr(self.owner, "username", None) if self.owner else None
+
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={
@@ -73,6 +103,9 @@ class TemplateResponse(BaseModel):
                 "name": "Python Flask Template",
                 "description": "A template for Flask web applications",
                 "owner_id": "user-456",
+                "owner_name": "Prof. Dr. Bernd Berg",
+                "owner_email": "berg@dhbw.de",
+                "owner_username": "bberg",
                 "repo_url": "https://github.com/example/flask-template",
                 "icon_url": "mdi:flask",
                 "visibility": "public",

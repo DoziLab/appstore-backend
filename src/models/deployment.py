@@ -42,6 +42,17 @@ class Deployment(Base):
     )
     openstack_stack_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     deployment_parameters: Mapped[Optional[str]] = mapped_column(String, nullable=True, comment="Heat parameters, stack_assignments, and teacher info as JSON")
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        nullable=True,
+        index=True,
+        comment="When this deployment is hard-deleted by the daily expire_deployments_task; NULL = never expire",
+    )
+    expiry_warning_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        nullable=True,
+        comment="When the UI should start showing the 'expires soon' warning; computed at creation/extend",
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

@@ -29,6 +29,12 @@ class DeploymentInstance(Base):
     vm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     openstack_server_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    # OpenStack Nova flavor name used for this instance (e.g. "gp1.small").
+    # Captured from the Heat-stack parameters at creation time so the frontend
+    # can resolve real vCPU/RAM/disk values via /api/v1/openstack/flavors,
+    # instead of using hardcoded multipliers. Nullable for legacy rows
+    # created before this column existed.
+    flavor: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[DeploymentInstanceStatus] = mapped_column(
         SQLEnum(DeploymentInstanceStatus), 
         default=DeploymentInstanceStatus.CREATING

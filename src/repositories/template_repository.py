@@ -3,7 +3,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import and_, exists, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from src.models.template import Template, TemplateVisibility
 from src.models.template_version import TemplateVersion, TemplateVersionApprovalStatus
@@ -16,6 +16,19 @@ class TemplateRepository(BaseRepository[Template]):
     def __init__(self, db: Session):
         """Initialize TemplateRepository with database session."""
         super().__init__(Template, db)
+
+    def get_by_id(self, id):
+        """Get a template by ID with the owner relationship eager-loaded.
+
+        Override of BaseRepository.get_by_id so consumers always have access
+        to ``template.owner.display_name`` without an extra round-trip.
+        """
+        return (
+            self.db.query(self.model)
+            .options(joinedload(self.model.owner))
+            .filter(self.model.id == str(id))
+            .first()
+        )
 
     @staticmethod
     def _has_approved_version_clause():
@@ -54,7 +67,7 @@ class TemplateRepository(BaseRepository[Template]):
         that have at least one APPROVED version. Pass ``None`` for admins / when
         the caller has already gated access elsewhere.
         """
-        query = self.db.query(self.model)
+        query = self.db.query(self.model).options(joinedload(self.model.owner))
 
         if visibility:
             query = query.filter(self.model.visibility == visibility)

@@ -52,48 +52,70 @@ class UserSyncService:
     
     def sync_user_from_token(self, token_payload: dict) -> User:
         """Sync user from Keycloak token payload.
-        
-        Creates user on first login, updates last_login_at on subsequent logins.
-        Does NOT store email, name, or roles - those come from token.
-        
+
+        Creates user on first login, updates last_login_at on subsequent
+        logins, and refreshes the cached display fields (display_name, email,
+        username) whenever the token claims differ from what's stored. Roles
+        are NEVER stored — they remain on the token.
+
         Args:
             token_payload: Decoded JWT token from Keycloak with claims:
                 - sub: Keycloak user UUID (required)
-                
+                - name: Full display name (optional)
+                - email: User email (optional)
+                - preferred_username: Username (optional)
+
         Returns:
-            User record (created or updated with fresh last_login_at)
-            
+            User record (created or updated with fresh last_login_at and
+            display fields).
+
         Example token_payload:
             {
                 "sub": "abc-123-def",
                 "email": "lecturer@example.com",
                 "name": "Test Lecturer",
+                "preferred_username": "tlecturer",
                 "realm_access": {"roles": ["lecturer"]}
             }
         """
         external_id = token_payload.get("sub")
         if not external_id:
             raise ValueError("Token payload missing 'sub' claim (Keycloak user ID)")
-        
+
+        # Cached display fields from the token (None if claim is absent).
+        display_name = token_payload.get("name")
+        email = token_payload.get("email")
+        username = token_payload.get("preferred_username")
+
         # Check if user exists
         existing_user = self.user_repo.get_by_external_id(external_id)
-        
+
         if existing_user:
-            # Update last login timestamp
+            # Update last login timestamp; refresh display fields if they
+            # changed in Keycloak since the previous login.
             from datetime import datetime, timezone
             existing_user.last_login_at = datetime.now(timezone.utc)
+            if existing_user.display_name != display_name:
+                existing_user.display_name = display_name
+            if existing_user.email != email:
+                existing_user.email = email
+            if existing_user.username != username:
+                existing_user.username = username
             self.db.commit()
             self.db.refresh(existing_user)
-            
+
             logger.debug(f"User {external_id} login recorded")
             return existing_user
-        
+
         else:
-            # Create new user record (minimal - only ID mapping)
+            # Create new user record (ID mapping + cached display fields).
             new_user = self.user_repo.create(
                 external_id=external_id,
+                display_name=display_name,
+                email=email,
+                username=username,
             )
-            
+
             logger.info(
                 f"New user registered from Keycloak: {external_id}",
                 extra={
@@ -102,7 +124,7 @@ class UserSyncService:
                     "event": "user_created"
                 }
             )
-            
+
             return new_user
     
     def deactivate_user(self, external_id: str) -> None:

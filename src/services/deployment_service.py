@@ -16,6 +16,7 @@ from src.core.exceptions import NotFoundException
 from src.core.exceptions import BadRequestException
 from src.services.template_version_file_service import TemplateVersionFileService
 from src.tasks.deploy_tasks import deploy_stack
+from src.utils.deployment_expiry import compute_expiry, compute_extension, utcnow
 
 
 class DeploymentService:
@@ -162,6 +163,11 @@ class DeploymentService:
 
         # Create deployment record with initial status QUEUED
         # Use course.id (DB ID) instead of keycloak_course_id
+        # Compute expiry timestamps from runtime_months so the daily Beat
+        # sweep knows when to delete and the UI knows when to start warning.
+        now = utcnow()
+        expires_at, expiry_warning_at = compute_expiry(now, deployment_data.runtime_months)
+
         deployment = self.deployment_repo.create(
             name=deployment_data.name,
             template_version_id=deployment_data.template_version_id,
@@ -169,6 +175,8 @@ class DeploymentService:
             openstack_project_id=openstack_project.id,
             status=DeploymentStatus.QUEUED,
             deployment_parameters=deployment_parameters,
+            expires_at=expires_at,
+            expiry_warning_at=expiry_warning_at,
         )
         
         # Create initial log entry
@@ -183,14 +191,75 @@ class DeploymentService:
                 "keycloak_group_id": deployment_data.course_id,
                 "stack_count": len(deployment_data.stack_assignments),
                 "total_groups": sum(len(sa.groups) for sa in deployment_data.stack_assignments),
-                "has_parameters": bool(deployment_data.parameters)
+                "has_parameters": bool(deployment_data.parameters),
+                "runtime_months": deployment_data.runtime_months,
+                "expires_at": expires_at.isoformat(),
             },
             request_id=request_id
         )
         
         # Trigger async Celery task for Heat stack orchestration
         deploy_stack.delay(str(deployment.id))
-        
+
+        return deployment
+
+    def extend_deployment(self, deployment_id: str, runtime_months: int) -> Deployment:
+        """Push ``expires_at`` out by ``runtime_months`` months.
+
+        Anchored on ``max(now, current_expires_at)`` so that an
+        already-expired-but-not-yet-deleted deployment is extended from now
+        rather than from the stale past, while a still-valid deployment
+        stacks the new window on top of its existing end date.
+
+        The companion ``expiry_warning_at`` is recomputed from the new
+        runtime so the UI banner timing matches.
+
+        Args:
+            deployment_id: ID of the deployment to extend.
+            runtime_months: Months to add (validated by ``DeploymentExtend``).
+
+        Returns:
+            The updated deployment.
+
+        Raises:
+            NotFoundException: If no such deployment exists.
+            BadRequestException: If the deployment is in a terminal state
+                                 (DELETED) where extending makes no sense.
+        """
+        deployment = self.deployment_repo.get_by_id(deployment_id)
+        if not deployment:
+            raise NotFoundException(f"Deployment {deployment_id} not found")
+
+        if deployment.status == DeploymentStatus.DELETED:
+            raise BadRequestException(
+                "Deployment is already deleted and cannot be extended"
+            )
+
+        now = utcnow()
+        new_expires_at, new_warning_at = compute_extension(
+            now=now,
+            current_expires_at=deployment.expires_at,
+            runtime_months=runtime_months,
+        )
+
+        deployment.expires_at = new_expires_at
+        deployment.expiry_warning_at = new_warning_at
+        self.db.commit()
+        self.db.refresh(deployment)
+
+        # Audit trail — the lifecycle policy is operationally significant.
+        self.log_service.log(
+            deployment_id=str(deployment.id),
+            event_type=DeploymentLogEventType.DEPLOYMENT_LIFETIME_EXTENDED,
+            message=f"Deployment lifetime extended by {runtime_months} months",
+            level=DeploymentLogLevel.INFO,
+            details={
+                "runtime_months_added": runtime_months,
+                "expires_at": new_expires_at.isoformat(),
+                "expiry_warning_at": new_warning_at.isoformat(),
+            },
+        )
+
         return deployment
     
     def list_deployments(

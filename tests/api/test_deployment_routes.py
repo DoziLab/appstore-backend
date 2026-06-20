@@ -568,6 +568,7 @@ def test_get_deployment_as_owner(mock_repo_class):
     mock_instance.status = MagicMock()
     mock_instance.status.value = "ACTIVE"
     mock_instance.ip_address = "192.168.1.10"
+    mock_instance.flavor = "gp1.small"
     mock_instance.access_methods = []
     mock_instance.created_at = "2024-11-27T10:00:00"
     mock_instance.updated_at = "2024-11-27T10:00:00"
@@ -586,6 +587,7 @@ def test_get_deployment_as_owner(mock_repo_class):
     assert data["data"]["template_version"]["id"] == "version-456"
     assert len(data["data"]["instances"]) == 1
     assert data["data"]["instances"][0]["instance_name"] == "vm-1"
+    assert data["data"]["instances"][0]["flavor"] == "gp1.small"
 
     app.dependency_overrides.clear()
 
