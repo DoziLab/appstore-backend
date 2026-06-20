@@ -1,6 +1,7 @@
 """Celery application configuration."""
 import logging
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import setup_logging
 
 from src.core.config import get_settings
@@ -12,7 +13,11 @@ celery_app = Celery(
     "appstore",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["src.tasks.deploy_tasks", "src.tasks.sync_tasks"],
+    include=[
+        "src.tasks.deploy_tasks",
+        "src.tasks.sync_tasks",
+        "src.tasks.expiry_tasks",
+    ],
 )
 
 # Celery configuration
@@ -26,6 +31,18 @@ celery_app.conf.update(
     task_time_limit=30 * 60,  # 30 minutes
     worker_prefetch_multiplier=1,
 )
+
+# Periodic tasks. Run a daily sweep that hard-deletes deployments whose
+# ``expires_at`` lies in the past — see src/tasks/expiry_tasks.py for the
+# semantics. Scheduled at 03:17 UTC: off-the-hour to avoid colliding with
+# every other system's hourly cron, and during low-traffic hours so the
+# Heat-stack tear-downs don't fight peak-hour deployments.
+celery_app.conf.beat_schedule = {
+    "expire-deployments-daily": {
+        "task": "src.tasks.expiry_tasks.expire_deployments",
+        "schedule": crontab(hour=3, minute=17),
+    },
+}
 
 
 @setup_logging.connect

@@ -27,6 +27,8 @@ class DeploymentLogEventType(str, Enum):
     FAILED = "failed"
     DEPLOYMENT_DELETION_REQUESTED = "deployment_deletion_requested"
     DEPLOYMENT_DELETED = "deployment_deleted"
+    DEPLOYMENT_LIFETIME_EXTENDED = "deployment_lifetime_extended"
+    DEPLOYMENT_EXPIRED = "deployment_expired"
     # Ansible
     SSH_WAIT = "ssh_wait"
     ANSIBLE_STARTED = "ansible_started"
