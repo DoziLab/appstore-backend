@@ -240,6 +240,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
                         user_json=credentials_for_db,
                         floating_ip=stack_result.get("floating_ip") or "",
                         heat_outputs=stack_result.get("outputs") or {},
+                        flavor=stack_params.get("flavor"),
                     )
                 except Exception as cred_error:
                     logger.error(f"Failed to persist credentials for stack {idx}: {cred_error}", exc_info=True)

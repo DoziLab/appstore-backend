@@ -380,6 +380,7 @@ async def get_deployment(
             "openstack_instance_id": instance.openstack_server_id,
             "status": instance.status.value if instance.status else None,
             "ip_address": instance.ip_address,
+            "flavor": instance.flavor,
             "access_urls": [
                 {
                     "id": str(access.id),

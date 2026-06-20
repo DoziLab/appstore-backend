@@ -1,4 +1,6 @@
 """Tests for DeploymentCredentialService._extract_access_entries."""
+from unittest.mock import MagicMock
+
 from src.models.deployment_instance_access import AccessType
 from src.services.deployment_credential_service import DeploymentCredentialService
 
@@ -66,3 +68,45 @@ def test_skips_entries_without_password():
         "applications": [],
     }
     assert DeploymentCredentialService._extract_access_entries(user_json) == []
+
+
+def _instance_added_to(db_mock):
+    """Return the DeploymentInstance that the service handed to db.add()."""
+    from src.models.deployment_instance import DeploymentInstance
+    for call in db_mock.add.call_args_list:
+        obj = call.args[0]
+        if isinstance(obj, DeploymentInstance):
+            return obj
+    raise AssertionError("DeploymentInstance was never added to the session")
+
+
+def test_persists_flavor_on_instance():
+    """The flavor passed in must be set on the DeploymentInstance row."""
+    db = MagicMock()
+    service = DeploymentCredentialService(db)
+
+    instance = service.persist_credentials_for_stack(
+        deployment_id="deploy-1",
+        stack_name="my-stack",
+        openstack_stack_id="stack-uuid",
+        user_json={"instance": {}, "applications": []},
+        flavor="gp1.medium",
+    )
+
+    assert instance.flavor == "gp1.medium"
+    assert _instance_added_to(db).flavor == "gp1.medium"
+
+
+def test_flavor_defaults_to_none_when_omitted():
+    """Backward compat: callers that don't pass flavor still work; column stays NULL."""
+    db = MagicMock()
+    service = DeploymentCredentialService(db)
+
+    instance = service.persist_credentials_for_stack(
+        deployment_id="deploy-1",
+        stack_name="my-stack",
+        openstack_stack_id="stack-uuid",
+        user_json={"instance": {}, "applications": []},
+    )
+
+    assert instance.flavor is None
