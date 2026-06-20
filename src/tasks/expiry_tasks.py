@@ -69,17 +69,21 @@ def expire_deployments(self) -> dict:
 
         for deployment in candidates:
             deployment_id = str(deployment.id)
+            # The SQL pre-filter guarantees expires_at is set; assert it for the
+            # type-checker so .isoformat() type-narrows cleanly.
+            assert deployment.expires_at is not None
+            expires_at_iso = deployment.expires_at.isoformat()
             try:
                 log_service.log(
                     deployment_id=deployment_id,
                     event_type=DeploymentLogEventType.DEPLOYMENT_EXPIRED,
                     message=(
-                        f"Deployment expired at {deployment.expires_at.isoformat()}; "
+                        f"Deployment expired at {expires_at_iso}; "
                         f"enqueuing hard delete"
                     ),
                     level=DeploymentLogLevel.INFO,
                     details={
-                        "expires_at": deployment.expires_at.isoformat(),
+                        "expires_at": expires_at_iso,
                         "swept_at": now.isoformat(),
                         "previous_status": deployment.status.value,
                     },

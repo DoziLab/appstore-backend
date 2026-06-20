@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from src.services.openstack_resource_service import OpenstackResourceService
 from src.models.openstack_project import OpenstackProject
 from src.core.exceptions import NotFoundException, BadRequestException, ForbiddenException
-from openstack.exceptions import HttpException, SDKException
+from openstack.exceptions import SDKException
 
 
 @pytest.fixture
