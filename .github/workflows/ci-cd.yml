@@ -188,7 +188,7 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.PROD_SERVER_SSH_KEY }}
 
-      - name: Deploy api + celery-worker on Production
+      - name: Deploy api + celery-worker + celery-beat on Production
         env:
           SERVER_HOST: ${{ secrets.PROD_SERVER_HOST }}
         run: |
@@ -199,8 +199,8 @@ jobs:
 
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull api celery-worker
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d api celery-worker
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull api celery-worker celery-beat
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d api celery-worker celery-beat
 
             docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api alembic upgrade head
 
