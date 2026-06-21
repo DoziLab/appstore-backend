@@ -152,7 +152,7 @@ jobs:
             chmod 600 .env
           ENDSSH
 
-      - name: Deploy api + celery-worker on Staging
+      - name: Deploy api + celery-worker + celery-beat on Staging
         env:
           SERVER_HOST: ${{ secrets.STAGING_SERVER_HOST }}
         run: |
@@ -163,8 +163,8 @@ jobs:
 
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            docker compose -f docker-compose.yml -f docker-compose.staging.yml pull api celery-worker
-            docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d api celery-worker
+            docker compose -f docker-compose.yml -f docker-compose.staging.yml pull api celery-worker celery-beat
+            docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d api celery-worker celery-beat
 
             docker compose -f docker-compose.yml -f docker-compose.staging.yml exec -T api alembic upgrade head
 

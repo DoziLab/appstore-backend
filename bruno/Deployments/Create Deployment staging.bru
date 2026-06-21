@@ -1,0 +1,122 @@
+meta {
+  name: Create Deployment staging
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{base_url}}/api/v1/deployments
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+body:json {
+  {
+    "name": "test",
+    "template_version_id": "{{template_version_id}}",
+    "course_id": "f0cbe163-7a2c-4b0f-8c42-d9fc5a8a4fe2",
+    "openstack_project_id": "{{openstack_project_local_id}}",
+    "runtime_months": 4,
+    "parameters": {
+      "stack_label": "test",
+      "image": "Ubuntu 22.04 2025-01",
+      "flavor": "gp1.small",
+      "ssh_cidr": "141.72.0.0/16",
+      "force_password_change": true
+    },
+    "stack_assignments": [
+      {
+        "groups": [
+          {
+            "group_name": "Gruppe 1",
+            "group_index": 1,
+            "students": [
+              { "id": "d428e6b8-82b4-4511-bb5d-56c6a825ab57", "username": "s230011", "email": "s230011@dhbw-mannheim.de", "first_name": "Emma",   "last_name": "Wolf"     },
+              { "id": "9b8055dc-2586-4f96-bd31-8a52b04d7f8c", "username": "s230012", "email": "s230012@dhbw-mannheim.de", "first_name": "Finn",   "last_name": "Neumann"  },
+              { "id": "1e7fc9e5-4a34-43f0-a362-ccbd41c4e77c", "username": "s230013", "email": "s230013@dhbw-mannheim.de", "first_name": "Lea",    "last_name": "Schwarz"  },
+              { "id": "8dddce91-9585-4521-9484-211f9a6979fc", "username": "s230014", "email": "s230014@dhbw-mannheim.de", "first_name": "Ben",    "last_name": "Richter"  },
+              { "id": "cdd375b3-4fe6-4e0f-acc3-59dc9400dc16", "username": "s230015", "email": "s230015@dhbw-mannheim.de", "first_name": "Hannah", "last_name": "Klein"    },
+              { "id": "915098dc-8b38-490c-ac10-22335082789b", "username": "s230016", "email": "s230016@dhbw-mannheim.de", "first_name": "Tim",    "last_name": "Werner"   },
+              { "id": "8927baae-6ff3-4206-b540-5451bafbd4b8", "username": "s230017", "email": "s230017@dhbw-mannheim.de", "first_name": "Julia",  "last_name": "Schmitt"  },
+              { "id": "5fbdf47b-5ff5-4096-a133-16694ca4df91", "username": "s230018", "email": "s230018@dhbw-mannheim.de", "first_name": "Moritz", "last_name": "Meier"    },
+              { "id": "03001249-80ee-441d-80f7-c59947826f91", "username": "s230019", "email": "s230019@dhbw-mannheim.de", "first_name": "Sara",   "last_name": "König"    },
+              { "id": "f38398c4-9ae5-40bf-82ee-e38773b57877", "username": "s230020", "email": "s230020@dhbw-mannheim.de", "first_name": "Paul",   "last_name": "Lang"     }
+            ]
+          }
+        ]
+      }
+    ],
+    "teacher": {
+      "id": "40a38818-552d-4ee0-a3fd-a2a1c434a862",
+      "username": "lecturer",
+      "email": "eve.stark@dhbw-mannheim.de",
+      "first_name": "Eve",
+      "last_name": "Stark"
+    }
+  }
+}
+
+vars:pre-request {
+  template_version_id: 52ae7b69-e601-49ca-b878-83bd05192027
+}
+
+script:post-response {
+  if (res.status === 201) {
+    const data = res.body.data;
+    bru.setEnvVar("deployment_id", data.id);
+    console.log("✅ Deployment created! ID:", data.id);
+    console.log("Status:", data.status);
+    console.log("Expires at:", data.expires_at);
+  } else {
+    console.log("❌ Deployment creation failed:", res.status, res.body);
+  }
+}
+
+docs {
+  # Create Deployment — Staging Preset
+  
+  One-click variant of `Create Deployment` that mirrors a real wizard
+  payload captured against the **staging** environment. Everything is
+  hardcoded except the two values that change between runs:
+  
+  - `template_version_id` → set in the `staging` env var (or override
+    here per-request via `vars:pre-request`)
+  - `openstack_project_id` → set in the `staging` env var
+    `openstack_project_local_id`
+  
+  ## What's pinned
+  
+  - **course_id** `f0cbe163-7a2c-4b0f-8c42-d9fc5a8a4fe2` — the test course
+    on staging Keycloak.
+  - **teacher** Eve Stark (`40a38818-...`) — the lecturer test account on
+    staging.
+  - **students** 10 staging test users `s230011`–`s230020` in a single
+    group "Gruppe 1" — captured from a real wizard run on 2026-06-20.
+  - **parameters** the actual Heat params the staging frontend sends for
+    the Ansible Multi-User Ubuntu template (image, flavor, ssh_cidr,
+    force_password_change).
+  - **runtime_months** 4 — backend default (B6 lifecycle).
+  
+  ## When the staging IDs change
+  
+  - The course `f0cbe163-...` is a Keycloak group on staging. If staging
+    Keycloak is reset, update it.
+  - Student/teacher IDs are also staging-Keycloak-specific. They were
+    extracted from the response of a successful wizard deployment.
+  
+  ## Required env vars
+  
+  Set these in the **staging** environment before running:
+  - `access_token` (from Auth → Keycloak Login)
+  - `template_version_id`
+  - `openstack_project_local_id`
+  
+  ## Returns
+  
+  201 with the created deployment incl. `expires_at` /
+  `expiry_warning_at` (B6) and `id` written to env var `deployment_id`.
+}
