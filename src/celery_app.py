@@ -34,13 +34,16 @@ celery_app.conf.update(
 
 # Periodic tasks. Run a daily sweep that hard-deletes deployments whose
 # ``expires_at`` lies in the past — see src/tasks/expiry_tasks.py for the
-# semantics. Scheduled at 03:17 UTC: off-the-hour to avoid colliding with
-# every other system's hourly cron, and during low-traffic hours so the
-# Heat-stack tear-downs don't fight peak-hour deployments.
+# semantics.
+#
+# Temporarily scheduled at 13:00 UTC (= 15:00 MESZ) so we can observe a
+# real automatic firing during staging soak. Once we've seen one or two
+# clean runs and the prod rollout is done, this goes back to 03:17 UTC
+# (off-the-hour, low-traffic) which was the original prod choice.
 celery_app.conf.beat_schedule = {
     "expire-deployments-daily": {
         "task": "src.tasks.expiry_tasks.expire_deployments",
-        "schedule": crontab(hour=3, minute=17),
+        "schedule": crontab(hour=13, minute=0),
     },
 }
 
