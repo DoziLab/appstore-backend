@@ -36,14 +36,15 @@ celery_app.conf.update(
 # ``expires_at`` lies in the past — see src/tasks/expiry_tasks.py for the
 # semantics.
 #
-# Temporarily scheduled at 13:00 UTC (= 15:00 MESZ) so we can observe a
-# real automatic firing during staging soak. Once we've seen one or two
-# clean runs and the prod rollout is done, this goes back to 03:17 UTC
-# (off-the-hour, low-traffic) which was the original prod choice.
+# Temporarily scheduled at 15:00 UTC (= 17:00 MESZ) so we can observe the
+# next automatic firing during staging soak after the enum-values fix
+# lands. Once we've seen one or two clean runs and the prod rollout is
+# done, this goes back to 03:17 UTC (off-the-hour, low-traffic) which was
+# the original prod choice.
 celery_app.conf.beat_schedule = {
     "expire-deployments-daily": {
         "task": "src.tasks.expiry_tasks.expire_deployments",
-        "schedule": crontab(hour=13, minute=0),
+        "schedule": crontab(hour=15, minute=0),
     },
 }
 
