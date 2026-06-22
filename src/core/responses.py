@@ -1,5 +1,5 @@
 """Standardized response models for API endpoints."""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Generic, TypeVar, Any
 from pydantic import BaseModel, Field
 
@@ -13,9 +13,9 @@ class APIResponse(BaseModel, Generic[T]):
     message: str | None = Field(None, description="Human-readable message")
     data: T | None = Field(None, description="Response payload")
     errors: Any | None = Field(None, description="Error details if any")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Response timestamp")
     request_id: str | None = Field(None, description="Unique request identifier")
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -23,7 +23,7 @@ class APIResponse(BaseModel, Generic[T]):
                 "message": "Operation successful",
                 "data": {"id": "123", "name": "Example"},
                 "errors": None,
-                "timestamp": "2024-11-27T10:00:00Z",
+                "timestamp": "2024-11-27T10:00:00+00:00",
                 "request_id": "req-123-456"
             }
         }
@@ -51,5 +51,5 @@ class PaginatedResponse(BaseModel, Generic[T]):
     data: list[T] = Field(..., description="List of items for current page")
     pagination: PaginationMeta = Field(..., description="Pagination metadata")
     errors: Any | None = Field(None, description="Error details if any")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Response timestamp")
     request_id: str | None = Field(None, description="Unique request identifier")

@@ -16,8 +16,8 @@ class CourseMember(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
     course_id: Mapped[str] = mapped_column(String(36), ForeignKey("courses.id"), nullable=False)
-    joined_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    left_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="course_memberships")

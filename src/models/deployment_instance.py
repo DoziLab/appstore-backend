@@ -39,8 +39,8 @@ class DeploymentInstance(Base):
         SQLEnum(DeploymentInstanceStatus), 
         default=DeploymentInstanceStatus.CREATING
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     deployment: Mapped["Deployment"] = relationship("Deployment", back_populates="instances")

@@ -4,7 +4,7 @@ This module provides the ResponseBuilder class for creating consistent
 JSON responses across all API endpoints. All responses follow the same
 structure defined in responses.py (APIResponse and PaginatedResponse).
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, List
 import logging
 
@@ -46,7 +46,7 @@ class ResponseBuilder:
             message=message,
             data=data,
             errors=None,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             request_id=request_id,
         )
         return JSONResponse(
@@ -98,7 +98,7 @@ class ResponseBuilder:
             message=message,
             data=None,
             errors=None,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             request_id=request_id,
         )
         return JSONResponse(
@@ -129,7 +129,7 @@ class ResponseBuilder:
             message=message,
             data=None,
             errors=errors,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             request_id=request_id,
         )
         content = response_data.model_dump(mode="json")
@@ -289,7 +289,7 @@ class ResponseBuilder:
             data=data,
             pagination=pagination_meta,
             errors=None,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             request_id=request_id,
         )
         

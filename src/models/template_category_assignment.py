@@ -14,7 +14,7 @@ class TemplateCategoryAssignment(Base):
     
     template_id: Mapped[str] = mapped_column(String(36), ForeignKey("templates.id"), primary_key=True)
     template_categories_id: Mapped[str] = mapped_column(String(36), ForeignKey("template_categories.id"), primary_key=True)
-    assigned_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     template: Mapped["Template"] = relationship("Template", back_populates="category_assignments")
