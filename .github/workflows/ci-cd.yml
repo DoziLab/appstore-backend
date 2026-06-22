@@ -188,6 +188,57 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.PROD_SERVER_SSH_KEY }}
 
+      - name: Sync GitHub App env vars to Production /opt/appstore/.env
+        env:
+          SERVER_HOST: ${{ secrets.PROD_SERVER_HOST }}
+          GH_APP_ID: ${{ secrets.PROD_GITHUB_APP_ID }}
+          GH_APP_SLUG: ${{ secrets.PROD_GITHUB_APP_SLUG }}
+          GH_APP_PRIVATE_KEY: ${{ secrets.PROD_GITHUB_APP_PRIVATE_KEY }}
+          GH_APP_STATE_SECRET: ${{ secrets.PROD_GITHUB_APP_STATE_SECRET }}
+          FRONTEND_BASE_URL: ${{ secrets.PROD_FRONTEND_BASE_URL }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          # Build the new block locally so the multi-line PEM stays exact;
+          # piping it through SSH heredoc would risk shell expansion.
+          SNIPPET="$(mktemp)"
+          trap 'rm -f "$SNIPPET"' EXIT
+          {
+            printf '# >>> github-app (managed by ci-cd.yml) >>>\n'
+            printf 'GITHUB_APP_ID=%s\n' "$GH_APP_ID"
+            printf 'GITHUB_APP_SLUG=%s\n' "$GH_APP_SLUG"
+            printf 'GITHUB_APP_STATE_SECRET=%s\n' "$GH_APP_STATE_SECRET"
+            printf 'FRONTEND_BASE_URL=%s\n' "$FRONTEND_BASE_URL"
+            # PEM contains real newlines — wrap in double quotes so docker-compose
+            # / python-dotenv reads it as a single multi-line value.
+            printf 'GITHUB_APP_PRIVATE_KEY="%s"\n' "$GH_APP_PRIVATE_KEY"
+            printf '# <<< github-app <<<\n'
+          } > "$SNIPPET"
+
+          scp -o StrictHostKeyChecking=no "$SNIPPET" ubuntu@$SERVER_HOST:/tmp/appstore-github-env
+
+          ssh -o StrictHostKeyChecking=no ubuntu@$SERVER_HOST bash -s <<'ENDSSH'
+            set -euo pipefail
+            cd /opt/appstore
+            umask 077
+
+            [ -f .env ] || { touch .env; chmod 600 .env; }
+
+            # Drop any prior managed block (delimited by markers); silent no-op
+            # if absent. Multi-line PEM is removed cleanly because the delete
+            # range is line-based on our markers.
+            sed -i '/^# >>> github-app (managed by ci-cd\.yml) >>>$/,/^# <<< github-app <<<$/d' .env
+
+            # Trailing newline before append so we never collide with a
+            # non-newline-terminated last line.
+            [ -s .env ] && [ "$(tail -c1 .env | wc -l)" -eq 0 ] && printf '\n' >> .env
+
+            cat /tmp/appstore-github-env >> .env
+            rm -f /tmp/appstore-github-env
+            chmod 600 .env
+          ENDSSH
+
       - name: Deploy api + celery-worker + celery-beat on Production
         env:
           SERVER_HOST: ${{ secrets.PROD_SERVER_HOST }}
