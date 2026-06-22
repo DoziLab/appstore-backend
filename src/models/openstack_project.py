@@ -37,8 +37,8 @@ class OpenstackProject(Base):
     user_domain_name: Mapped[str] = mapped_column(String(255), nullable=False, default="Default")
     region_name: Mapped[str] = mapped_column(String(100), nullable=False)
     
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationships
     owner_user: Mapped["User"] = relationship("User", back_populates="openstack_projects")

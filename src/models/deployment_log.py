@@ -56,7 +56,7 @@ class DeploymentLog(Base):
     message: Mapped[str] = mapped_column(Text, nullable=False)
     details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     request_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     deployment: Mapped["Deployment"] = relationship("Deployment", back_populates="logs")

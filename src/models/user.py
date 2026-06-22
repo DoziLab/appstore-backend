@@ -98,15 +98,15 @@ class User(Base):
 
     # Audit: When was user first seen?
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, 
+        DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
         comment="First login timestamp"
     )
-    
+
     # Audit: When did user last login?
     last_login_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
         comment="Last successful login timestamp"
