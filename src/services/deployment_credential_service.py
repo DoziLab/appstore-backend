@@ -40,6 +40,7 @@ class DeploymentCredentialService:
                     access_type=entry["access_type"],
                     username=entry.get("username"),
                     password=entry.get("password"),
+                    ssh_private_key=entry.get("ssh_private_key"),
                     connection_url=entry.get("connection_url"),
                     port=entry.get("port"),
                 )
@@ -65,6 +66,7 @@ class DeploymentCredentialService:
                 "access_type": AccessType.SSH,
                 "username": username,
                 "password": cred.get("password"),
+                "ssh_private_key": cred.get("ssh_private_key"),
                 "connection_url": f"ssh {username}@{floating_ip}" if username and floating_ip else None,
                 "port": 22,
             })
@@ -75,6 +77,7 @@ class DeploymentCredentialService:
                 "access_type": AccessType.SSH,
                 "username": username,
                 "password": admin.get("password"),
+                "ssh_private_key": admin.get("ssh_private_key"),
                 "connection_url": f"ssh {username}@{floating_ip}" if username and floating_ip else None,
                 "port": 22,
             })
@@ -105,4 +108,4 @@ class DeploymentCredentialService:
                     "port": 80 if is_pgadmin else None,
                 })
 
-        return [e for e in entries if e.get("password")]
+        return [e for e in entries if e.get("password") or e.get("ssh_private_key")]

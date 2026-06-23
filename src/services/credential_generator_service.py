@@ -5,6 +5,7 @@ import string
 from typing import Any
 
 from src.schemas.deployment import StackAssignment, TeacherInfo
+from src.services.ssh_keypair_generator_service import generate_ed25519_keypair
 
 
 _SPECIAL = "!@#$%^&*"
@@ -54,11 +55,20 @@ def _build_credential_entry(
     spec: dict[str, Any],
     context: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build a single credential dict by resolving all field values."""
+    """Build a single credential dict by resolving all field values.
+
+    Magic markers:
+        ``password: generate``  → generates a 16-char complex password.
+        ``ssh_key: generate``   → generates an Ed25519 keypair; the field
+                                  expands to ``{"private_key": ..., "public_key": ...}``.
+    """
     result = {}
     for field, value in spec.items():
         if value == "generate":
-            result[field] = _generate_password()
+            if field == "ssh_key":
+                result[field] = generate_ed25519_keypair()
+            else:
+                result[field] = _generate_password()
         else:
             result[field] = _resolve_field(str(value), context)
     return result
@@ -77,8 +87,8 @@ class CredentialGeneratorService:
             stack_assignment=stack_assignment,
             teacher=teacher,
         )
-        # creds["students"]  → list, one entry per group
-        # creds["teacher"]   → dict
+        # creds["groups"]   → list, one entry per group
+        # creds["teacher"]  → dict
     """
 
     @staticmethod
@@ -91,19 +101,23 @@ class CredentialGeneratorService:
 
         Args:
             credentials_spec: The parsed credentials block from app.yaml.
-                              {"per_student": [...], "teacher": [...]}
+                              {"per_group": [...], "teacher": [...]}
             stack_assignment:  The stack's groups and students.
             teacher:           Teacher info from Keycloak.
 
         Returns:
             {
-              "students": [
+              "groups": [
                 {
                   "username": "gruppe01",
                   "email": "...",
                   "group_name": "Gruppe 1",
                   "group_index": 1,
-                  "linux":    {"username": "gruppe01", "password": "..."},
+                  "linux":    {
+                      "username": "gruppe01",
+                      "password": "...",                        # optional, only if app.yaml asks for it
+                      "ssh_key": {"private_key": ..., "public_key": ...},  # optional
+                  },
                   "postgres": {"db_user": "grp01", "db_name": "db_g01", "password": "..."},
                   ...
                 },
@@ -112,13 +126,17 @@ class CredentialGeneratorService:
               "teacher": {
                 "username": "prof-berg",
                 "email": "...",
-                "linux": {"username": "prof-berg", "password": "..."},  # always added
+                "linux": {
+                    "username": "prof-berg",
+                    "password": "...",                                       # always generated
+                    "ssh_key": {"private_key": ..., "public_key": ...},      # ALWAYS generated (admin key)
+                },
                 "postgres": {"db_user": "teacher", "password": "..."},
                 ...
               }
             }
         """
-        per_student_specs: list[dict] = credentials_spec.get("per_student") or []
+        per_group_specs: list[dict] = credentials_spec.get("per_group") or []
         teacher_specs: list[dict] = credentials_spec.get("teacher") or []
 
         # --- Teacher ---
@@ -133,10 +151,14 @@ class CredentialGeneratorService:
         teacher_creds: dict[str, Any] = {
             "username": teacher_username,
             "email": teacher.email,
-            # linux is always generated for the teacher so Ansible can connect
+            # linux is always generated for the teacher so Ansible can connect.
+            # The SSH key is ALWAYS generated too — it serves as the teacher's
+            # admin key, giving them direct sudo access to every VM of the
+            # deployment regardless of what the app.yaml requests.
             "linux": {
                 "username": teacher_username,
                 "password": _generate_password(),
+                "ssh_key": generate_ed25519_keypair(),
             },
         }
         for spec_item in teacher_specs:
@@ -148,15 +170,15 @@ class CredentialGeneratorService:
                 else:
                     teacher_creds[cred_type] = _build_credential_entry(fields, teacher_ctx)
 
-        # --- Students (one entry per group) ---
-        students: list[dict[str, Any]] = []
+        # --- Groups (one entry per group) ---
+        groups: list[dict[str, Any]] = []
         for group in stack_assignment.groups:
             # Use group name as the shared Linux username for the group
             group_username = _sanitize_username(group.group_name)
             # Use first student's email as group email (or generate a fallback)
             group_email = group.students[0].email if group.students else f"{group_username}@dozilab.local"
 
-            student_ctx = {
+            group_ctx = {
                 "username": group_username,
                 "email": group_email,
                 "group_name": group.group_name,
@@ -180,13 +202,13 @@ class CredentialGeneratorService:
                 ],
             }
 
-            for spec_item in per_student_specs:
+            for spec_item in per_group_specs:
                 for cred_type, fields in spec_item.items():
-                    entry[cred_type] = _build_credential_entry(fields, student_ctx)
+                    entry[cred_type] = _build_credential_entry(fields, group_ctx)
 
-            students.append(entry)
+            groups.append(entry)
 
         return {
-            "students": students,
+            "groups": groups,
             "teacher": teacher_creds,
         }

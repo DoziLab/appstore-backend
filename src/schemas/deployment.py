@@ -249,6 +249,11 @@ class DeploymentCredentialEntry(BaseModel):
     access_type: str = Field(..., description="Access type, e.g. ssh or database")
     username: Optional[str] = Field(None, description="Account username")
     password: Optional[str] = Field(None, description="Plaintext password (decrypted on read)")
+    ssh_private_key: Optional[str] = Field(
+        None,
+        description="Plaintext SSH private key in OpenSSH PEM format (decrypted on read). "
+                    "Present for SSH access where a keypair was generated.",
+    )
     connection_url: Optional[str] = Field(None, description="Connection URL if applicable")
     port: Optional[int] = Field(None, description="Port number if applicable")
 

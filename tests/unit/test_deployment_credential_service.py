@@ -70,6 +70,69 @@ def test_skips_entries_without_password():
     assert DeploymentCredentialService._extract_access_entries(user_json) == []
 
 
+def test_extracts_ssh_private_keys_for_group_and_admin():
+    """SSH private keys flow through both per-group credentials and admin_credentials."""
+    user_json = {
+        "instance": {
+            "credentials": [
+                {
+                    "username": "gruppe-1",
+                    "password": "Grp1-azure-tiger-42",
+                    "ssh_private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nGROUP1KEY\n-----END OPENSSH PRIVATE KEY-----",
+                },
+            ],
+            "admin_credentials": {
+                "username": "prof-berg",
+                "password": "Teacher-witty-cedar-58",
+                "ssh_private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nADMINKEY\n-----END OPENSSH PRIVATE KEY-----",
+            },
+        },
+        "applications": [],
+    }
+
+    rows = DeploymentCredentialService._extract_access_entries(user_json)
+
+    assert len(rows) == 2
+    assert "GROUP1KEY" in rows[0]["ssh_private_key"]
+    assert "ADMINKEY" in rows[1]["ssh_private_key"]
+
+
+def test_keeps_entries_with_only_ssh_private_key_no_password():
+    """Key-only auth (no password) must still produce a row — filter is OR, not AND."""
+    user_json = {
+        "instance": {
+            "credentials": [
+                {
+                    "username": "key-only",
+                    "password": None,
+                    "ssh_private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nKEYONLY\n-----END OPENSSH PRIVATE KEY-----",
+                },
+            ],
+        },
+        "applications": [],
+    }
+
+    rows = DeploymentCredentialService._extract_access_entries(user_json)
+
+    assert len(rows) == 1
+    assert rows[0]["username"] == "key-only"
+    assert rows[0]["password"] is None
+    assert "KEYONLY" in rows[0]["ssh_private_key"]
+
+
+def test_extract_handles_missing_ssh_private_key_field():
+    """Legacy / password-only payloads (no ssh_private_key field) still work."""
+    user_json = {
+        "instance": {
+            "credentials": [{"username": "legacy", "password": "Pw-abc-123"}],
+        },
+        "applications": [],
+    }
+    rows = DeploymentCredentialService._extract_access_entries(user_json)
+    assert len(rows) == 1
+    assert rows[0]["ssh_private_key"] is None
+
+
 def _instance_added_to(db_mock):
     """Return the DeploymentInstance that the service handed to db.add()."""
     from src.models.deployment_instance import DeploymentInstance

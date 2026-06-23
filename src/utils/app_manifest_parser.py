@@ -99,7 +99,7 @@ class AppManifestParser:
             # Credentials
             credentials_raw = data.get("credentials") or {}
             credentials = {
-                "per_student": credentials_raw.get("per_student") or [],
+                "per_group": credentials_raw.get("per_group") or [],
                 "teacher": credentials_raw.get("teacher") or [],
             }
 
@@ -149,9 +149,9 @@ class AppManifestParser:
     def extract_credentials(content: str) -> dict:
         """Return the credentials block or empty structure on failure."""
         try:
-            return AppManifestParser.parse(content).get("credentials", {"per_student": [], "teacher": []})
+            return AppManifestParser.parse(content).get("credentials", {"per_group": [], "teacher": []})
         except Exception:
-            return {"per_student": [], "teacher": []}
+            return {"per_group": [], "teacher": []}
 
     @staticmethod
     def extract_user_files(content: str) -> list[dict]:

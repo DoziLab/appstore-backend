@@ -3,7 +3,7 @@ from uuid import UUID
 import asyncio
 import json
 from fastapi import APIRouter, status, Query, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, PlainTextResponse
 from src.core.exceptions import NotFoundException
 from src.models.user import UserRole, User
 from src.core.dependencies import DBSession
@@ -25,6 +25,7 @@ from src.tasks.deploy_tasks import delete_deployment as delete_deployment_task
 from src.tasks.deploy_tasks import restart_deployment as restart_deployment_task
 from src.models.deployment import DeploymentStatus, Deployment
 from src.models.deployment_instance import DeploymentInstance
+from src.models.deployment_instance_access import DeploymentInstanceAccess
 from src.models.template_version import TemplateVersion
 
 router = APIRouter(
@@ -573,6 +574,7 @@ async def get_deployment_credentials(
                     access_type=access.access_type.value,
                     username=access.username,
                     password=access.password,
+                    ssh_private_key=access.ssh_private_key,
                     connection_url=access.connection_url,
                     port=access.port,
                 )
@@ -591,6 +593,57 @@ async def get_deployment_credentials(
         data=payload.model_dump(),
         message=f"Retrieved credentials for {len(instance_payloads)} instance(s)",
         request_id=request_id,
+    )
+
+
+@router.get(
+    "/{deployment_id}/credentials/access/{access_id}/ssh-key",
+    response_class=PlainTextResponse,
+)
+async def download_ssh_private_key(
+    deployment_id: str,
+    access_id: str,
+    db: DBSession,
+    user: CurrentUser,
+    openstack_project_id: UUID | None = Query(
+        None,
+        description="OpenStack project (local DB id) the deployment must belong to. Required for non-admin users.",
+    ),
+):
+    """Download an SSH private key as a downloadable file.
+
+    Returned as ``application/x-pem-file`` with a ``Content-Disposition``
+    attachment header so the browser saves it as ``id_ed25519`` rather than
+    rendering the PEM in-line. Accessible to the deployment owner (lecturer)
+    or any admin.
+    """
+    deployment_repo = DeploymentRepository(db)
+    deployment = deployment_repo.get_by_id(deployment_id)
+    if not deployment:
+        raise NotFoundException(f"Deployment with ID {deployment_id} not found")
+
+    authorize_deployment_access(deployment, user, openstack_project_id, db)
+
+    access = (
+        db.query(DeploymentInstanceAccess)
+        .join(DeploymentInstance, DeploymentInstance.id == DeploymentInstanceAccess.deployment_instance_id)
+        .filter(
+            DeploymentInstanceAccess.id == access_id,
+            DeploymentInstance.deployment_id == deployment_id,
+        )
+        .first()
+    )
+    if not access:
+        raise NotFoundException(f"Access entry {access_id} not found for deployment {deployment_id}")
+    if not access.ssh_private_key:
+        raise HTTPException(status_code=404, detail="No SSH private key available for this access entry")
+
+    # OpenSSH PEM contents — decrypted automatically by EncryptedString on read
+    filename = f"id_ed25519_{(access.username or 'user')}"
+    return PlainTextResponse(
+        content=access.ssh_private_key,
+        media_type="application/x-pem-file",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
