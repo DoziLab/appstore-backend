@@ -246,6 +246,7 @@ class DeploymentLogResponse(BaseModel):
 
 class DeploymentCredentialEntry(BaseModel):
     """One credential entry for a deployment instance."""
+    id: str = Field(..., description="Access entry ID — pass to /credentials/access/{id}/ssh-key")
     access_type: str = Field(..., description="Access type, e.g. ssh or database")
     username: Optional[str] = Field(None, description="Account username")
     password: Optional[str] = Field(None, description="Plaintext password (decrypted on read)")

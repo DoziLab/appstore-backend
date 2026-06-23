@@ -571,6 +571,7 @@ async def get_deployment_credentials(
             openstack_stack_id=instance.openstack_server_id,
             accesses=[
                 DeploymentCredentialEntry(
+                    id=access.id,
                     access_type=access.access_type.value,
                     username=access.username,
                     password=access.password,
