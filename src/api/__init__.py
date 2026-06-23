@@ -9,6 +9,7 @@ from src.api.courses import router as courses_router
 from src.api.quotas import router as quotas_router
 from src.api.openstack_flavors import router as openstack_flavors_router
 from src.api.github_app import router as github_app_router
+from src.api.student import router as student_router
 
 # Create main API router
 api_router = APIRouter(prefix="/api/v1")
@@ -22,6 +23,7 @@ api_router.include_router(courses_router)
 api_router.include_router(quotas_router)
 api_router.include_router(openstack_flavors_router)
 api_router.include_router(github_app_router)
+api_router.include_router(student_router)
 
 __all__ = [
     "api_router",

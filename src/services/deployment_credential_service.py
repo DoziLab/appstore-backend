@@ -41,6 +41,11 @@ class DeploymentCredentialService:
                     username=entry.get("username"),
                     password=entry.get("password"),
                     ssh_private_key=entry.get("ssh_private_key"),
+                    # group_id is None for admin credentials (teacher) and for
+                    # legacy callers that didn't pass course_group_id. Students
+                    # can only see rows with a non-NULL group_id matching one
+                    # of their group memberships — see src/api/student.py.
+                    group_id=entry.get("group_id"),
                     connection_url=entry.get("connection_url"),
                     port=entry.get("port"),
                 )
@@ -67,6 +72,10 @@ class DeploymentCredentialService:
                 "username": username,
                 "password": cred.get("password"),
                 "ssh_private_key": cred.get("ssh_private_key"),
+                # ``group_id`` stamps the access row with the CourseGroup it
+                # belongs to so student-self-service can filter by membership.
+                # Omitted for legacy callers → row stays NULL → invisible to students.
+                "group_id": cred.get("group_id"),
                 "connection_url": f"ssh {username}@{floating_ip}" if username and floating_ip else None,
                 "port": 22,
             })
@@ -78,6 +87,9 @@ class DeploymentCredentialService:
                 "username": username,
                 "password": admin.get("password"),
                 "ssh_private_key": admin.get("ssh_private_key"),
+                # Admin (teacher) credentials are intentionally NOT tied to a
+                # group — group_id stays NULL so students never see them.
+                "group_id": None,
                 "connection_url": f"ssh {username}@{floating_ip}" if username and floating_ip else None,
                 "port": 22,
             })

@@ -190,6 +190,10 @@ class CredentialGeneratorService:
                 "email": group_email,
                 "group_name": group.group_name,
                 "group_index": group.group_index,
+                # Forwarded so deploy_tasks can stamp DeploymentInstanceAccess.group_id
+                # for this group's credentials, enabling student self-service filtering.
+                # None when the wizard didn't pass a persisted CourseGroup id (legacy flow).
+                "course_group_id": group.course_group_id,
                 "students": [
                     {
                         "id": s.id,

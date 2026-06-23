@@ -224,6 +224,13 @@ def deploy_stack(self, deployment_id: str) -> dict:
                                     "username": s["linux"]["username"],
                                     "password": s["linux"]["password"],
                                     "ssh_private_key": (s.get("linux", {}).get("ssh_key") or {}).get("private_key"),
+                                    # course_groups.id this group corresponds to
+                                    # (passed in from the wizard via GroupInfo.course_group_id).
+                                    # Stamped onto DeploymentInstanceAccess.group_id so
+                                    # student self-service can filter on it. None when
+                                    # the wizard didn't supply it — row stays NULL and
+                                    # remains invisible to students.
+                                    "group_id": s.get("course_group_id"),
                                 }
                                 for s in generated.get("groups", [])
                                 if s.get("linux", {}).get("password")

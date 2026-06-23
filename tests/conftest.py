@@ -16,4 +16,12 @@ os.environ.setdefault("KEYCLOAK_URL", "http://localhost:8080")
 os.environ.setdefault("KEYCLOAK_REALM", "test_realm")
 os.environ.setdefault("KEYCLOAK_CLIENT_ID", "test_client")
 os.environ.setdefault("GITHUB_APP_STATE_SECRET", "test-state-secret-do-not-use-in-prod")
+# A throwaway Fernet key so tests that touch EncryptedString columns work.
+# EncryptedString now fails loudly when no key is configured (security fix);
+# without this, any test that persists a row with a password or ssh_private_key
+# would raise SecretEncryptionError.
+os.environ.setdefault(
+    "ENCRYPTION_KEY",
+    "DGp59ncGf4ygfOzI13qzzZEBOtbyhpXflaxsPi97iPQ=",
+)
 
