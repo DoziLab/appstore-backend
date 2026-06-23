@@ -374,7 +374,9 @@ class TemplateVersionFileService:
         # otherwise only the parent template's owner can delete.
         self._check_version_access(file.template_version_id, user_id, is_admin)
 
-        self.file_repo.delete(file_id)
+        # BaseRepository.delete is typed UUID; accept str inputs from the API
+        # layer transparently to match update_file's signature.
+        self.file_repo.delete(file_id if isinstance(file_id, UUID) else UUID(str(file_id)))
 
     def delete_version_files(
         self,

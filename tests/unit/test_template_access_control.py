@@ -542,7 +542,12 @@ class TestTemplateVersionFileServiceAccessControl:
             user_id=other_user_id,
             is_admin=True,
         )
-        template_version_file_service.file_repo.delete.assert_called_once_with(file.id)
+        # delete_file normalises the file_id to UUID before handing it to the
+        # repo (BaseRepository.delete is typed UUID). Assert the call shape,
+        # not the exact value, since we passed a string in.
+        template_version_file_service.file_repo.delete.assert_called_once()
+        called_with = template_version_file_service.file_repo.delete.call_args.args[0]
+        assert str(called_with) == file.id
 
     def test_delete_file_allowed_for_owner(
         self, template_version_file_service, private_template, owner_user_id
@@ -554,4 +559,6 @@ class TestTemplateVersionFileServiceAccessControl:
             user_id=owner_user_id,
             is_admin=False,
         )
-        template_version_file_service.file_repo.delete.assert_called_once_with(file.id)
+        template_version_file_service.file_repo.delete.assert_called_once()
+        called_with = template_version_file_service.file_repo.delete.call_args.args[0]
+        assert str(called_with) == file.id
