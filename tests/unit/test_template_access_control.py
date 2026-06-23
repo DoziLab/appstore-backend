@@ -420,3 +420,138 @@ class TestTemplateVersionFileServiceAccessControl:
             template_version_file_service.get_template_parameters(
                 version.id, user_id=other_user_id, is_admin=False, skip_access_check=False
             )
+
+    # ------------------------------------------------------------------
+    # update_file / delete_file: previously did NOT check parent template
+    # ownership — any authenticated user with a file_id could mutate or
+    # delete files on private templates. Regression tests below pin the
+    # corrected behaviour: admins always pass, template owners always
+    # pass, everyone else gets 403.
+    # ------------------------------------------------------------------
+
+    def _seed_file_under_template(self, service, template):
+        """Helper: wire repos so file_id resolves to a file whose parent
+        template is the given one. Returns the mock file."""
+        from src.models.template_version_file import TemplateVersionFile
+
+        version = Mock(spec=TemplateVersion)
+        version.id = str(uuid4())
+        version.template_id = template.id
+
+        file = Mock(spec=TemplateVersionFile)
+        file.id = str(uuid4())
+        file.template_version_id = version.id
+        # Defaults for the primary-flag branch in update_file
+        file.is_primary = False
+
+        service.file_repo = Mock()
+        service.file_repo.get_by_id.return_value = file
+        service.file_repo.get_primary_file.return_value = None
+        service.version_repo = Mock()
+        service.version_repo.get_by_id.return_value = version
+        service.template_repo = Mock()
+        service.template_repo.get_by_id.return_value = template
+        return file
+
+    def test_update_file_forbidden_for_non_owner_non_admin(
+        self, template_version_file_service, private_template, other_user_id
+    ):
+        from src.schemas.template_version_file import TemplateVersionFileUpdate
+
+        self._seed_file_under_template(template_version_file_service, private_template)
+
+        with pytest.raises(ForbiddenException):
+            template_version_file_service.update_file(
+                file_id=str(uuid4()),
+                file_data=TemplateVersionFileUpdate(file_type="OTHER"),
+                user_id=other_user_id,
+                is_admin=False,
+            )
+
+    def test_update_file_allowed_for_admin(
+        self, template_version_file_service, private_template, other_user_id
+    ):
+        from src.schemas.template_version_file import TemplateVersionFileUpdate
+
+        file = self._seed_file_under_template(template_version_file_service, private_template)
+        # Mock the persistence layer so we don't hit a real DB.
+        template_version_file_service.db = MagicMock()
+
+        result = template_version_file_service.update_file(
+            file_id=file.id,
+            file_data=TemplateVersionFileUpdate(file_type="HEAT_TEMPLATE"),
+            user_id=other_user_id,  # NOT the owner — admin override is the point
+            is_admin=True,
+        )
+        assert result is file  # update is in-place on the mock
+
+    def test_update_file_allowed_for_owner(
+        self, template_version_file_service, private_template, owner_user_id
+    ):
+        from src.schemas.template_version_file import TemplateVersionFileUpdate
+
+        file = self._seed_file_under_template(template_version_file_service, private_template)
+        template_version_file_service.db = MagicMock()
+
+        result = template_version_file_service.update_file(
+            file_id=file.id,
+            file_data=TemplateVersionFileUpdate(file_type="ANSIBLE_PLAYBOOK"),
+            user_id=owner_user_id,
+            is_admin=False,
+        )
+        assert result is file
+
+    def test_update_file_forbidden_without_user_id(
+        self, template_version_file_service, private_template
+    ):
+        """Bare ``update_file(...)`` without identifying the caller must
+        not silently succeed — that was the original bug."""
+        from src.schemas.template_version_file import TemplateVersionFileUpdate
+
+        self._seed_file_under_template(template_version_file_service, private_template)
+
+        with pytest.raises(ForbiddenException):
+            template_version_file_service.update_file(
+                file_id=str(uuid4()),
+                file_data=TemplateVersionFileUpdate(file_type="OTHER"),
+                # No user_id, no is_admin — default permissive would be wrong.
+            )
+
+    def test_delete_file_forbidden_for_non_owner_non_admin(
+        self, template_version_file_service, private_template, other_user_id
+    ):
+        self._seed_file_under_template(template_version_file_service, private_template)
+
+        with pytest.raises(ForbiddenException):
+            template_version_file_service.delete_file(
+                file_id=str(uuid4()),
+                user_id=other_user_id,
+                is_admin=False,
+            )
+        # Repo's delete must NOT have been called — guard against future
+        # refactors that move the delete before the permission check.
+        template_version_file_service.file_repo.delete.assert_not_called()
+
+    def test_delete_file_allowed_for_admin(
+        self, template_version_file_service, private_template, other_user_id
+    ):
+        file = self._seed_file_under_template(template_version_file_service, private_template)
+
+        template_version_file_service.delete_file(
+            file_id=file.id,
+            user_id=other_user_id,
+            is_admin=True,
+        )
+        template_version_file_service.file_repo.delete.assert_called_once_with(file.id)
+
+    def test_delete_file_allowed_for_owner(
+        self, template_version_file_service, private_template, owner_user_id
+    ):
+        file = self._seed_file_under_template(template_version_file_service, private_template)
+
+        template_version_file_service.delete_file(
+            file_id=file.id,
+            user_id=owner_user_id,
+            is_admin=False,
+        )
+        template_version_file_service.file_repo.delete.assert_called_once_with(file.id)

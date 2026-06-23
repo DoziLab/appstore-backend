@@ -281,22 +281,30 @@ class TemplateVersionFileService:
     def update_file(
         self,
         file_id: str | UUID,
-        file_data: TemplateVersionFileUpdate
+        file_data: TemplateVersionFileUpdate,
+        user_id: Optional[str] = None,
+        is_admin: bool = False,
     ) -> TemplateVersionFile:
         """Update a template version file.
-        
+
         Args:
             file_id: File ID
             file_data: Update data
-            
+            user_id: ID of the requesting user (for permission check)
+            is_admin: Whether the requesting user is an admin
+
         Returns:
             Updated file
-            
+
         Raises:
             NotFoundException: If file not found
             BadRequestException: If trying to set multiple primary files
+            ForbiddenException: If user lacks permission to modify the parent
+                template version
         """
-        file = self.get_file(file_id)
+        # Permission check uses the same per-version rules as get_file —
+        # admins always pass, otherwise template owner only.
+        file = self.get_file(file_id, user_id=user_id, is_admin=is_admin)
         
         # Check if trying to set as primary
         if file_data.is_primary and not file.is_primary:
@@ -342,20 +350,30 @@ class TemplateVersionFileService:
 
     def delete_file(
         self,
-        file_id: UUID
+        file_id: str | UUID,
+        user_id: Optional[str] = None,
+        is_admin: bool = False,
     ) -> None:
         """Delete a template version file.
-        
+
         Args:
             file_id: File ID
-            
+            user_id: ID of the requesting user (for permission check)
+            is_admin: Whether the requesting user is an admin
+
         Raises:
             NotFoundException: If file not found
+            ForbiddenException: If user lacks permission to modify the parent
+                template version
         """
         file = self.file_repo.get_by_id(file_id)
         if not file:
             raise NotFoundException(f"File with ID {file_id} not found")
-        
+
+        # Same permission rule as get_file / update_file: admins always pass,
+        # otherwise only the parent template's owner can delete.
+        self._check_version_access(file.template_version_id, user_id, is_admin)
+
         self.file_repo.delete(file_id)
 
     def delete_version_files(
