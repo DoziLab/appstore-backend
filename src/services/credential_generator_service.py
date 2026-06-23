@@ -62,7 +62,7 @@ def _build_credential_entry(
         ``ssh_key: generate``   → generates an Ed25519 keypair; the field
                                   expands to ``{"private_key": ..., "public_key": ...}``.
     """
-    result = {}
+    result: dict[str, Any] = {}
     for field, value in spec.items():
         if value == "generate":
             if field == "ssh_key":
