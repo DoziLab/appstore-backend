@@ -128,6 +128,9 @@ def test_get_credentials_includes_ssh_private_key(mock_repo_class):
     payload = response.json()["data"]
     assert len(payload["instances"]) == 1
     entry = payload["instances"][0]["accesses"][0]
+    # The id MUST be exposed — the download endpoint takes it as a path param,
+    # and /credentials is the only place the frontend can discover it.
+    assert entry["id"] == "access-abc"
     assert entry["ssh_private_key"] == _SAMPLE_PEM
     assert entry["password"] == "P@ssw0rd-1234567"
 
