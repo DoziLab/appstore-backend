@@ -23,6 +23,14 @@
       shell: "echo '{{ teacher.linux.username }}:{{ teacher.linux.password }}' | chpasswd"
       no_log: true
 
+    - name: Lehrer SSH Admin-Key installieren
+      ansible.posix.authorized_key:
+        user:  "{{ teacher.linux.username }}"
+        key:   "{{ teacher.linux.ssh_key.public_key }}"
+        state: present
+      when: teacher.linux.ssh_key is defined and teacher.linux.ssh_key.public_key is defined
+      no_log: true
+
     # --- SSH konfigurieren ---
 
     - name: SSH Passwort-Login aktivieren

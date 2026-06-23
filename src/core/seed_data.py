@@ -1676,7 +1676,7 @@ parameters:
 
 credentials:
 
-  per_student:
+  per_group:
     - linux:
         username: "{{ username }}"
         password: generate

@@ -101,7 +101,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
 
         # Parse app.yaml for credentials spec and playbook list
         app_yaml_file = next((f for f in files if f.file_name == "app.yaml"), None)
-        credentials_spec: dict[str, list] = {"per_student": [], "teacher": []}
+        credentials_spec: dict[str, list] = {"per_group": [], "teacher": []}
         playbooks: list[tuple[str, str]] = []
         scripts: dict[str, str] = {}
         template_files: dict[str, str] = {}
@@ -223,13 +223,15 @@ def deploy_stack(self, deployment_id: str) -> dict:
                                 {
                                     "username": s["linux"]["username"],
                                     "password": s["linux"]["password"],
+                                    "ssh_private_key": (s.get("linux", {}).get("ssh_key") or {}).get("private_key"),
                                 }
-                                for s in generated.get("students", [])
+                                for s in generated.get("groups", [])
                                 if s.get("linux", {}).get("password")
                             ],
                             "admin_credentials": {
                                 "username": generated["teacher"]["linux"]["username"],
                                 "password": generated["teacher"]["linux"]["password"],
+                                "ssh_private_key": (generated["teacher"]["linux"].get("ssh_key") or {}).get("private_key"),
                             } if generated.get("teacher", {}).get("linux", {}).get("password") else None,
                         },
                     }
@@ -279,7 +281,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
                             "stack_label": stack_name,
                             "ssh_allow_users": [
                                 s["linux"]["username"]
-                                for s in generated.get("students", [])
+                                for s in generated.get("groups", [])
                                 if s.get("linux", {}).get("password")
                             ],
                         }

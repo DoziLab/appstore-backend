@@ -1,14 +1,14 @@
 """Standardized response models for API endpoints."""
 from datetime import datetime, timezone
 from typing import Generic, TypeVar, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 T = TypeVar("T")
 
 
 class APIResponse(BaseModel, Generic[T]):
     """Standard API response format."""
-    
+
     success: bool = Field(..., description="Whether the operation was successful")
     message: str | None = Field(None, description="Human-readable message")
     data: T | None = Field(None, description="Response payload")
@@ -16,17 +16,18 @@ class APIResponse(BaseModel, Generic[T]):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Response timestamp")
     request_id: str | None = Field(None, description="Unique request identifier")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": True,
                 "message": "Operation successful",
                 "data": {"id": "123", "name": "Example"},
                 "errors": None,
                 "timestamp": "2024-11-27T10:00:00+00:00",
-                "request_id": "req-123-456"
+                "request_id": "req-123-456",
             }
         }
+    )
 
 
 class PaginationMeta(BaseModel):
