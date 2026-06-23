@@ -87,8 +87,8 @@ class CredentialGeneratorService:
             stack_assignment=stack_assignment,
             teacher=teacher,
         )
-        # creds["groups"]   → list, one entry per group
-        # creds["teacher"]  → dict
+        # creds["deployment_groups"]  → list, one entry per group
+        # creds["teacher"]            → dict
     """
 
     @staticmethod
@@ -107,11 +107,11 @@ class CredentialGeneratorService:
 
         Returns:
             {
-              "groups": [
-                {
-                  "username": "gruppe01",
-                  "email": "...",
-                  "group_name": "Gruppe 1",
+              "deployment_groups": [                # NOT "groups": that name
+                {                                   # collides with Ansible's
+                  "username": "gruppe01",           # built-in inventory dict
+                  "email": "...",                   # when handed to playbooks
+                  "group_name": "Gruppe 1",         # as --extra-vars.
                   "group_index": 1,
                   "linux":    {
                       "username": "gruppe01",
@@ -213,6 +213,11 @@ class CredentialGeneratorService:
             groups.append(entry)
 
         return {
-            "groups": groups,
+            # The output key is ``deployment_groups`` — NOT ``groups`` — because
+            # Ansible reserves ``groups`` as the inventory dict (mapping group
+            # names to host lists). Passing our list as --extra-vars under that
+            # name would silently lose to Ansible's built-in. See
+            # https://docs.ansible.com/ansible/latest/reference_appendices/special_variables.html
+            "deployment_groups": groups,
             "teacher": teacher_creds,
         }

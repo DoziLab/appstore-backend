@@ -232,7 +232,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
                                     # remains invisible to students.
                                     "group_id": s.get("course_group_id"),
                                 }
-                                for s in generated.get("groups", [])
+                                for s in generated.get("deployment_groups", [])
                                 if s.get("linux", {}).get("password")
                             ],
                             "admin_credentials": {
@@ -288,7 +288,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
                             "stack_label": stack_name,
                             "ssh_allow_users": [
                                 s["linux"]["username"]
-                                for s in generated.get("groups", [])
+                                for s in generated.get("deployment_groups", [])
                                 if s.get("linux", {}).get("password")
                             ],
                         }

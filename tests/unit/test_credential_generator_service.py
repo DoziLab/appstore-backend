@@ -67,10 +67,14 @@ def test_per_group_replaces_per_student():
         teacher=_teacher(),
     )
 
-    assert "groups" in creds
+    assert "deployment_groups" in creds
     assert "students" not in creds  # hard cut — old key must not leak through
-    assert len(creds["groups"]) == 2
-    for entry in creds["groups"]:
+    assert "groups" not in creds  # also a hard cut: collides with Ansible's
+                                   # built-in inventory dict when passed as
+                                   # --extra-vars; the output key is
+                                   # ``deployment_groups`` instead.
+    assert len(creds["deployment_groups"]) == 2
+    for entry in creds["deployment_groups"]:
         assert entry["linux"]["password"]
         assert entry["linux"]["username"] == entry["username"]
 
@@ -92,7 +96,7 @@ def test_per_group_ssh_key_generate_produces_keypair():
         teacher=_teacher(),
     )
 
-    for entry in creds["groups"]:
+    for entry in creds["deployment_groups"]:
         kp = entry["linux"]["ssh_key"]
         assert isinstance(kp, dict)
         assert kp["private_key"].startswith("-----BEGIN OPENSSH PRIVATE KEY-----")
@@ -110,7 +114,7 @@ def test_per_group_without_ssh_key_marker_omits_keypair():
         teacher=_teacher(),
     )
 
-    assert "ssh_key" not in creds["groups"][0]["linux"]
+    assert "ssh_key" not in creds["deployment_groups"][0]["linux"]
 
 
 def test_each_group_gets_a_distinct_keypair():
@@ -126,7 +130,7 @@ def test_each_group_gets_a_distinct_keypair():
         teacher=_teacher(),
     )
 
-    private_keys = [g["linux"]["ssh_key"]["private_key"] for g in creds["groups"]]
+    private_keys = [g["linux"]["ssh_key"]["private_key"] for g in creds["deployment_groups"]]
     assert len(set(private_keys)) == len(private_keys)
 
 
@@ -160,8 +164,8 @@ def test_course_group_id_forwarded_when_present():
         stack_assignment=_stack_with_groups(count=2, with_course_group_id=True),
         teacher=_teacher(),
     )
-    assert creds["groups"][0]["course_group_id"] == "cg-1"
-    assert creds["groups"][1]["course_group_id"] == "cg-2"
+    assert creds["deployment_groups"][0]["course_group_id"] == "cg-1"
+    assert creds["deployment_groups"][1]["course_group_id"] == "cg-2"
 
 
 def test_course_group_id_is_none_when_omitted():
@@ -175,4 +179,4 @@ def test_course_group_id_is_none_when_omitted():
         stack_assignment=_stack_with_groups(count=1, with_course_group_id=False),
         teacher=_teacher(),
     )
-    assert creds["groups"][0]["course_group_id"] is None
+    assert creds["deployment_groups"][0]["course_group_id"] is None
