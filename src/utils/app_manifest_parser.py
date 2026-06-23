@@ -163,6 +163,15 @@ class AppManifestParser:
 
     # Mapping from artifacts: keys in app.yaml to TemplateVersionFile.FileType values.
     # Order in this dict is also the deployment execution order suggested in the README.
+    #
+    # Some keys come in two flavours:
+    #   - singular (``shell_script: scripts/x.sh``)         → exactly one path
+    #   - plural   (``shell_scripts: [a.sh, b.sh]``)        → a list of paths
+    # Both expand to the same FileType. The plural form is for templates that
+    # have multiple files of the same kind (e.g. several helper scripts in
+    # ``scripts/`` or several config files in ``files/``) — without it, every
+    # extra file would be imported as OTHER and silently skipped at deploy
+    # time because the Ansible-copy step only picks up SHELL_SCRIPT/CONFIG_FILE.
     ARTIFACT_KEY_TO_FILE_TYPE: dict[str, str] = {
         "heat_template": "HEAT_TEMPLATE",
         "cloud_init": "CLOUD_INIT",
@@ -171,7 +180,9 @@ class AppManifestParser:
         "helm_chart": "HELM_CHART",
         "helm": "HELM_CHART",
         "shell_script": "SHELL_SCRIPT",
+        "shell_scripts": "SHELL_SCRIPT",   # list-of-paths variant
         "config_file": "CONFIG_FILE",
+        "config_files": "CONFIG_FILE",     # list-of-paths variant
     }
 
     PRIMARY_ARTIFACT_KEY: str = "heat_template"
@@ -186,7 +197,16 @@ class AppManifestParser:
           - file_type:    FileType enum value (string, e.g. "HEAT_TEMPLATE")
           - relative_path: path relative to the directory containing app.yaml
           - is_primary:   True for the heat_template artifact (deployment entrypoint)
-          - order:        position from artifacts dict (insertion order)
+          - order:        monotonically increasing across all paths (1-based)
+
+        Values may be either a single string (``heat_template: heat/main.yaml``)
+        or a list of strings (``shell_scripts: [a.sh, b.sh]``) — a list expands
+        to multiple entries, one per path. Both single- and plural-key forms
+        share the same FileType (see ARTIFACT_KEY_TO_FILE_TYPE).
+
+        Non-string / non-list values (dict, None, etc.) and blank strings are
+        skipped silently so that a malformed entry doesn't kill the whole
+        import.
 
         The ordering is preserved from the YAML so that deployment runs files in
         the order their authors specified - matching the user-supplied app.yaml
@@ -197,15 +217,28 @@ class AppManifestParser:
             return []
 
         result: list[dict] = []
-        for index, (key, value) in enumerate(artifacts.items()):
-            if not isinstance(value, str) or not value.strip():
-                continue
+        order = 0
+        for key, value in artifacts.items():
+            # Normalise both single-string and list-of-strings into one path list.
+            # Anything else (dict, None, ...) → no paths → no entries.
+            if isinstance(value, str):
+                paths = [value.strip()] if value.strip() else []
+            elif isinstance(value, list):
+                paths = [v.strip() for v in value if isinstance(v, str) and v.strip()]
+            else:
+                paths = []
+
             file_type = AppManifestParser.ARTIFACT_KEY_TO_FILE_TYPE.get(key, "OTHER")
-            result.append({
-                "artifact_key": key,
-                "file_type": file_type,
-                "relative_path": value.strip(),
-                "is_primary": key == AppManifestParser.PRIMARY_ARTIFACT_KEY,
-                "order": index + 1,
-            })
+            for path in paths:
+                order += 1
+                result.append({
+                    "artifact_key": key,
+                    "file_type": file_type,
+                    # ``is_primary`` is reserved for the singular heat_template
+                    # key. A list-of-paths variant could never produce a primary
+                    # anyway because PRIMARY_ARTIFACT_KEY is exactly that string.
+                    "relative_path": path,
+                    "is_primary": key == AppManifestParser.PRIMARY_ARTIFACT_KEY,
+                    "order": order,
+                })
         return result
