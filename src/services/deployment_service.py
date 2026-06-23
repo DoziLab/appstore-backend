@@ -16,6 +16,7 @@ from src.core.exceptions import NotFoundException
 from src.core.exceptions import BadRequestException
 from src.services.template_version_file_service import TemplateVersionFileService
 from src.tasks.deploy_tasks import deploy_stack
+from src.utils.deployment_expiry import compute_expiry, compute_extension, utcnow
 
 
 class DeploymentService:
@@ -127,6 +128,31 @@ class DeploymentService:
             self.db.add(course)
             self.db.flush()  # Get the ID without committing
         
+        # Resolve and validate the target OpenStack project: must belong to the
+        # teacher submitting this request. Persisting the local FK here makes the
+        # deployment-to-project relationship explicit instead of re-deriving it
+        # from teacher.id at every read site (deploy/restart/delete tasks).
+        from src.models.user import User as UserModel
+        teacher_user = self.db.query(UserModel).filter(
+            UserModel.external_id == deployment_data.teacher.id
+        ).first()
+        if not teacher_user:
+            raise NotFoundException(
+                f"Teacher user not found for Keycloak ID {deployment_data.teacher.id}"
+            )
+
+        openstack_project = self.openstack_repo.get_by_id(
+            deployment_data.openstack_project_id
+        )
+        if not openstack_project:
+            raise NotFoundException(
+                f"OpenStack project {deployment_data.openstack_project_id} not found"
+            )
+        if openstack_project.owner_user_id != teacher_user.id:
+            raise BadRequestException(
+                "OpenStack project does not belong to teacher"
+            )
+
         # Store complete deployment info as JSON
         deployment_parameters = json.dumps({
             "template_name": template.name,
@@ -134,15 +160,23 @@ class DeploymentService:
             "stack_assignments": [sa.model_dump() for sa in deployment_data.stack_assignments],
             "teacher": deployment_data.teacher.model_dump()
         })
-        
+
         # Create deployment record with initial status QUEUED
         # Use course.id (DB ID) instead of keycloak_course_id
+        # Compute expiry timestamps from runtime_months so the daily Beat
+        # sweep knows when to delete and the UI knows when to start warning.
+        now = utcnow()
+        expires_at, expiry_warning_at = compute_expiry(now, deployment_data.runtime_months)
+
         deployment = self.deployment_repo.create(
             name=deployment_data.name,
             template_version_id=deployment_data.template_version_id,
             course_id=str(course.id),  # Use DB course ID, not Keycloak group ID
+            openstack_project_id=openstack_project.id,
             status=DeploymentStatus.QUEUED,
             deployment_parameters=deployment_parameters,
+            expires_at=expires_at,
+            expiry_warning_at=expiry_warning_at,
         )
         
         # Create initial log entry
@@ -157,14 +191,75 @@ class DeploymentService:
                 "keycloak_group_id": deployment_data.course_id,
                 "stack_count": len(deployment_data.stack_assignments),
                 "total_groups": sum(len(sa.groups) for sa in deployment_data.stack_assignments),
-                "has_parameters": bool(deployment_data.parameters)
+                "has_parameters": bool(deployment_data.parameters),
+                "runtime_months": deployment_data.runtime_months,
+                "expires_at": expires_at.isoformat(),
             },
             request_id=request_id
         )
         
         # Trigger async Celery task for Heat stack orchestration
         deploy_stack.delay(str(deployment.id))
-        
+
+        return deployment
+
+    def extend_deployment(self, deployment_id: str, runtime_months: int) -> Deployment:
+        """Push ``expires_at`` out by ``runtime_months`` months.
+
+        Anchored on ``max(now, current_expires_at)`` so that an
+        already-expired-but-not-yet-deleted deployment is extended from now
+        rather than from the stale past, while a still-valid deployment
+        stacks the new window on top of its existing end date.
+
+        The companion ``expiry_warning_at`` is recomputed from the new
+        runtime so the UI banner timing matches.
+
+        Args:
+            deployment_id: ID of the deployment to extend.
+            runtime_months: Months to add (validated by ``DeploymentExtend``).
+
+        Returns:
+            The updated deployment.
+
+        Raises:
+            NotFoundException: If no such deployment exists.
+            BadRequestException: If the deployment is in a terminal state
+                                 (DELETED) where extending makes no sense.
+        """
+        deployment = self.deployment_repo.get_by_id(deployment_id)
+        if not deployment:
+            raise NotFoundException(f"Deployment {deployment_id} not found")
+
+        if deployment.status == DeploymentStatus.DELETED:
+            raise BadRequestException(
+                "Deployment is already deleted and cannot be extended"
+            )
+
+        now = utcnow()
+        new_expires_at, new_warning_at = compute_extension(
+            now=now,
+            current_expires_at=deployment.expires_at,
+            runtime_months=runtime_months,
+        )
+
+        deployment.expires_at = new_expires_at
+        deployment.expiry_warning_at = new_warning_at
+        self.db.commit()
+        self.db.refresh(deployment)
+
+        # Audit trail — the lifecycle policy is operationally significant.
+        self.log_service.log(
+            deployment_id=str(deployment.id),
+            event_type=DeploymentLogEventType.DEPLOYMENT_LIFETIME_EXTENDED,
+            message=f"Deployment lifetime extended by {runtime_months} months",
+            level=DeploymentLogLevel.INFO,
+            details={
+                "runtime_months_added": runtime_months,
+                "expires_at": new_expires_at.isoformat(),
+                "expiry_warning_at": new_warning_at.isoformat(),
+            },
+        )
+
         return deployment
     
     def list_deployments(
@@ -221,28 +316,14 @@ class DeploymentService:
             return deployment_dict
         
         try:
-            # Get lecturer's OpenStack project from deployment_parameters
-            deployment_params = json.loads(deployment.deployment_parameters) if deployment.deployment_parameters else {}
-            teacher_info = deployment_params.get("teacher", {})
-            lecturer_keycloak_id = teacher_info.get("id")
-            
-            if not lecturer_keycloak_id:
+            # Use the deployment's persisted OpenStack project (FK) instead of
+            # re-deriving it from teacher.id and grabbing the user's first
+            # OpenstackProject row — which silently picked the wrong one
+            # whenever a user had more than one.
+            openstack_project = deployment.openstack_project
+            if not openstack_project:
                 return deployment_dict
-            
-            # Map Keycloak ID to local user ID
-            from src.models.user import User
-            lecturer_user = self.db.query(User).filter(User.external_id == lecturer_keycloak_id).first()
-            
-            if not lecturer_user:
-                return deployment_dict
-            
-            lecturer_id = lecturer_user.id
-            openstack_projects = self.openstack_repo.get_by_owner(lecturer_id)
-            
-            if not openstack_projects:
-                return deployment_dict
-            
-            openstack_project = openstack_projects[0]
+
             heat_service = HeatStackService(openstack_project)
             
             # Fetch live stack data from OpenStack

@@ -21,11 +21,13 @@ class DeploymentCredentialService:
         user_json: dict[str, Any],
         floating_ip: str = "",
         heat_outputs: dict[str, Any] | None = None,
+        flavor: str | None = None,
     ) -> DeploymentInstance:
         instance = DeploymentInstance(
             deployment_id=deployment_id,
             vm_name=stack_name,
             openstack_server_id=openstack_stack_id,
+            flavor=flavor,
             status=DeploymentInstanceStatus.RUNNING,
         )
         self.db.add(instance)

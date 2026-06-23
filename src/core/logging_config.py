@@ -2,22 +2,22 @@
 import logging
 import sys
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 
 class JSONFormatter(logging.Formatter):
     """
     Custom JSON formatter for structured logging compatible with Loki.
-    
+
     Outputs logs as JSON with consistent field names for easy parsing and querying.
     """
-    
+
     def format(self, record: logging.LogRecord) -> str:
         """Format log record as JSON string."""
         # Base log data
         log_data: Dict[str, Any] = {
-            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'level': record.levelname,
             'logger': record.name,
             'message': record.getMessage(),

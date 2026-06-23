@@ -5,9 +5,13 @@ meta {
 }
 
 delete {
-  url: {{base_url}}/api/v1/deployments/{{deployment_id}}
+  url: {{base_url}}/api/v1/deployments/{{deployment_id}}?openstack_project_id={{openstack_project_local_id}}
   body: none
   auth: bearer
+}
+
+params:query {
+  openstack_project_id: {{openstack_project_local_id}}
 }
 
 params:path {
@@ -19,7 +23,7 @@ auth:bearer {
 }
 
 vars:pre-request {
-  deployment_id: 8a986b4f-0b39-4c98-85d1-e7f8784ca34d
+  deployment_id: f112111b-7d69-4f90-b100-1414d5fd1b6f
 }
 
 docs {

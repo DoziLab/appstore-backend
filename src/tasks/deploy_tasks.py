@@ -10,7 +10,6 @@ from src.models.deployment_log import DeploymentLogLevel, DeploymentLogEventType
 from src.models.template_version_file import FileType
 from src.repositories.deployment_repository import DeploymentRepository
 from src.repositories.deployment_log_repository import DeploymentLogRepository
-from src.repositories.openstack_project_repository import OpenstackProjectRepository
 from src.services.template_version_file_service import TemplateVersionFileService
 from src.services.deployment_log_service import DeploymentLogService
 from src.services.deployment_credential_service import DeploymentCredentialService
@@ -128,21 +127,17 @@ def deploy_stack(self, deployment_id: str) -> dict:
                 template_files[f.file_name] = f.content
 
         # --- Get OpenStack credentials ---
-        teacher_keycloak_id = teacher_info.get("id")
-        if not teacher_keycloak_id:
-            return _fail(repo, log_service, deployment_id, "No teacher information found")
+        # The OpenStack project this deployment runs against is now persisted
+        # on the deployment row itself (FK), so we no longer have to derive it
+        # from teacher.id and pick the first of the user's projects (which was
+        # wrong whenever a user had more than one OpenstackProject row).
+        openstack_project = deployment.openstack_project
+        if not openstack_project:
+            return _fail(
+                repo, log_service, deployment_id,
+                f"Deployment {deployment_id} has no openstack_project_id set",
+            )
 
-        from src.models.user import User
-        lecturer_user = db.query(User).filter(User.external_id == teacher_keycloak_id).first()
-        if not lecturer_user:
-            return _fail(repo, log_service, deployment_id, f"No user found for Keycloak ID {teacher_keycloak_id}")
-
-        openstack_repo = OpenstackProjectRepository(db)
-        openstack_projects = openstack_repo.get_by_owner(lecturer_user.id)
-        if not openstack_projects:
-            return _fail(repo, log_service, deployment_id, f"No OpenStack project found for lecturer {lecturer_user.id}")
-
-        openstack_project = openstack_projects[0]
         heat_service = HeatStackService(openstack_project)
 
         # Ensure the Ansible keypair exists in OpenStack before creating stacks
@@ -245,6 +240,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
                         user_json=credentials_for_db,
                         floating_ip=stack_result.get("floating_ip") or "",
                         heat_outputs=stack_result.get("outputs") or {},
+                        flavor=stack_params.get("flavor"),
                     )
                 except Exception as cred_error:
                     logger.error(f"Failed to persist credentials for stack {idx}: {cred_error}", exc_info=True)
@@ -407,64 +403,53 @@ def delete_deployment(self, deployment_id: str) -> dict:
         # If there is an associated Heat stack, attempt to delete it
         if deployment.openstack_stack_id:
             try:
-                # Extract owner ID from deployment_parameters
-                if not deployment.deployment_parameters:
-                    raise ValueError("Deployment parameters are missing")
-                params = json.loads(deployment.deployment_parameters)
-                teacher_info = params.get("teacher", {})
-                teacher_keycloak_id = teacher_info.get("id")
-                
-                if not teacher_keycloak_id:
-                    logger.warning("No teacher information in deployment_parameters; skipping stack deletion")
-                else:
-                    # Map Keycloak ID to local user ID
-                    from src.models.user import User
-                    teacher_user = db.query(User).filter(User.external_id == teacher_keycloak_id).first()
-                    
-                    if not teacher_user:
-                        logger.warning(f"Teacher user not found for Keycloak ID {teacher_keycloak_id}; skipping stack deletion")
-                    else:
-                        openstack_repo = OpenstackProjectRepository(db)
-                        openstack_projects = openstack_repo.get_by_owner(teacher_user.id)
+                # The OpenStack project is now persisted on the deployment row
+                # itself (FK), so deletion always targets the project the
+                # deployment was actually created in — not just the user's
+                # first OpenstackProject row.
+                openstack_project = deployment.openstack_project
 
-                        if openstack_projects:
-                            heat_service = HeatStackService(openstack_projects[0])
-                            
-                            # Parse stack IDs (can be single ID or JSON array)
-                            try:
-                                stack_ids = json.loads(deployment.openstack_stack_id)
-                                if not isinstance(stack_ids, list):
-                                    stack_ids = [stack_ids]
-                            except (json.JSONDecodeError, TypeError):
-                                # Fallback: treat as single stack ID
-                                stack_ids = [deployment.openstack_stack_id]
-                            
-                            logger.info(f"Deleting {len(stack_ids)} Heat stack(s)")
-                            deleted_count = 0
-                            failed_deletions = []
-                            
-                            for idx, stack_id in enumerate(stack_ids, start=1):
-                                try:
-                                    heat_service.delete_stack(stack_id)
-                                    deleted_count += 1
-                                    logger.info(f"Heat stack {idx}/{len(stack_ids)} deleted: {stack_id}")
-                                except Exception as delete_error:
-                                    logger.error(f"Failed to delete stack {stack_id}: {delete_error}")
-                                    failed_deletions.append({"stack_id": stack_id, "error": str(delete_error)})
-                            
-                            log_service.log(
-                                deployment_id=deployment_id,
-                                event_type=DeploymentLogEventType.DEPLOYMENT_DELETED,
-                                message=f"Heat stacks deleted: {deleted_count}/{len(stack_ids)} succeeded",
-                                level=DeploymentLogLevel.INFO if not failed_deletions else DeploymentLogLevel.WARNING,
-                                details={
-                                    "deleted_count": deleted_count,
-                                    "total_stacks": len(stack_ids),
-                                    "failed_deletions": failed_deletions if failed_deletions else None
-                                }
-                            )
-                        else:
-                            logger.warning(f"No OpenStack project found for teacher {teacher_user.id}; skipping stack deletion")
+                if not openstack_project:
+                    logger.warning(
+                        f"Deployment {deployment_id} has no openstack_project_id set; "
+                        "skipping stack deletion"
+                    )
+                else:
+                    heat_service = HeatStackService(openstack_project)
+
+                    # Parse stack IDs (can be single ID or JSON array)
+                    try:
+                        stack_ids = json.loads(deployment.openstack_stack_id)
+                        if not isinstance(stack_ids, list):
+                            stack_ids = [stack_ids]
+                    except (json.JSONDecodeError, TypeError):
+                        # Fallback: treat as single stack ID
+                        stack_ids = [deployment.openstack_stack_id]
+
+                    logger.info(f"Deleting {len(stack_ids)} Heat stack(s)")
+                    deleted_count = 0
+                    failed_deletions = []
+
+                    for idx, stack_id in enumerate(stack_ids, start=1):
+                        try:
+                            heat_service.delete_stack(stack_id)
+                            deleted_count += 1
+                            logger.info(f"Heat stack {idx}/{len(stack_ids)} deleted: {stack_id}")
+                        except Exception as delete_error:
+                            logger.error(f"Failed to delete stack {stack_id}: {delete_error}")
+                            failed_deletions.append({"stack_id": stack_id, "error": str(delete_error)})
+
+                    log_service.log(
+                        deployment_id=deployment_id,
+                        event_type=DeploymentLogEventType.DEPLOYMENT_DELETED,
+                        message=f"Heat stacks deleted: {deleted_count}/{len(stack_ids)} succeeded",
+                        level=DeploymentLogLevel.INFO if not failed_deletions else DeploymentLogLevel.WARNING,
+                        details={
+                            "deleted_count": deleted_count,
+                            "total_stacks": len(stack_ids),
+                            "failed_deletions": failed_deletions if failed_deletions else None
+                        }
+                    )
             except Exception as e:
                 logger.error(f"Failed to delete Heat stacks: {e}", exc_info=True)
                 log_service.log(
@@ -573,18 +558,14 @@ def restart_deployment(self, deployment_id: str) -> dict:
             repo.update_status(deployment_id, DeploymentStatus.FAILED)
             return {"status": "failed", "error": error_msg}
         
-        # Get OpenStack project credentials from deployment owner
-        if not deployment.deployment_parameters:
-            error_msg = "Deployment parameters are missing"
-            logger.error(f"[{deployment_id}] {error_msg}")
-            repo.update_status(deployment_id, DeploymentStatus.FAILED)
-            return {"status": "failed", "error": error_msg}
-        params = json.loads(deployment.deployment_parameters)
-        teacher_info = params.get("teacher", {})
-        teacher_keycloak_id = teacher_info.get("id")
-        
-        if not teacher_keycloak_id:
-            error_msg = "No teacher information found in deployment parameters"
+        # Get OpenStack project from the deployment's persisted FK. Previously
+        # this was re-derived from teacher.id at every read site and picked the
+        # user's first OpenstackProject row, which broke whenever a user had
+        # more than one (clouds.yaml switch scenario).
+        openstack_project = deployment.openstack_project
+
+        if not openstack_project:
+            error_msg = f"Deployment {deployment_id} has no openstack_project_id set"
             logger.error(error_msg)
             log_service.log(
                 deployment_id=deployment_id,
@@ -594,39 +575,6 @@ def restart_deployment(self, deployment_id: str) -> dict:
             )
             repo.update_status(deployment_id, DeploymentStatus.FAILED)
             return {"status": "failed", "error": error_msg}
-        
-        # Map Keycloak ID to local user ID
-        from src.models.user import User
-        teacher_user = db.query(User).filter(User.external_id == teacher_keycloak_id).first()
-        
-        if not teacher_user:
-            error_msg = f"Teacher user not found for Keycloak ID {teacher_keycloak_id}"
-            logger.error(error_msg)
-            log_service.log(
-                deployment_id=deployment_id,
-                event_type=DeploymentLogEventType.FAILED,
-                message=error_msg,
-                level=DeploymentLogLevel.ERROR
-            )
-            repo.update_status(deployment_id, DeploymentStatus.FAILED)
-            return {"status": "failed", "error": error_msg}
-        
-        openstack_repo = OpenstackProjectRepository(db)
-        openstack_projects = openstack_repo.get_by_owner(teacher_user.id)
-        
-        if not openstack_projects:
-            error_msg = f"No OpenStack project found for teacher {teacher_user.id}"
-            logger.error(error_msg)
-            log_service.log(
-                deployment_id=deployment_id,
-                event_type=DeploymentLogEventType.FAILED,
-                message=error_msg,
-                level=DeploymentLogLevel.ERROR
-            )
-            repo.update_status(deployment_id, DeploymentStatus.FAILED)
-            return {"status": "failed", "error": error_msg}
-        
-        openstack_project = openstack_projects[0]
         
         try:
             heat_service = HeatStackService(openstack_project)

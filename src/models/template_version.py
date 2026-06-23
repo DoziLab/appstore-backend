@@ -42,12 +42,12 @@ class TemplateVersion(Base):
         String(36), ForeignKey("users.id"), nullable=True,
         comment="Admin who approved/rejected this version",
     )
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(
         Text, nullable=True,
         comment="Optional admin-provided reason when approval_status == REJECTED",
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     template: Mapped["Template"] = relationship("Template", back_populates="versions")

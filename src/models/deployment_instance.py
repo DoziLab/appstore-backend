@@ -29,12 +29,18 @@ class DeploymentInstance(Base):
     vm_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     openstack_server_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    # OpenStack Nova flavor name used for this instance (e.g. "gp1.small").
+    # Captured from the Heat-stack parameters at creation time so the frontend
+    # can resolve real vCPU/RAM/disk values via /api/v1/openstack/flavors,
+    # instead of using hardcoded multipliers. Nullable for legacy rows
+    # created before this column existed.
+    flavor: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[DeploymentInstanceStatus] = mapped_column(
         SQLEnum(DeploymentInstanceStatus), 
         default=DeploymentInstanceStatus.CREATING
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     deployment: Mapped["Deployment"] = relationship("Deployment", back_populates="instances")

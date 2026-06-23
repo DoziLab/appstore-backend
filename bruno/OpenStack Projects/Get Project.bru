@@ -5,7 +5,7 @@ meta {
 }
 
 get {
-  url: {{base_url}}/api/v1/openstack-projects/{{project_id}}
+  url: {{base_url}}/api/v1/openstack-projects/{{openstack_project_local_id}}
   body: none
   auth: bearer
 }
@@ -16,16 +16,16 @@ auth:bearer {
 
 docs {
   # Get Project Details
-  
+
   Retrieves OpenStack project with masked credentials.
-  
+
   **Required Role:** Admin or Lecturer (Owner only)
-  
+
   **Security:**
   - Access is logged for audit trail
   - Credentials are masked in response
   - Only project owner can access
-  
+
   **Variables used:**
-  - `project_id`: Set automatically after creating a project
+  - `openstack_project_local_id`: Local DB id of the project. Set automatically after creating a project (also used by all Deployment requests as `?openstack_project_id=...`).
 }

@@ -27,6 +27,8 @@ class DeploymentLogEventType(str, Enum):
     FAILED = "failed"
     DEPLOYMENT_DELETION_REQUESTED = "deployment_deletion_requested"
     DEPLOYMENT_DELETED = "deployment_deleted"
+    DEPLOYMENT_LIFETIME_EXTENDED = "deployment_lifetime_extended"
+    DEPLOYMENT_EXPIRED = "deployment_expired"
     # Ansible
     SSH_WAIT = "ssh_wait"
     ANSIBLE_STARTED = "ansible_started"
@@ -54,7 +56,7 @@ class DeploymentLog(Base):
     message: Mapped[str] = mapped_column(Text, nullable=False)
     details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     request_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     # Relationships
     deployment: Mapped["Deployment"] = relationship("Deployment", back_populates="logs")

@@ -5,9 +5,13 @@ meta {
 }
 
 get {
-  url: {{base_url}}/api/v1/deployments/{{deployment_id}}/stack
+  url: {{base_url}}/api/v1/deployments/{{deployment_id}}/stack?openstack_project_id={{openstack_project_local_id}}
   body: none
   auth: bearer
+}
+
+params:query {
+  openstack_project_id: {{openstack_project_local_id}}
 }
 
 auth:bearer {
