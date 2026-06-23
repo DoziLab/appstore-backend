@@ -133,6 +133,53 @@ def test_extract_handles_missing_ssh_private_key_field():
     assert rows[0]["ssh_private_key"] is None
 
 
+def test_extract_propagates_group_id_for_group_credentials():
+    """Per-group credentials carry group_id; admin entries do not."""
+    user_json = {
+        "instance": {
+            "credentials": [
+                {
+                    "username": "gruppe-1",
+                    "password": "Pw-1",
+                    "group_id": "course-group-uuid-1",
+                },
+                {
+                    "username": "gruppe-2",
+                    "password": "Pw-2",
+                    "group_id": "course-group-uuid-2",
+                },
+            ],
+            "admin_credentials": {
+                "username": "prof",
+                "password": "AdminPw",
+                # No group_id — admin credentials are not tied to a group
+            },
+        },
+        "applications": [],
+    }
+
+    rows = DeploymentCredentialService._extract_access_entries(user_json)
+
+    assert len(rows) == 3
+    assert rows[0]["group_id"] == "course-group-uuid-1"
+    assert rows[1]["group_id"] == "course-group-uuid-2"
+    # Admin row MUST have group_id=None — students see only rows where their
+    # group matches, never NULL. This guards against accidental leakage.
+    assert rows[2]["group_id"] is None
+
+
+def test_extract_handles_missing_group_id_field():
+    """Legacy callers without group_id → group_id=None (invisible to students)."""
+    user_json = {
+        "instance": {
+            "credentials": [{"username": "legacy", "password": "Pw"}],
+        },
+        "applications": [],
+    }
+    rows = DeploymentCredentialService._extract_access_entries(user_json)
+    assert rows[0].get("group_id") is None
+
+
 def _instance_added_to(db_mock):
     """Return the DeploymentInstance that the service handed to db.add()."""
     from src.models.deployment_instance import DeploymentInstance

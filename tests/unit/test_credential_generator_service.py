@@ -18,11 +18,12 @@ def _teacher():
     )
 
 
-def _stack_with_groups(*, count: int = 1):
+def _stack_with_groups(*, count: int = 1, with_course_group_id: bool = False):
     groups = [
         GroupInfo(
             group_name=f"Gruppe {i}",
             group_index=i,
+            course_group_id=f"cg-{i}" if with_course_group_id else None,
             students=[
                 StudentInfo(
                     id=f"s-{i}",
@@ -145,3 +146,33 @@ def test_teacher_spec_can_override_auto_generated_ssh_key():
     kp = creds["teacher"]["linux"]["ssh_key"]
     assert kp["private_key"].startswith("-----BEGIN OPENSSH PRIVATE KEY-----")
     assert kp["public_key"].startswith("ssh-ed25519 ")
+
+
+def test_course_group_id_forwarded_when_present():
+    """When the wizard passes course_group_id, the generated entry carries it.
+
+    deploy_tasks reads this field to stamp DeploymentInstanceAccess.group_id
+    for each group's credentials — the missing link that enables student
+    self-service filtering.
+    """
+    creds = CredentialGeneratorService.generate(
+        credentials_spec={"per_group": [], "teacher": []},
+        stack_assignment=_stack_with_groups(count=2, with_course_group_id=True),
+        teacher=_teacher(),
+    )
+    assert creds["groups"][0]["course_group_id"] == "cg-1"
+    assert creds["groups"][1]["course_group_id"] == "cg-2"
+
+
+def test_course_group_id_is_none_when_omitted():
+    """Legacy wizard payloads (no course_group_id) → field is None.
+
+    Resulting access rows get group_id=NULL → invisible to students,
+    lecturer-side flow keeps working.
+    """
+    creds = CredentialGeneratorService.generate(
+        credentials_spec={"per_group": [], "teacher": []},
+        stack_assignment=_stack_with_groups(count=1, with_course_group_id=False),
+        teacher=_teacher(),
+    )
+    assert creds["groups"][0]["course_group_id"] is None

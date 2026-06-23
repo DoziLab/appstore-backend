@@ -234,3 +234,5 @@ grafana-data/
 promtail-positions.yaml
 
 .DS_Store
+# Local SQLite databases (test fixtures, scratch DBs)
+*.db

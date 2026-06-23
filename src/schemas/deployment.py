@@ -24,6 +24,17 @@ class GroupInfo(BaseModel):
     group_name: str = Field(..., description="Group name")
     group_index: int = Field(..., description="Group index/number")
     students: list[StudentInfo] = Field(..., description="Students in this group")
+    # Optional: when the frontend wizard knows the persisted ``course_groups.id``
+    # for this group, it should pass it here so the backend can stamp the FK
+    # onto every credential row generated for the group. The link enables
+    # student self-service (see GET /api/v1/student/...). Optional because
+    # old request payloads / lecturer flows without persisted CourseGroup
+    # rows must keep working — affected credential rows simply stay
+    # ``group_id IS NULL`` and are invisible to students.
+    course_group_id: Optional[str] = Field(
+        None,
+        description="course_groups.id this group corresponds to (enables student self-service).",
+    )
 
 
 class StackAssignment(BaseModel):
