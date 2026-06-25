@@ -163,8 +163,8 @@ def deploy_stack(self, deployment_id: str) -> dict:
         from src.schemas.deployment import StackAssignment, TeacherInfo
         teacher = TeacherInfo(**teacher_info)
 
-        created_stack_ids = []
-        failed_stacks = []
+        created_stack_ids: list[str] = []
+        failed_stacks: list[dict] = []
 
         for idx, stack_assignment_data in enumerate(stack_assignments_raw, start=1):
             # Cooperative cancellation checkpoint #1: between stack iterations.
