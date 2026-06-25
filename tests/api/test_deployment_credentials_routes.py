@@ -71,6 +71,8 @@ def _build_access(
     username="gruppe-1",
     ssh_private_key=_SAMPLE_PEM,
     password="P@ssw0rd-1234567",
+    group_id=None,
+    group_name=None,
 ):
     """Mirror of a DeploymentInstanceAccess row (post-decryption)."""
     access = MagicMock()
@@ -82,6 +84,15 @@ def _build_access(
     access.port = 22
     access.access_type = MagicMock()
     access.access_type.value = "ssh"
+    # group_id / group.name drive the Dozent/Gruppen split in the response
+    # schema. Pydantic rejects bare MagicMock here (must be str | None), so
+    # the test must explicitly choose. Default: lecturer/admin row.
+    access.group_id = group_id
+    if group_id is None:
+        access.group = None
+    else:
+        access.group = MagicMock()
+        access.group.name = group_name
     return access
 
 
