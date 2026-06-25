@@ -52,7 +52,12 @@ def test_extracts_postgres_credentials():
     rows = DeploymentCredentialService._extract_access_entries(user_json)
 
     assert len(rows) == 4
-    assert all(r["access_type"] == AccessType.DATABASE for r in rows)
+    # postgres → DATABASE, pgadmin → WEB_URL so the frontend can render them
+    # differently (DB connection string vs clickable web URL).
+    assert rows[0]["access_type"] == AccessType.DATABASE
+    assert rows[1]["access_type"] == AccessType.DATABASE
+    assert rows[2]["access_type"] == AccessType.WEB_URL
+    assert rows[3]["access_type"] == AccessType.WEB_URL
     # Postgres credentials use db_user; pgAdmin uses email when db_user absent.
     assert rows[0]["username"] == "grp1"
     assert rows[1]["username"] == "teacher"

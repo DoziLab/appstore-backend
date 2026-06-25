@@ -251,7 +251,69 @@ def deploy_stack(self, deployment_id: str) -> dict:
                 )
 
                 try:
-                    # Build user_json from `generated` so DB passwords match what Ansible sets
+                    # Build user_json from `generated` so DB passwords match what Ansible sets.
+                    #
+                    # The shape mirrors what the lecturer-side credentials view
+                    # expects (DeploymentCredentialService._extract_access_entries):
+                    #   * instance.credentials = per-group Linux/SSH logins
+                    #   * instance.admin_credentials = teacher Linux/SSH
+                    #   * applications[] = one entry per non-linux credential
+                    #     type (postgres, pgadmin, ...) that the app.yaml asked
+                    #     for. Without applications[], DB/pgAdmin credentials
+                    #     never reach the credentials API and the UI's
+                    #     "Gruppen" tab stays empty for those apps.
+                    _GROUP_META_KEYS = {"username", "email", "group_name", "group_index", "students", "course_group_id"}
+
+                    # Collect every non-linux credential type that ANY group or
+                    # the teacher produced. linux is handled by instance.* above.
+                    app_cred_types: set[str] = set()
+                    for g in generated.get("deployment_groups", []):
+                        for k, v in g.items():
+                            if k in _GROUP_META_KEYS or k == "linux" or not isinstance(v, dict):
+                                continue
+                            app_cred_types.add(k)
+                    for k, v in (generated.get("teacher") or {}).items():
+                        if k in _GROUP_META_KEYS or k == "linux" or not isinstance(v, dict):
+                            continue
+                        app_cred_types.add(k)
+
+                    applications_payload: list[dict] = []
+                    for cred_type in sorted(app_cred_types):
+                        per_group_creds: list[dict] = []
+                        for g in generated.get("deployment_groups", []):
+                            spec = g.get(cred_type)
+                            if not isinstance(spec, dict) or not spec.get("password"):
+                                continue
+                            per_group_creds.append({
+                                "email": spec.get("email"),
+                                "db_user": spec.get("db_user"),
+                                "username": spec.get("username"),
+                                "password": spec.get("password"),
+                                "database_name": spec.get("database_name") or spec.get("db_name"),
+                                # Same group_id stamp as for instance.credentials
+                                # above — drives the Dozent/Gruppen split in the UI.
+                                "group_id": g.get("course_group_id"),
+                            })
+
+                        teacher_spec = (generated.get("teacher") or {}).get(cred_type)
+                        admin_payload = None
+                        if isinstance(teacher_spec, dict) and teacher_spec.get("password"):
+                            admin_payload = {
+                                "email": teacher_spec.get("email"),
+                                "db_user": teacher_spec.get("db_user"),
+                                "username": teacher_spec.get("username"),
+                                "password": teacher_spec.get("password"),
+                            }
+
+                        if not per_group_creds and not admin_payload:
+                            continue
+
+                        applications_payload.append({
+                            "name": cred_type,
+                            "credentials": per_group_creds,
+                            "admin_credentials": admin_payload,
+                        })
+
                     credentials_for_db = {
                         "instance": {
                             "credentials": [
@@ -276,6 +338,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
                                 "ssh_private_key": (generated["teacher"]["linux"].get("ssh_key") or {}).get("private_key"),
                             } if generated.get("teacher", {}).get("linux", {}).get("password") else None,
                         },
+                        "applications": applications_payload,
                     }
                     DeploymentCredentialService(db).persist_credentials_for_stack(
                         deployment_id=deployment_id,
