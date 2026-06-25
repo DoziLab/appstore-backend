@@ -897,9 +897,12 @@ async def delete_deployment(
 ):
     """Request deletion of a deployment.
 
-    Sets deployment status to DELETING, logs the request and enqueues the
-    `delete_deployment` Celery task which performs the actual OpenStack
-    deletion and cleans up the database.
+    Flips the deployment's status to ``DELETING`` *immediately* — this acts
+    as the cooperative-cancel flag that any in-flight ``deploy_stack`` task
+    polls between phases. The task then bails out cleanly, persisting every
+    Heat stack it managed to create before. After flipping, the
+    ``delete_deployment`` Celery task is enqueued; it picks up those stack
+    ids from ``openstack_stack_id`` and tears them down.
     """
     # Verify deployment exists
     deployment_repo = DeploymentRepository(db)
@@ -909,6 +912,12 @@ async def delete_deployment(
         raise NotFoundException(f"Deployment with ID {deployment_id} not found")
 
     authorize_deployment_access(deployment, user, openstack_project_id, db)
+
+    # Set DELETING up front so the deploy task's status-polling checkpoints
+    # see it before we enqueue the actual cleanup task. Skipping the update
+    # if we're already DELETING/DELETED keeps the call idempotent.
+    if deployment.status not in (DeploymentStatus.DELETING, DeploymentStatus.DELETED):
+        deployment_repo.update_status(deployment_id, DeploymentStatus.DELETING)
 
     # Enqueue Celery task to perform deletion asynchronously
     try:
@@ -920,6 +929,6 @@ async def delete_deployment(
         )
 
     return ResponseBuilder.no_content(
-        message="Deletion requested; operation is in progress",
+        message="Deletion requested; cancel-and-cleanup is in progress",
         request_id=request_id,
     )

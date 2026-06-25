@@ -6,8 +6,9 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Generator
+from typing import Callable, Generator, Optional
 
+from src.utils.cancellation import CancelledException
 from src.utils.log_sanitizer import sanitize_message
 
 from sqlalchemy.orm import Session
@@ -39,6 +40,7 @@ class AnsibleService:
         floating_ip: str,
         ssh_private_key: str,
         ssh_user: str = "ubuntu",
+        cancel_check: Optional[Callable[[], bool]] = None,
     ):
         self.db = db
         self.deployment_id = deployment_id
@@ -46,6 +48,11 @@ class AnsibleService:
         self.ssh_private_key = ssh_private_key
         self.ssh_user = ssh_user
         self.log_service = DeploymentLogService(db)
+        # Cooperative cancellation predicate. Caller passes a closure that
+        # reads the deployment's current status; the service polls it inside
+        # long-running loops (SSH wait, playbook subprocess) and raises
+        # CancelledException as soon as it returns True. Default: no-op.
+        self._cancel_check = cancel_check or (lambda: False)
 
     # ------------------------------------------------------------------
     # Public API
@@ -63,6 +70,11 @@ class AnsibleService:
         )
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            # Cancel check before each poll — exits within one SSH_RETRY_INTERVAL.
+            if self._cancel_check():
+                raise CancelledException(
+                    f"SSH wait cancelled for {self.floating_ip}"
+                )
             try:
                 with socket.create_connection((self.floating_ip, 22), timeout=5):
                     self._log(
@@ -249,6 +261,23 @@ class AnsibleService:
 
             assert process.stdout is not None
             for raw_line in process.stdout:
+                # Cancel check on every yielded line. Granularity = whatever
+                # ansible-playbook prints; typically sub-second. On cancel we
+                # SIGTERM the subprocess, give it 2s to clean up, then SIGKILL.
+                if self._cancel_check():
+                    self._log(
+                        DeploymentLogEventType.ANSIBLE_FAILED,
+                        "Ansible execution cancelled — terminating subprocess",
+                        level=DeploymentLogLevel.WARNING,
+                    )
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=2)
+                    raise CancelledException("Ansible execution cancelled")
+
                 line = sanitize_message(raw_line.rstrip())
                 if not line:
                     continue
