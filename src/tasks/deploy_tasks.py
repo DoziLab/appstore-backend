@@ -1,6 +1,7 @@
 """Deploy tasks for Celery."""
 import json
 import logging
+import time
 from uuid import UUID
 
 from src.celery_app import celery_app
@@ -17,6 +18,7 @@ from src.services.openstack_heat_service import HeatStackService
 from src.services.ansible_service import AnsibleService
 from src.services.credential_generator_service import CredentialGeneratorService
 from src.utils.app_manifest_parser import AppManifestParser
+from src.utils.cancellation import CancelledException, is_cancel_requested
 from src.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -161,10 +163,28 @@ def deploy_stack(self, deployment_id: str) -> dict:
         from src.schemas.deployment import StackAssignment, TeacherInfo
         teacher = TeacherInfo(**teacher_info)
 
-        created_stack_ids = []
-        failed_stacks = []
+        created_stack_ids: list[str] = []
+        failed_stacks: list[dict] = []
 
         for idx, stack_assignment_data in enumerate(stack_assignments_raw, start=1):
+            # Cooperative cancellation checkpoint #1: between stack iterations.
+            # If a DELETE arrived while we were busy with the previous stack,
+            # stop creating new ones. The Heat stacks we already built were
+            # persisted incrementally below, so the parallel delete task
+            # picks them up from `deployment.openstack_stack_id`.
+            if is_cancel_requested(db, deployment_id):
+                log_service.log(
+                    deployment_id=deployment_id,
+                    event_type=DeploymentLogEventType.DEPLOYMENT_DELETION_REQUESTED,
+                    message=(
+                        f"Cancel detected before stack {idx}/{len(stack_assignments_raw)}; "
+                        f"stopping after {len(created_stack_ids)} stack(s) created"
+                    ),
+                    level=DeploymentLogLevel.INFO,
+                    details={"created_stack_ids": created_stack_ids},
+                )
+                return {"status": "cancelled", "stack_count": len(created_stack_ids), "stack_ids": created_stack_ids}
+
             stack_id = None  # set after Heat succeeds
             try:
                 stack_assignment = StackAssignment(**stack_assignment_data)
@@ -206,6 +226,21 @@ def deploy_stack(self, deployment_id: str) -> dict:
                 )
                 stack_id = stack_result["stack_id"]
                 created_stack_ids.append(stack_id)
+
+                # Persist the new stack ID incrementally so a parallel cancel
+                # (DELETE request → delete_deployment task) can find every
+                # Heat stack we've created so far. Without this, the cleanup
+                # would miss stacks created in later loop iterations because
+                # `openstack_stack_id` is otherwise only flushed at the very
+                # end of the task.
+                try:
+                    deployment.openstack_stack_id = json.dumps(created_stack_ids)
+                    db.commit()
+                except Exception as persist_err:
+                    db.rollback()
+                    logger.warning(
+                        f"Failed to incrementally persist stack id {stack_id}: {persist_err}"
+                    )
 
                 log_service.log(
                     deployment_id=deployment_id,
@@ -272,27 +307,55 @@ def deploy_stack(self, deployment_id: str) -> dict:
                             level=DeploymentLogLevel.WARNING,
                         )
                     else:
+                        # Cooperative cancellation checkpoint #2: between Heat
+                        # success and the (long-running) Ansible phase. The
+                        # AnsibleService also gets the same predicate so it
+                        # can bail mid-poll / mid-playbook.
+                        cancel_check = lambda: is_cancel_requested(db, deployment_id)  # noqa: E731
+                        if cancel_check():
+                            log_service.log(
+                                deployment_id=deployment_id,
+                                event_type=DeploymentLogEventType.DEPLOYMENT_DELETION_REQUESTED,
+                                message=f"Cancel detected after Heat for stack {idx}; skipping Ansible",
+                                level=DeploymentLogLevel.INFO,
+                                details={"created_stack_ids": created_stack_ids},
+                            )
+                            return {"status": "cancelled", "stack_count": len(created_stack_ids), "stack_ids": created_stack_ids}
+
                         ansible = AnsibleService(
                             db=db,
                             deployment_id=deployment_id,
                             floating_ip=floating_ip,
                             ssh_private_key=ssh_private_key,
+                            cancel_check=cancel_check,
                         )
-                        ansible.wait_for_ssh()
-                        ansible.copy_files(scripts=scripts, files=template_files)
+                        try:
+                            ansible.wait_for_ssh()
+                            ansible.copy_files(scripts=scripts, files=template_files)
 
-                        extra_vars = {
-                            **generated,
-                            **ansible_parameters,
-                            "course_label": deployment.name,
-                            "stack_label": stack_name,
-                            "ssh_allow_users": [
-                                s["linux"]["username"]
-                                for s in generated.get("deployment_groups", [])
-                                if s.get("linux", {}).get("password")
-                            ],
-                        }
-                        ansible.run_playbooks(playbooks=playbooks, extra_vars=extra_vars)
+                            extra_vars = {
+                                **generated,
+                                **ansible_parameters,
+                                "course_label": deployment.name,
+                                "stack_label": stack_name,
+                                "ssh_allow_users": [
+                                    s["linux"]["username"]
+                                    for s in generated.get("deployment_groups", [])
+                                    if s.get("linux", {}).get("password")
+                                ],
+                            }
+                            ansible.run_playbooks(playbooks=playbooks, extra_vars=extra_vars)
+                        except CancelledException as cancel_err:
+                            # Cancel was observed mid-SSH-wait or mid-playbook.
+                            # Don't escalate to FAILED — log and exit cleanly.
+                            log_service.log(
+                                deployment_id=deployment_id,
+                                event_type=DeploymentLogEventType.DEPLOYMENT_DELETION_REQUESTED,
+                                message=f"Ansible phase cancelled for stack {idx}: {cancel_err}",
+                                level=DeploymentLogLevel.INFO,
+                                details={"created_stack_ids": created_stack_ids},
+                            )
+                            return {"status": "cancelled", "stack_count": len(created_stack_ids), "stack_ids": created_stack_ids}
                 elif playbooks and not ssh_private_key:
                     log_service.log(
                         deployment_id=deployment_id,
@@ -408,6 +471,34 @@ def delete_deployment(self, deployment_id: str) -> dict:
             level=DeploymentLogLevel.INFO,
             details={"task_id": task_id}
         )
+
+        # If a deploy_stack task is currently in flight for this deployment,
+        # it polls the status at its checkpoints (between stacks, before each
+        # Ansible phase) and bails out once it sees DELETING. Give it up to
+        # ~10s to flush the final created_stack_ids list to the DB before we
+        # start tearing things down — otherwise we could miss a stack created
+        # in the very last iteration.
+        #
+        # The deploy task updates status to RUNNING / FAILED / cancelled as
+        # its last action; while it's still in flight the status here will
+        # still read CREATING (the API set it to DELETING, and we set it to
+        # DELETING again above, but a fresh deploy_stack may overwrite that
+        # back to CREATING on its next status update — unlikely with the
+        # current code, but harmless to handle).
+        for _ in range(10):
+            db.expire(deployment)
+            deployment = repo.get_by_id(deployment_id)
+            if deployment is None:
+                break
+            # Heat-stack id may have been incrementally persisted by the
+            # deploy task. Pick the latest snapshot before cleanup.
+            if deployment.status != DeploymentStatus.CREATING:
+                break
+            time.sleep(1)
+
+        # If deployment vanished mid-wait, nothing to clean up.
+        if deployment is None:
+            return {"status": "already_gone", "deployment_id": deployment_id}
 
         # If there is an associated Heat stack, attempt to delete it
         if deployment.openstack_stack_id:
