@@ -153,7 +153,7 @@ def test_backfill_stamps_group_access_row(session):
         course_id="c-1",
         group_name="Gruppe 1",
         course_group_id="cg-1",
-        sanitized_username="gruppe-1",
+        sanitized_username="gruppe_1",
     )
 
     _run_backfill(session)
@@ -174,7 +174,7 @@ def test_backfill_is_idempotent(session):
         course_id="c-1",
         group_name="Gruppe 1",
         course_group_id="cg-1",
-        sanitized_username="gruppe-1",
+        sanitized_username="gruppe_1",
     )
 
     _run_backfill(session)
@@ -247,7 +247,7 @@ def test_backfill_uses_explicit_course_group_id_when_present(session):
     session.add(_DeploymentInstanceAccess(
         id="access-1",
         deployment_instance_id="inst-1",
-        username="gruppe-1",
+        username="gruppe_1",
         group_id=None,
     ))
     session.commit()

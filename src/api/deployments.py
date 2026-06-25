@@ -471,6 +471,16 @@ async def stream_deployment_logs(
     Sends all existing logs immediately, then polls for new ones every second
     until the deployment reaches a terminal state (RUNNING, FAILED, DELETED).
     The stream closes automatically when done.
+
+    Implementation notes:
+      * Authorization runs against the request's DB session, but the polling
+        loop opens its OWN fresh SessionLocal each tick. Reusing the request
+        session would never see commits from the Celery worker (the session
+        caches identity-mapped objects within a single transaction).
+      * Sync SQLAlchemy calls are wrapped in run_in_threadpool so the event
+        loop stays free for other SSE clients.
+      * A heartbeat comment is sent every ~15s so proxies/browsers don't
+        consider the connection dead during long Ansible phases.
     """
     deployment_repo = DeploymentRepository(db)
     deployment = deployment_repo.get_by_id(deployment_id)
@@ -481,47 +491,89 @@ async def stream_deployment_logs(
     authorize_deployment_access(deployment, user, openstack_project_id, db)
 
     TERMINAL_STATUSES = {"RUNNING", "FAILED", "DELETED", "CANCELLED"}
+    HEARTBEAT_EVERY_SECONDS = 15
+    POLL_INTERVAL_SECONDS = 1
+
+    # Snapshot the (immutable) deployment_id for the closure; do NOT capture
+    # the ORM `deployment` object — it's bound to the request session which
+    # closes when this handler returns.
+    dep_id = deployment_id
+
+    def _fetch_state(since_seen: set[str], since_id_param: str | None):
+        """Open a fresh DB session, return (new_log_payloads, current_status).
+
+        Runs in the threadpool so the event loop isn't blocked on DB I/O.
+        """
+        from src.core.database import SessionLocal
+        local_db = SessionLocal()
+        try:
+            local_repo = DeploymentRepository(local_db)
+            current = local_repo.get_by_id(dep_id)
+            if current is None:
+                return [], "DELETED"
+
+            current_status = (
+                current.status.value if hasattr(current.status, "value") else str(current.status)
+            ).upper()
+
+            local_log_service = DeploymentLogService(local_db)
+            logs = local_log_service.get_deployment_logs(dep_id)
+
+            # First iteration: seed seen-set from since_id if provided
+            if since_id_param and not since_seen:
+                for log in logs:
+                    if str(log.id) == since_id_param:
+                        break
+                    since_seen.add(str(log.id))
+
+            new_payloads: list[str] = []
+            for log in logs:
+                lid = str(log.id)
+                if lid in since_seen:
+                    continue
+                since_seen.add(lid)
+                new_payloads.append(json.dumps({
+                    "id": lid,
+                    "deployment_id": str(log.deployment_id),
+                    "event_type": log.event_type.value if hasattr(log.event_type, "value") else str(log.event_type),
+                    "message": log.message,
+                    "level": log.level.value if hasattr(log.level, "value") else str(log.level),
+                    "details": json.loads(log.details_json) if log.details_json else None,
+                    "created_at": log.created_at.isoformat() if hasattr(log.created_at, "isoformat") else str(log.created_at),
+                }))
+            return new_payloads, current_status
+        finally:
+            local_db.close()
 
     async def event_generator():
-        log_service = DeploymentLogService(db)
-        seen_ids: set[str] = set()
+        from fastapi.concurrency import run_in_threadpool
 
-        # Seed seen_ids from since_id position
-        if since_id:
-            all_logs = log_service.get_deployment_logs(deployment_id)
-            for log in all_logs:
-                if str(log.id) == since_id:
-                    break
-                seen_ids.add(str(log.id))
+        seen_ids: set[str] = set()
+        seconds_since_heartbeat = 0
+        first = True
 
         try:
             while True:
-                # Refresh deployment status
-                db.expire(deployment)
-                current = deployment_repo.get_by_id(deployment_id)
-                current_status = (current.status.value if hasattr(current.status, "value") else str(current.status)).upper()
+                payloads, current_status = await run_in_threadpool(
+                    _fetch_state, seen_ids, since_id if first else None
+                )
+                first = False
 
-                # Fetch all logs and emit unseen ones
-                logs = log_service.get_deployment_logs(deployment_id)
-                new_logs = [log for log in logs if str(log.id) not in seen_ids]
-                for log in new_logs:
-                    seen_ids.add(str(log.id))
-                    payload = json.dumps({
-                        "id": str(log.id),
-                        "deployment_id": str(log.deployment_id),
-                        "event_type": log.event_type.value if hasattr(log.event_type, "value") else str(log.event_type),
-                        "message": log.message,
-                        "level": log.level.value if hasattr(log.level, "value") else str(log.level),
-                        "details": json.loads(log.details_json) if log.details_json else None,
-                        "created_at": log.created_at.isoformat() if hasattr(log.created_at, "isoformat") else str(log.created_at),
-                    })
+                for payload in payloads:
                     yield f"data: {payload}\n\n"
+                    seconds_since_heartbeat = 0
 
                 if current_status in TERMINAL_STATUSES:
                     yield "event: done\ndata: {}\n\n"
                     break
 
-                await asyncio.sleep(1)
+                if seconds_since_heartbeat >= HEARTBEAT_EVERY_SECONDS:
+                    # SSE comment line — clients ignore it, proxies keep the socket alive.
+                    yield ": ping\n\n"
+                    seconds_since_heartbeat = 0
+
+                await asyncio.sleep(POLL_INTERVAL_SECONDS)
+                seconds_since_heartbeat += POLL_INTERVAL_SECONDS
         except asyncio.CancelledError:
             pass
 
@@ -531,6 +583,7 @@ async def stream_deployment_logs(
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
         },
     )
 
@@ -578,6 +631,11 @@ async def get_deployment_credentials(
                     ssh_private_key=access.ssh_private_key,
                     connection_url=access.connection_url,
                     port=access.port,
+                    group_id=access.group_id,
+                    # Frontend renders Dozent/Gruppen tabs from group_id + group_name.
+                    # group_id=NULL → admin/lecturer row → "Dozent" tab.
+                    # group_id=set → student group row → "Gruppen" tab, accordion by group_name.
+                    group_name=access.group.name if access.group else None,
                 )
                 for access in instance.access_methods
             ],

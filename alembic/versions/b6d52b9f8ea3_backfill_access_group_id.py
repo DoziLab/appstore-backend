@@ -42,10 +42,13 @@ def _sanitize_username(name: str) -> str:
     """Mirror of credential_generator_service._sanitize_username.
 
     Kept inline (not imported) so the migration is self-contained and
-    immune to future service-code refactors.
+    immune to future service-code refactors. MUST be kept byte-for-byte
+    in sync with the service implementation — otherwise the backfill
+    can't match existing DeploymentInstanceAccess.username rows against
+    GroupMember-derived group names.
     """
-    username = name.lower().replace(" ", "-").replace(".", "-")
-    username = re.sub(r"[^a-z0-9\-_]", "", username)
+    username = name.lower().replace(" ", "_").replace(".", "_").replace("-", "_")
+    username = re.sub(r"[^a-z0-9_]", "", username)
     if username and username[0].isdigit():
         username = "u" + username
     return (username or "user")[:32]
