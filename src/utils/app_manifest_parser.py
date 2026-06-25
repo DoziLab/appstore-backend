@@ -103,6 +103,12 @@ class AppManifestParser:
                 "teacher": credentials_raw.get("teacher") or [],
             }
 
+            # Ansible configuration (vars mapping for extra_vars)
+            ansible_raw = data.get("ansible") or {}
+            ansible = {
+                "vars": ansible_raw.get("vars") or {},
+            }
+
             # User files
             user_files = data.get("user_files") or []
 
@@ -123,6 +129,7 @@ class AppManifestParser:
                 "parameters": parameters,
                 "outputs": outputs,
                 "credentials": credentials,
+                "ansible": ansible,
                 "user_files": user_files,
                 "artifacts": artifacts,
             }

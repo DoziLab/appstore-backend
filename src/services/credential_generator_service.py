@@ -26,9 +26,16 @@ def _generate_password(length: int = 16) -> str:
 
 
 def _sanitize_username(name: str) -> str:
-    """Convert any string to a valid Unix username (max 32 chars)."""
-    username = name.lower().replace(" ", "-").replace(".", "-")
-    username = re.sub(r"[^a-z0-9\-_]", "", username)
+    """Convert any string to a valid Unix username (max 32 chars).
+
+    Hyphens are mapped to underscores so the result also satisfies stricter
+    identifier rules (e.g. PostgreSQL role / database names: ``[a-z_][a-z0-9_]*``)
+    without quoting. The previous behavior used hyphens, which broke
+    ``ansible_postgres_group_db`` for group names containing spaces / dots
+    (``"Gruppe 1"`` → ``"gruppe-1"`` → rejected by Postgres-identifier asserts).
+    """
+    username = name.lower().replace(" ", "_").replace(".", "_").replace("-", "_")
+    username = re.sub(r"[^a-z0-9_]", "", username)
     if username and username[0].isdigit():
         username = "u" + username
     return (username or "user")[:32]

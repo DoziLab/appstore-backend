@@ -268,6 +268,19 @@ class DeploymentCredentialEntry(BaseModel):
     )
     connection_url: Optional[str] = Field(None, description="Connection URL if applicable")
     port: Optional[int] = Field(None, description="Port number if applicable")
+    group_id: Optional[str] = Field(
+        None,
+        description=(
+            "course_groups.id this credential belongs to. NULL = lecturer/admin "
+            "credential (not tied to a student group). Drives the Dozent/Gruppen "
+            "split in the UI."
+        ),
+    )
+    group_name: Optional[str] = Field(
+        None,
+        description="Display name of the course group (joined from course_groups.name). "
+                    "NULL when group_id is NULL.",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
