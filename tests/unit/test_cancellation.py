@@ -90,7 +90,8 @@ class TestAnsibleServiceCancellation:
 
     def test_wait_for_ssh_default_cancel_check_is_noop(self):
         """Old call sites without ``cancel_check`` keep behaving like before
-        — the default closure is a no-op that always returns False."""
+        — the default closure is a no-op that always returns False, so the
+        loop runs until the timeout regardless of cancellation."""
         from src.services.ansible_service import AnsibleService
 
         svc = AnsibleService(
@@ -99,11 +100,14 @@ class TestAnsibleServiceCancellation:
             floating_ip="127.0.0.1",
             ssh_private_key="x",
         )
-        # No CancelledException expected. We use a 1-second timeout and a
-        # bogus IP so the loop will TimeoutError quickly without us needing
-        # to mock the socket layer.
-        with pytest.raises(TimeoutError):
-            svc.wait_for_ssh(timeout=1)
+        # Force the socket connection to always fail so we hit the timeout.
+        # Without this mock the test is flaky: on Linux CI runners port 22
+        # may actually be open on 127.0.0.1 (sshd-in-CI) and wait_for_ssh
+        # would return successfully instead of timing out.
+        with patch("socket.create_connection", side_effect=OSError("nope")), \
+             patch.object(svc, "_log"):
+            with pytest.raises(TimeoutError):
+                svc.wait_for_ssh(timeout=1)
 
     def test_run_playbook_terminates_subprocess_on_cancel(self):
         """Mid-playbook cancel must SIGTERM the ansible-playbook subprocess
