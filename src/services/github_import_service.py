@@ -335,12 +335,13 @@ class GithubImportService:
         icon_url: Optional[str],
         owner_user_id: str,
         owner_user_roles: list[str],
+        visibility: TemplateVisibility = TemplateVisibility.PRIVATE,
     ) -> Template:
         """Create a brand-new Template + first TemplateVersion populated from GitHub.
 
-        New templates are always created PRIVATE (matching `TemplateService.create_template`);
-        admins promote to public later via PATCH. The first version follows the standard
-        per-version approval rules (PENDING unless admin + public).
+        ``visibility`` defaults to PRIVATE. Pass PUBLIC explicitly to make the
+        template marketplace-visible; the first version then enters the
+        per-version approval flow (PENDING unless caller is admin).
         """
         template = Template(
             id=str(uuid4()),
@@ -349,7 +350,7 @@ class GithubImportService:
             owner_id=owner_user_id,
             repo_url=github_url,
             icon_url=icon_url,
-            visibility=TemplateVisibility.PRIVATE,
+            visibility=visibility,
         )
         self.db.add(template)
         self.db.flush()
@@ -599,11 +600,24 @@ class GithubImportService:
     @staticmethod
     def _initial_approval(
         template: Template, user_roles: list[str]
-    ) -> TemplateVersionApprovalStatus:
-        is_admin = UserRole.ADMIN.value in user_roles
-        if is_admin and template.visibility == TemplateVisibility.PUBLIC:
-            return TemplateVersionApprovalStatus.APPROVED
-        return TemplateVersionApprovalStatus.PENDING
+    ) -> TemplateVersionApprovalStatus | None:
+        """Map (template, caller) to the initial approval status of a new version.
+
+        - Private templates: ``None`` — approval doesn't apply (owner-only).
+        - Public templates, admin caller: ``APPROVED`` (auto-promote).
+        - Public templates, other caller: ``PENDING`` (admin review needed).
+
+        Mirrors ``TemplateVersionService._initial_approval``; both services
+        create versions through different paths but with identical semantics.
+        """
+        if template.visibility != TemplateVisibility.PUBLIC:
+            return None
+        is_admin = UserRole.ADMIN.value in (user_roles or [])
+        return (
+            TemplateVersionApprovalStatus.APPROVED
+            if is_admin
+            else TemplateVersionApprovalStatus.PENDING
+        )
 
     @staticmethod
     def _derive_fallback_version(template_id: str) -> str:

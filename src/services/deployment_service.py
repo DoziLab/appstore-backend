@@ -14,6 +14,7 @@ from src.models.template_version import TemplateVersion
 from src.models.openstack_project import OpenstackProject
 from src.core.exceptions import NotFoundException
 from src.core.exceptions import BadRequestException
+from src.core.exceptions import ForbiddenException
 from src.services.template_version_file_service import TemplateVersionFileService
 from src.tasks.deploy_tasks import deploy_stack
 from src.utils.deployment_expiry import compute_expiry, compute_extension, utcnow
@@ -47,12 +48,47 @@ class DeploymentService:
         template_version = self.db.query(TemplateVersion).filter(
             TemplateVersion.id == deployment_data.template_version_id
         ).first()
-        
+
         if not template_version:
             raise NotFoundException(
                 f"Template version with ID '{deployment_data.template_version_id}' not found"
             )
-        
+
+        # Fetch parent template up front so we can:
+        # (1) gate private templates to owner-only deploys,
+        # (2) reuse it later for template-specific user_json generation.
+        from src.models.template import Template, TemplateVisibility
+        template = self.db.query(Template).filter(
+            Template.id == template_version.template_id
+        ).first()
+        if not template:
+            raise NotFoundException(
+                f"Template not found for version {template_version.id}"
+            )
+
+        # Resolve caller's local user id from the Keycloak ID in the payload.
+        # This is needed for both the private-template owner check below AND
+        # the OpenStack-project ownership validation further down — so we do
+        # the lookup once here and reuse `teacher_user`.
+        from src.models.user import User as UserModel
+        teacher_user = self.db.query(UserModel).filter(
+            UserModel.external_id == deployment_data.teacher.id
+        ).first()
+        if not teacher_user:
+            raise NotFoundException(
+                f"Teacher user not found for Keycloak ID {deployment_data.teacher.id}"
+            )
+
+        # Gate: private templates can only be deployed by their owner. Admins
+        # and other lecturers cannot run private templates even if they
+        # somehow obtained the template_version_id — that's the whole point of
+        # "private". For public templates the visibility/approval system
+        # already controls who sees the template at all, no extra gate here.
+        if template.visibility != TemplateVisibility.PUBLIC and template.owner_id != teacher_user.id:
+            raise ForbiddenException(
+                "Only the template owner can deploy a private template version"
+            )
+
         # Validate template parameters required by the template version
         template_file_service = TemplateVersionFileService(self.db)
         try:
@@ -99,26 +135,15 @@ class DeploymentService:
         if type_errors:
             raise BadRequestException(f"Type validation errors: {'; '.join(type_errors)}")
 
-        # Get template name for template-specific user_json generation
-        from src.models.template import Template
-        template = self.db.query(Template).filter(
-            Template.id == template_version.template_id
-        ).first()
-        
-        if not template:
-            raise NotFoundException(
-                f"Template not found for version {template_version.id}"
-            )
-        
         # Get or create Course entry based on keycloak_course_id
         # The course_id from frontend is the Keycloak group ID
         from src.models.course import Course
         keycloak_course_id = deployment_data.course_id
-        
+
         course = self.db.query(Course).filter(
             Course.keycloak_course_id == keycloak_course_id
         ).first()
-        
+
         if not course:
             # Auto-create course entry with deployment name as course name
             course = Course(
@@ -127,20 +152,11 @@ class DeploymentService:
             )
             self.db.add(course)
             self.db.flush()  # Get the ID without committing
-        
-        # Resolve and validate the target OpenStack project: must belong to the
-        # teacher submitting this request. Persisting the local FK here makes the
-        # deployment-to-project relationship explicit instead of re-deriving it
-        # from teacher.id at every read site (deploy/restart/delete tasks).
-        from src.models.user import User as UserModel
-        teacher_user = self.db.query(UserModel).filter(
-            UserModel.external_id == deployment_data.teacher.id
-        ).first()
-        if not teacher_user:
-            raise NotFoundException(
-                f"Teacher user not found for Keycloak ID {deployment_data.teacher.id}"
-            )
 
+        # Validate the target OpenStack project: must belong to the teacher
+        # submitting this request. ``teacher_user`` was already resolved
+        # earlier (private-template gate); re-using it here avoids a second
+        # round-trip to the users table.
         openstack_project = self.openstack_repo.get_by_id(
             deployment_data.openstack_project_id
         )

@@ -112,12 +112,21 @@ class TemplateVersionService:
     @staticmethod
     def _initial_approval(
         template: Template, user_roles: list[str]
-    ) -> TemplateVersionApprovalStatus:
-        """Auto-approve admin-created versions on public templates; otherwise PENDING."""
+    ) -> TemplateVersionApprovalStatus | None:
+        """Map (template, caller) to the initial approval status of a new version.
+
+        - Private templates: ``None`` — approval doesn't apply (owner-only).
+        - Public templates, admin caller: ``APPROVED`` (auto-promote).
+        - Public templates, other caller: ``PENDING`` (admin review needed).
+        """
+        if template.visibility != TemplateVisibility.PUBLIC:
+            return None
         is_admin = UserRole.ADMIN.value in (user_roles or [])
-        if is_admin and template.visibility == TemplateVisibility.PUBLIC:
-            return TemplateVersionApprovalStatus.APPROVED
-        return TemplateVersionApprovalStatus.PENDING
+        return (
+            TemplateVersionApprovalStatus.APPROVED
+            if is_admin
+            else TemplateVersionApprovalStatus.PENDING
+        )
 
     def create_version(
         self,
@@ -299,10 +308,21 @@ class TemplateVersionService:
         version_id: str | UUID,
         admin_user_id: str,
     ) -> TemplateVersion:
-        """Admin-only: mark a pending version as approved."""
+        """Admin-only: mark a pending version as approved.
+
+        Raises ``BadRequestException`` if the parent template is private —
+        the approval concept doesn't apply there (visit /templates/{id} with
+        ``visibility=public`` first).
+        """
         version = self.version_repo.get_by_id(version_id)
         if not version:
             raise NotFoundException(f"Template version with ID {version_id} not found")
+
+        template = self.template_repo.get_by_id(version.template_id)
+        if not template or template.visibility != TemplateVisibility.PUBLIC:
+            raise BadRequestException(
+                "Approval flow applies only to public templates"
+            )
 
         version.approval_status = TemplateVersionApprovalStatus.APPROVED
         version.approved_by_id = admin_user_id
@@ -329,11 +349,20 @@ class TemplateVersionService:
     ) -> TemplateVersion:
         """Admin-only: mark a pending version as rejected.
 
-        `reason` is optional free-text persisted on the version.
+        ``reason`` is optional free-text persisted on the version.
+
+        Raises ``BadRequestException`` if the parent template is private —
+        the approval concept doesn't apply there.
         """
         version = self.version_repo.get_by_id(version_id)
         if not version:
             raise NotFoundException(f"Template version with ID {version_id} not found")
+
+        template = self.template_repo.get_by_id(version.template_id)
+        if not template or template.visibility != TemplateVisibility.PUBLIC:
+            raise BadRequestException(
+                "Approval flow applies only to public templates"
+            )
 
         version.approval_status = TemplateVersionApprovalStatus.REJECTED
         version.approved_by_id = admin_user_id

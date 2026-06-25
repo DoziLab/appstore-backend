@@ -111,7 +111,13 @@ class TemplateVersionResponse(BaseModel):
     version: str = Field(..., description="Semantic version (e.g., 0.2.0)")
     git_commit_sha: str = Field(..., description="Git commit SHA")
     is_active: bool = Field(..., description="Whether this version is active")
-    approval_status: str = Field(..., description="Approval status (pending/approved/rejected/deprecated)")
+    approval_status: Optional[str] = Field(
+        None,
+        description=(
+            "Approval status (pending/approved/rejected/deprecated) for public "
+            "templates. Null for private templates — approval doesn't apply."
+        ),
+    )
     approved_by_id: Optional[str] = Field(None, description="Admin user ID who approved/rejected this version")
     approved_at: Optional[datetime] = Field(None, description="Approval/rejection timestamp")
     rejection_reason: Optional[str] = Field(None, description="Optional admin-provided reason when rejected")
