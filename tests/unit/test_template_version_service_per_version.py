@@ -74,17 +74,19 @@ class TestInitialApproval:
         t = _make_template(TemplateVisibility.PUBLIC)
         assert TemplateVersionService._initial_approval(t, ["admin"]) == TemplateVersionApprovalStatus.APPROVED
 
-    def test_admin_on_private_template_stays_pending(self):
+    def test_admin_on_private_template_returns_none(self):
+        """Private templates skip the approval flow entirely — approval
+        concept doesn't apply when the template is owner-only."""
         t = _make_template(TemplateVisibility.PRIVATE)
-        assert TemplateVersionService._initial_approval(t, ["admin"]) == TemplateVersionApprovalStatus.PENDING
+        assert TemplateVersionService._initial_approval(t, ["admin"]) is None
 
     def test_lecturer_on_public_template_stays_pending(self):
         t = _make_template(TemplateVisibility.PUBLIC)
         assert TemplateVersionService._initial_approval(t, ["lecturer"]) == TemplateVersionApprovalStatus.PENDING
 
-    def test_lecturer_on_private_template_stays_pending(self):
+    def test_lecturer_on_private_template_returns_none(self):
         t = _make_template(TemplateVisibility.PRIVATE)
-        assert TemplateVersionService._initial_approval(t, ["lecturer"]) == TemplateVersionApprovalStatus.PENDING
+        assert TemplateVersionService._initial_approval(t, ["lecturer"]) is None
 
     def test_empty_roles_stays_pending(self):
         t = _make_template(TemplateVisibility.PUBLIC)
@@ -142,7 +144,11 @@ class TestCanAccessVersion:
 
 class TestApproveRejectVersion:
     def test_approve_sets_status_and_audit_fields(self, service, mock_db):
-        v = _make_version("tmpl-1", TemplateVersionApprovalStatus.PENDING)
+        # Approve is allowed only on public templates — wire the template_repo
+        # mock so the gate in approve_version() lets us through.
+        public_template = _make_template(TemplateVisibility.PUBLIC)
+        service.template_repo.get_by_id.return_value = public_template
+        v = _make_version(public_template.id, TemplateVersionApprovalStatus.PENDING)
         service.version_repo.get_by_id.return_value = v
         admin_id = str(uuid4())
 
@@ -160,8 +166,21 @@ class TestApproveRejectVersion:
         with pytest.raises(NotFoundException):
             service.approve_version("missing-id", admin_user_id="admin-1")
 
+    def test_approve_400_when_template_private(self, service):
+        """Approval flow doesn't apply to private templates — must reject."""
+        priv = _make_template(TemplateVisibility.PRIVATE)
+        v = _make_version(priv.id, None)
+        service.version_repo.get_by_id.return_value = v
+        service.template_repo.get_by_id.return_value = priv
+
+        with pytest.raises(BadRequestException) as exc:
+            service.approve_version(v.id, admin_user_id="admin-1")
+        assert "public" in str(exc.value).lower()
+
     def test_reject_sets_status_and_audit_fields(self, service, mock_db):
-        v = _make_version("tmpl-1", TemplateVersionApprovalStatus.PENDING)
+        public_template = _make_template(TemplateVisibility.PUBLIC)
+        service.template_repo.get_by_id.return_value = public_template
+        v = _make_version(public_template.id, TemplateVersionApprovalStatus.PENDING)
         service.version_repo.get_by_id.return_value = v
         admin_id = str(uuid4())
 
@@ -176,6 +195,15 @@ class TestApproveRejectVersion:
         service.version_repo.get_by_id.return_value = None
         with pytest.raises(NotFoundException):
             service.reject_version("missing-id", admin_user_id="admin-1")
+
+    def test_reject_400_when_template_private(self, service):
+        priv = _make_template(TemplateVisibility.PRIVATE)
+        v = _make_version(priv.id, None)
+        service.version_repo.get_by_id.return_value = v
+        service.template_repo.get_by_id.return_value = priv
+
+        with pytest.raises(BadRequestException):
+            service.reject_version(v.id, admin_user_id="admin-1")
 
 
 # ---------------------------------------------------------------------------

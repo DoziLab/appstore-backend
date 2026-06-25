@@ -1,5 +1,5 @@
 """Template schemas for request/response validation."""
-from pydantic import BaseModel, Field, ConfigDict, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 from datetime import datetime
 from typing import Any, Optional
 from src.schemas.template_version import TemplateVersionResponse
@@ -120,8 +120,10 @@ class TemplateResponse(BaseModel):
 class GithubImportNewTemplate(BaseModel):
     """Body for `POST /templates/import-from-github` - creates Template + first Version.
 
-    New templates are always created with `visibility=private` (matching
-    `POST /templates`). Visibility is admin-only and changed later via PATCH.
+    By default the new template is created as ``private`` (owner-only,
+    no approval flow). Pass ``visibility="public"`` to make it marketplace-
+    visible — the first version then enters the standard approval flow
+    (``pending`` unless the caller is an admin).
     """
     name: str = Field(..., max_length=255)
     description: Optional[str] = None
@@ -132,6 +134,23 @@ class GithubImportNewTemplate(BaseModel):
         description="Path to app.yaml inside the repo. Defaults to 'app.yaml' (root) when only the repo URL is given.",
         max_length=500,
     )
+    visibility: Optional[str] = Field(
+        default="private",
+        description=(
+            "Template visibility. 'private' (default) = owner-only, no approval; "
+            "'public' = marketplace-visible, first version enters approval flow."
+        ),
+    )
+
+    @field_validator("visibility")
+    @classmethod
+    def _visibility_must_be_known(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return "private"
+        v = v.lower()
+        if v not in ("private", "public"):
+            raise ValueError("visibility must be 'private' or 'public'")
+        return v
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -140,6 +159,7 @@ class GithubImportNewTemplate(BaseModel):
                 "description": "Provision a Postgres VM",
                 "github_url": "https://github.com/dozilab/templates",
                 "app_yaml_path": "postgres/app.yaml",
+                "visibility": "private",
             }
         }
     )

@@ -17,6 +17,7 @@ from src.schemas.template_version import TemplateVersionResponse
 from src.services.template_service import TemplateService
 from src.services.github_import_service import GithubImportService
 from src.models.user import UserRole
+from src.models.template import TemplateVisibility
 
 
 router = APIRouter(
@@ -231,6 +232,10 @@ async def import_template_from_github(
         icon_url=payload.icon_url,
         owner_user_id=current_user["user_id"],
         owner_user_roles=current_user.get("roles", []),
+        # The pydantic validator normalises this to "private"/"public" (or
+        # leaves the default). Map the string to the enum here so the service
+        # stays typed.
+        visibility=TemplateVisibility(payload.visibility or "private"),
     )
 
     template_response = TemplateResponse.model_validate(template)

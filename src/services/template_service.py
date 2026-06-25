@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from src.models.template import Template, TemplateVisibility
+from src.models.template_version import TemplateVersionApprovalStatus
 from src.repositories.template_repository import TemplateRepository
 from src.schemas.template import TemplateCreate, TemplateUpdate
 from src.core.exceptions import NotFoundException, ForbiddenException, BadRequestException
@@ -183,25 +184,29 @@ class TemplateService:
         is_admin: bool = False
     ) -> Template:
         """Update a template.
-        
-        Only template owners or admins can update templates.
-        Only admins can change visibility.
-        
+
+        Only template owners or admins can update templates. The same audience
+        may change ``visibility``: switching ``private → public`` will reset
+        the approval state of all versions to ``PENDING`` (admin review
+        required before they become visible in the marketplace); switching
+        ``public → private`` clears the approval state to NULL because the
+        approval concept doesn't apply to private templates.
+
         Args:
             template_id: Template ID
             template_data: Template update data
             user_id: ID of user performing the update
             is_admin: Whether the user is an admin
-            
+
         Returns:
             Updated template
-            
+
         Raises:
             NotFoundException: If template not found
-            ForbiddenException: If user is not owner or admin, or non-admin tries to change visibility
+            ForbiddenException: If user is not owner or admin
         """
         template = self.get_template(template_id, user_id=user_id, is_admin=is_admin)
-        
+
         # Permission check: only owner or admin can update
         if template.owner_id != user_id and not is_admin:
             logger.warning(
@@ -222,17 +227,37 @@ class TemplateService:
             return template
         
         try:
-            # Check if visibility is being changed
+            # Visibility transition — owner-or-admin (already enforced above for
+            # the whole update payload). The transition itself resets the per-
+            # version approval state so the two views (marketplace vs. private)
+            # don't get mixed up:
+            #   private → public:  any version that was unset (NULL) flips to
+            #                      PENDING, awaiting admin review.
+            #   public → private:  every version's approval state is cleared
+            #                      (NULL) plus approved_by/at/reason are wiped.
             if "visibility" in update_data:
-                if not is_admin:
-                    raise ForbiddenException("Only admins can change template visibility")
-                
                 # Validate visibility value
                 try:
-                    TemplateVisibility(update_data["visibility"])
+                    new_visibility = TemplateVisibility(update_data["visibility"])
                 except ValueError:
                     raise BadRequestException(f"Invalid visibility value: {update_data['visibility']}")
-            
+
+                if new_visibility != template.visibility:
+                    if new_visibility == TemplateVisibility.PUBLIC:
+                        # private → public: untyped versions enter the approval flow.
+                        # Versions that already carry an explicit state (legacy
+                        # data, or someone toggled back-and-forth) keep theirs.
+                        for v in template.versions:
+                            if v.approval_status is None:
+                                v.approval_status = TemplateVersionApprovalStatus.PENDING
+                    else:
+                        # public → private: approval state is no longer meaningful.
+                        for v in template.versions:
+                            v.approval_status = None
+                            v.approved_by_id = None
+                            v.approved_at = None
+                            v.rejection_reason = None
+
             uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
             updated_template = self.template_repo.update(uuid_id, **update_data)
             if not updated_template:
