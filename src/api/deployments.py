@@ -253,7 +253,16 @@ async def list_deployments(
     deployment_list = []
     for deployment in deployments:
         deployment_dict = DeploymentResponse.model_validate(deployment).model_dump(mode="json")
-        
+
+        # Owner's Keycloak UUID (see GET /{id} for rationale). Best-effort —
+        # malformed/missing teacher info leaves owner_id as None.
+        try:
+            if deployment.deployment_parameters:
+                params = json.loads(deployment.deployment_parameters)
+                deployment_dict["owner_id"] = (params.get("teacher") or {}).get("id")
+        except (json.JSONDecodeError, AttributeError):
+            deployment_dict["owner_id"] = None
+
         # Add related objects
         deployment_dict["template_version"] = {
             "id": str(deployment.template_version.id),
@@ -364,6 +373,18 @@ async def get_deployment(
 
     # Build response with deployment details
     deployment_dict = DeploymentResponse.model_validate(deployment).model_dump(mode="json")
+
+    # Surface the deployment owner's Keycloak UUID so the frontend can gate
+    # destructive actions on `token.sub == owner_id`. We pull it straight out
+    # of `deployment_parameters.teacher.id`; if the row is too old to have
+    # that block, owner_id stays None and the UI treats every non-admin as
+    # non-owner (which is the safe default).
+    try:
+        if deployment.deployment_parameters:
+            params = json.loads(deployment.deployment_parameters)
+            deployment_dict["owner_id"] = (params.get("teacher") or {}).get("id")
+    except (json.JSONDecodeError, AttributeError):
+        deployment_dict["owner_id"] = None
     
     # Add related objects
     deployment_dict["template_version"] = {

@@ -162,6 +162,19 @@ class DeploymentResponse(BaseModel):
     status: str = Field(..., description="Current status")
     openstack_stack_id: Optional[str] = Field(None, description="OpenStack Heat stack ID")
     deployment_parameters: Optional[str] = Field(None, description="Heat template parameters as JSON string")
+    # Owner is the lecturer who created the deployment. We surface the
+    # *Keycloak* UUID (taken from teacher.id inside ``deployment_parameters``)
+    # so the frontend can compare against ``token.sub`` directly without an
+    # extra Keycloak-id-to-local-user-id mapping round-trip. Optional because
+    # legacy rows from before the teacher-info migration may not have it.
+    owner_id: Optional[str] = Field(
+        None,
+        description=(
+            "Keycloak UUID of the deployment owner (teacher who created it). "
+            "Frontend compares this to the logged-in user's `sub` claim to "
+            "gate destructive actions (cancel/delete/cleanup/retry)."
+        ),
+    )
     expires_at: Optional[datetime] = Field(
         None,
         description="Hard-delete timestamp (NULL = never expires).",
@@ -187,6 +200,7 @@ class DeploymentResponse(BaseModel):
                 "status": "queued",
                 "openstack_stack_id": None,
                 "deployment_parameters": '{"image": "Ubuntu 22.04", "flavor": "gp1.small"}',
+                "owner_id": "keycloak-teacher-uuid",
                 "expires_at": "2026-10-27T10:00:00Z",
                 "expiry_warning_at": "2026-10-13T10:00:00Z",
                 "created_at": "2024-11-27T10:00:00Z",
