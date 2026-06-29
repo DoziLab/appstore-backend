@@ -436,6 +436,23 @@ def deploy_stack(self, deployment_id: str) -> dict:
                         level=DeploymentLogLevel.WARNING,
                     )
             except Exception as stack_error:
+                # If create_stack raised AFTER the stack was actually created
+                # (CREATE_FAILED or wait timeout), it stamps the id onto the
+                # exception so we can still record it for later cleanup. Without
+                # this, the half-created stack would be orphaned in OpenStack
+                # and the delete task wouldn't know to tear it down.
+                orphan_stack_id = getattr(stack_error, "stack_id", None)
+                if orphan_stack_id and orphan_stack_id not in created_stack_ids:
+                    created_stack_ids.append(orphan_stack_id)
+                    try:
+                        deployment.openstack_stack_id = json.dumps(created_stack_ids)
+                        db.commit()
+                    except Exception as persist_err:
+                        db.rollback()
+                        logger.warning(
+                            f"Failed to persist orphan stack id {orphan_stack_id}: {persist_err}"
+                        )
+
                 error_msg = f"Failed to deploy stack {idx}: {str(stack_error)}"
                 logger.error(error_msg, exc_info=True)
                 log_service.log(
@@ -443,7 +460,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
                     event_type=DeploymentLogEventType.ANSIBLE_FAILED if stack_id else DeploymentLogEventType.FAILED,
                     message=error_msg,
                     level=DeploymentLogLevel.ERROR,
-                    details={"error": str(stack_error), "stack_index": idx},
+                    details={"error": str(stack_error), "stack_index": idx, "orphan_stack_id": orphan_stack_id},
                 )
                 failed_stacks.append({"index": idx, "error": str(stack_error)})
 
@@ -573,6 +590,7 @@ def delete_deployment(self, deployment_id: str) -> dict:
             return {"status": "already_gone", "deployment_id": deployment_id}
 
         # If there is an associated Heat stack, attempt to delete it
+        any_stack_delete_failed = False
         if deployment.openstack_stack_id:
             try:
                 # The OpenStack project is now persisted on the deployment row
@@ -600,6 +618,7 @@ def delete_deployment(self, deployment_id: str) -> dict:
 
                     logger.info(f"Deleting {len(stack_ids)} Heat stack(s)")
                     deleted_count = 0
+                    surviving_stack_ids: list[str] = []
                     failed_deletions = []
 
                     for idx, stack_id in enumerate(stack_ids, start=1):
@@ -610,6 +629,7 @@ def delete_deployment(self, deployment_id: str) -> dict:
                         except Exception as delete_error:
                             logger.error(f"Failed to delete stack {stack_id}: {delete_error}")
                             failed_deletions.append({"stack_id": stack_id, "error": str(delete_error)})
+                            surviving_stack_ids.append(stack_id)
 
                     log_service.log(
                         deployment_id=deployment_id,
@@ -622,7 +642,25 @@ def delete_deployment(self, deployment_id: str) -> dict:
                             "failed_deletions": failed_deletions if failed_deletions else None
                         }
                     )
+
+                    # If any stack failed to delete, keep the DB row and the
+                    # surviving stack ids so the user can retry. Removing the
+                    # row would orphan the OpenStack stacks with no way to
+                    # find them later.
+                    if failed_deletions:
+                        any_stack_delete_failed = True
+                        try:
+                            deployment.openstack_stack_id = json.dumps(surviving_stack_ids)
+                            db.commit()
+                        except Exception as persist_err:
+                            db.rollback()
+                            logger.warning(
+                                f"Could not persist surviving stack ids: {persist_err}"
+                            )
             except Exception as e:
+                # Outer failure (e.g. heat_service init / connection error) —
+                # also a reason to keep the DB row so the user can retry.
+                any_stack_delete_failed = True
                 logger.error(f"Failed to delete Heat stacks: {e}", exc_info=True)
                 log_service.log(
                     deployment_id=deployment_id,
@@ -631,6 +669,23 @@ def delete_deployment(self, deployment_id: str) -> dict:
                     level=DeploymentLogLevel.ERROR,
                     details={"error": str(e)}
                 )
+
+        # If any OpenStack stack deletion failed, bail out BEFORE wiping the
+        # DB record. The deployment stays around (status FAILED) so the user
+        # can retry the delete instead of being left with orphan stacks they
+        # can no longer reach from the UI.
+        if any_stack_delete_failed:
+            try:
+                repo.update_status(deployment_id, DeploymentStatus.FAILED)
+            except Exception:
+                logger.warning(
+                    "Could not reset deployment status after partial delete failure"
+                )
+            return {
+                "status": "stack_delete_failed",
+                "deployment_id": deployment_id,
+                "task_id": task_id,
+            }
 
         # Delete logs first (before deployment record)
         try:
