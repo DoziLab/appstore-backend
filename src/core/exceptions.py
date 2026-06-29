@@ -4,6 +4,7 @@ This module provides custom exception handlers for FastAPI to ensure
 consistent error responses across all endpoints using ResponseBuilder.
 """
 import logging
+from typing import Any
 
 from fastapi import Request, status
 from fastapi.exceptions import RequestValidationError
@@ -121,7 +122,7 @@ async def http_exception_handler(
     # branchst auf `errors.code` (z.B. „VERSION_ALREADY_EXISTS") und kann
     # `errors.details` als Datenträger nutzen, statt den `message`-String
     # per Regex zu parsen.
-    errors_payload = None
+    errors_payload: dict[str, Any] | None = None
     if isinstance(exc, BadRequestException) and exc.code:
         errors_payload = {"code": exc.code}
         if exc.details:

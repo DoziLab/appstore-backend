@@ -61,7 +61,12 @@ def _parse_prerelease_key(prerelease: str | None) -> tuple:
     """
     if prerelease is None:
         return (1,)  # ranks higher than any (0, …) prerelease key
-    parts = []
+    # Jeder Identifier wird zu (kind, value): kind=0 für numeric, kind=1 für
+    # alphanumeric. ``value`` ist also int oder str, je nach Identifier —
+    # die Typ-Annotation muss das mit ``int | str`` ausdrücken, sonst engt
+    # mypy den Listen-Typ nach dem ersten append() auf ``tuple[int, int]``
+    # ein und das zweite append() (mit str) bricht.
+    parts: list[tuple[int, int | str]] = []
     for ident in prerelease.split("."):
         if ident.isdigit():
             # (0, numeric_value) sortiert unter (1, alphanum_value)
