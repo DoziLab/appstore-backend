@@ -4,7 +4,9 @@ Covers:
 - Visibility-switch resets/sets ``approval_status`` correctly on each version.
 - Visibility can now be changed by the template owner (not only admins).
 - Deploy-time gate: private templates can only be deployed by their owner.
-- Approve/reject endpoints reject private templates with 400.
+- Approve/reject endpoints reject **genuinely** private templates (no
+  publish_requested) with 400. Templates that are PRIVATE + publish_requested
+  ARE legitimate approval targets — they're awaiting their first approval.
 """
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
@@ -25,13 +27,19 @@ from src.services.template_version_service import TemplateVersionService
 # ---------------------------------------------------------------------------
 
 
-def _make_template(visibility=TemplateVisibility.PRIVATE, owner_id=None, versions=None):
+def _make_template(
+    visibility=TemplateVisibility.PRIVATE,
+    owner_id=None,
+    versions=None,
+    publish_requested: bool = False,
+):
     t = Template()
     t.id = str(uuid4())
     t.owner_id = owner_id or str(uuid4())
     t.name = "demo"
     t.repo_url = "https://example.com"
     t.visibility = visibility
+    t.publish_requested = publish_requested
     t.versions = versions or []
     return t
 
@@ -63,15 +71,17 @@ def template_service(mock_db):
 
 
 # ---------------------------------------------------------------------------
-# Visibility-switch resets approval_status
+# Visibility-switch — publish_requested-aware
 # ---------------------------------------------------------------------------
 
 
 class TestVisibilityToggleResetsApproval:
     """When a template flips private↔public, the version-level approval state
-    has to follow — otherwise a previously-rejected public version would slip
-    back into the marketplace via a private→public bounce, or a private
-    version would carry a meaningless PENDING badge after going public."""
+    has to follow. Seit der Einführung von ``publish_requested`` ist der
+    private→public-Pfad nicht mehr ein Direkt-Flip auf PUBLIC, sondern ein
+    Veröffentlichungs-Wunsch: das Template BLEIBT PRIVATE, der Wunsch wird
+    festgehalten, die Versionen flippen in den Approval-Flow. Erst beim
+    ersten approve_version() flippt das Template wirklich auf PUBLIC."""
 
     def test_private_to_public_sets_null_versions_to_pending(self, template_service, mock_db):
         owner = str(uuid4())
@@ -91,6 +101,66 @@ class TestVisibilityToggleResetsApproval:
 
         # Version that was unset before now enters the approval flow.
         assert v_null.approval_status == TemplateVersionApprovalStatus.PENDING
+
+    def test_private_to_public_keeps_visibility_private_without_approved_versions(
+        self, template_service, mock_db,
+    ):
+        """Der „möchte öffentlich werden"-Wunsch landet als ``publish_requested``
+        am Template. Der ``visibility``-Wert in der DB-Aktualisierung wird
+        bewusst NICHT auf ``public`` durchgereicht — Service entfernt das
+        Feld aus dem Update, damit das Template bis zur ersten Genehmigung
+        privat bleibt."""
+        owner = str(uuid4())
+        tid = str(uuid4())
+        v_null = _make_version(tid, None)
+        t = _make_template(TemplateVisibility.PRIVATE, owner_id=owner, versions=[v_null])
+        t.id = tid
+        template_service.template_repo.get_by_id.return_value = t
+        template_service.template_repo.update.return_value = t
+
+        template_service.update_template(
+            template_id=t.id,
+            template_data=TemplateUpdate(visibility="public"),
+            user_id=owner,
+            is_admin=False,
+        )
+
+        # ``template_repo.update`` wird aufgerufen — wir prüfen das Payload:
+        # `visibility` muss raus, `publish_requested=True` muss drin sein.
+        args, kwargs = template_service.template_repo.update.call_args
+        assert "visibility" not in kwargs, (
+            "Direktflip auf PUBLIC ist unerwünscht solange keine Version "
+            "approved ist — Service muss `visibility` aus dem Update entfernen."
+        )
+        assert kwargs.get("publish_requested") is True
+
+    def test_private_to_public_flips_directly_with_approved_version(
+        self, template_service,
+    ):
+        """Wenn das Template (z.B. nach demote-to-private und re-promote)
+        schon eine APPROVED Version hat, ist der Approval-Umweg unnötig —
+        wir flippen direkt auf PUBLIC."""
+        owner = str(uuid4())
+        tid = str(uuid4())
+        v_approved = _make_version(tid, TemplateVersionApprovalStatus.APPROVED)
+        t = _make_template(TemplateVisibility.PRIVATE, owner_id=owner, versions=[v_approved])
+        t.id = tid
+        template_service.template_repo.get_by_id.return_value = t
+        template_service.template_repo.update.return_value = t
+
+        template_service.update_template(
+            template_id=t.id,
+            template_data=TemplateUpdate(visibility="public"),
+            user_id=owner,
+            is_admin=False,
+        )
+
+        args, kwargs = template_service.template_repo.update.call_args
+        # Direktflip: visibility bleibt im Update-Payload, publish_requested
+        # wird auf False gesetzt (defensiv — falls ein Vorgänger-Wunsch da war).
+        assert kwargs.get("visibility") == "public"
+        assert kwargs.get("publish_requested") is False
+        assert v_approved.approval_status == TemplateVersionApprovalStatus.APPROVED
 
     def test_private_to_public_does_not_re_pend_already_approved(self, template_service):
         """If a version somehow already carries APPROVED (e.g. legacy data
@@ -116,12 +186,18 @@ class TestVisibilityToggleResetsApproval:
     def test_public_to_private_wipes_approval_state(self, template_service):
         """Going private clears the approval state on every version — the
         concept doesn't apply anymore, and stale APPROVED records would
-        leak back to PUBLIC if someone flipped a third time."""
+        leak back to PUBLIC if someone flipped a third time. Plus the
+        ``publish_requested``-Wunsch wird gelöscht."""
         owner = str(uuid4())
         tid = str(uuid4())
         v_approved = _make_version(tid, TemplateVersionApprovalStatus.APPROVED)
         v_pending = _make_version(tid, TemplateVersionApprovalStatus.PENDING)
-        t = _make_template(TemplateVisibility.PUBLIC, owner_id=owner, versions=[v_approved, v_pending])
+        t = _make_template(
+            TemplateVisibility.PUBLIC,
+            owner_id=owner,
+            versions=[v_approved, v_pending],
+            publish_requested=False,
+        )
         t.id = tid
         template_service.template_repo.get_by_id.return_value = t
         template_service.template_repo.update.return_value = t
@@ -138,6 +214,9 @@ class TestVisibilityToggleResetsApproval:
             assert v.approved_by_id is None
             assert v.approved_at is None
             assert v.rejection_reason is None
+
+        args, kwargs = template_service.template_repo.update.call_args
+        assert kwargs.get("publish_requested") is False
 
     def test_no_change_when_visibility_stays_same(self, template_service):
         """If the PATCH sets visibility to the same value, nothing should
@@ -286,18 +365,20 @@ class TestDeployPrivateTemplateOwnerOnly:
 
 
 # ---------------------------------------------------------------------------
-# Approve/Reject reject 400 for private templates
-# (Mirror of the public-only path; complements TestApproveRejectVersion.)
+# Approve/Reject — Genuine-private vs. publish_requested
 # ---------------------------------------------------------------------------
 
 
 class TestApproveRejectGate:
-    def test_approve_400_when_template_private(self):
+    def test_approve_400_when_template_genuinely_private(self):
+        """Approve auf einem GENUINELY-privaten Template (kein
+        publish_requested-Wunsch) ist weiterhin verboten — der Begriff
+        Approval ergibt dort keinen Sinn."""
         s = TemplateVersionService(MagicMock())
         s.version_repo = MagicMock()
         s.template_repo = MagicMock()
 
-        priv = _make_template(TemplateVisibility.PRIVATE)
+        priv = _make_template(TemplateVisibility.PRIVATE, publish_requested=False)
         v = _make_version(priv.id, None)
         s.version_repo.get_by_id.return_value = v
         s.template_repo.get_by_id.return_value = priv
@@ -306,15 +387,54 @@ class TestApproveRejectGate:
             s.approve_version(v.id, admin_user_id="admin-1")
         assert "public" in str(exc.value).lower()
 
-    def test_reject_400_when_template_private(self):
+    def test_reject_400_when_template_genuinely_private(self):
         s = TemplateVersionService(MagicMock())
         s.version_repo = MagicMock()
         s.template_repo = MagicMock()
 
-        priv = _make_template(TemplateVisibility.PRIVATE)
+        priv = _make_template(TemplateVisibility.PRIVATE, publish_requested=False)
         v = _make_version(priv.id, None)
         s.version_repo.get_by_id.return_value = v
         s.template_repo.get_by_id.return_value = priv
 
         with pytest.raises(BadRequestException):
             s.reject_version(v.id, admin_user_id="admin-1")
+
+    def test_approve_succeeds_on_private_with_publish_requested(self, mock_db):
+        """Erst-Veröffentlichungs-Pfad: PRIVATE + publish_requested = True
+        ist ein legitimer Approval-Kandidat. Beim Approve flippt der
+        Template-State atomar auf PUBLIC + publish_requested=False."""
+        s = TemplateVersionService(mock_db)
+        s.version_repo = MagicMock()
+        s.template_repo = MagicMock()
+
+        tpl = _make_template(TemplateVisibility.PRIVATE, publish_requested=True)
+        v = _make_version(tpl.id, TemplateVersionApprovalStatus.PENDING)
+        s.version_repo.get_by_id.return_value = v
+        s.template_repo.get_by_id.return_value = tpl
+
+        s.approve_version(v.id, admin_user_id="admin-1")
+
+        assert v.approval_status == TemplateVersionApprovalStatus.APPROVED
+        # Template wurde auf PUBLIC promoted und Wunsch gelöscht.
+        assert tpl.visibility == TemplateVisibility.PUBLIC
+        assert tpl.publish_requested is False
+
+    def test_reject_succeeds_on_private_with_publish_requested(self, mock_db):
+        """Reject auf PRIVATE + publish_requested verwirft den Wunsch:
+        Template bleibt PRIVATE und publish_requested → False."""
+        s = TemplateVersionService(mock_db)
+        s.version_repo = MagicMock()
+        s.template_repo = MagicMock()
+
+        tpl = _make_template(TemplateVisibility.PRIVATE, publish_requested=True)
+        v = _make_version(tpl.id, TemplateVersionApprovalStatus.PENDING)
+        s.version_repo.get_by_id.return_value = v
+        s.template_repo.get_by_id.return_value = tpl
+
+        s.reject_version(v.id, admin_user_id="admin-1", reason="needs work")
+
+        assert v.approval_status == TemplateVersionApprovalStatus.REJECTED
+        assert v.rejection_reason == "needs work"
+        assert tpl.visibility == TemplateVisibility.PRIVATE
+        assert tpl.publish_requested is False

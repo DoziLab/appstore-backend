@@ -156,6 +156,13 @@ class TemplateQueueInfo(BaseModel):
     name: str
     owner_id: str
     visibility: str
+    publish_requested: bool = Field(
+        default=False,
+        description=(
+            "True when this PRIVATE template is awaiting its first approval "
+            "before being promoted to PUBLIC. Admin UI shows a hint."
+        ),
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

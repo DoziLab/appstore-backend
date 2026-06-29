@@ -61,6 +61,16 @@ class TemplateResponse(BaseModel):
     repo_url: str = Field(..., description="Git repository URL")
     icon_url: Optional[str] = Field(None, description="Icon URL or identifier")
     visibility: str = Field(..., description="Template visibility")
+    publish_requested: bool = Field(
+        default=False,
+        description=(
+            "True wenn der Owner das Template als 'öffentlich' angelegt hat, "
+            "aber noch keine Version genehmigt wurde — Template ist aktuell "
+            "PRIVATE und wartet auf die Erst-Freigabe. Sobald ein Admin die "
+            "erste Version approved, flippt visibility auf PUBLIC und dieses "
+            "Flag wird zurückgesetzt."
+        ),
+    )
     versions: Optional[list[TemplateVersionResponse]] = Field(None, description="List of template versions")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
@@ -170,6 +180,16 @@ class GithubImportNewVersion(BaseModel):
     github_url: str = Field(..., description=GITHUB_URL_DESCRIPTION, max_length=1000)
     app_yaml_path: Optional[str] = Field(default=None, max_length=500)
     is_active: bool = Field(default=True, description="Mark the imported version as active")
+    replace_existing: bool = Field(
+        default=False,
+        description=(
+            "Wenn der `app.version`-String im neuen Import bereits existiert: "
+            "True → bestehende Version-Row (inkl. Files) löschen und durch den "
+            "neuen Import ersetzen (blockiert wenn aktive Deployments hängen). "
+            "False (Default) → Backend antwortet mit VERSION_ALREADY_EXISTS, "
+            "Owner soll im Repo bumpen oder explizit ersetzen wählen."
+        ),
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -177,6 +197,7 @@ class GithubImportNewVersion(BaseModel):
                 "github_url": "https://github.com/dozilab/templates/tree/v1.1",
                 "app_yaml_path": "postgres/app.yaml",
                 "is_active": True,
+                "replace_existing": False,
             }
         }
     )
