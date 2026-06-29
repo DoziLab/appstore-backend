@@ -138,6 +138,7 @@ class DeploymentService:
         # Get or create Course entry based on keycloak_course_id
         # The course_id from frontend is the Keycloak group ID
         from src.models.course import Course
+        from src.models.course_group import CourseGroup
         keycloak_course_id = deployment_data.course_id
 
         course = self.db.query(Course).filter(
@@ -145,13 +146,37 @@ class DeploymentService:
         ).first()
 
         if not course:
-            # Auto-create course entry with deployment name as course name
             course = Course(
                 name=deployment_data.name,
                 keycloak_course_id=keycloak_course_id
             )
             self.db.add(course)
-            self.db.flush()  # Get the ID without committing
+            self.db.flush()
+
+        # Get or create CourseGroup rows for every group in the stack assignments.
+        # This ensures group_id is always stamped onto credential rows so students
+        # can see their credentials via /api/v1/student/, regardless of whether the
+        # wizard already passed course_group_id (first deployment = no pre-existing rows).
+        group_name_to_id: dict[str, str] = {
+            g.name: g.id
+            for g in self.db.query(CourseGroup).filter(
+                CourseGroup.course_id == str(course.id)
+            ).all()
+        }
+        for sa in deployment_data.stack_assignments:
+            for group in sa.groups:
+                if group.group_name not in group_name_to_id:
+                    new_group = CourseGroup(
+                        course_id=str(course.id),
+                        name=group.group_name,
+                    )
+                    self.db.add(new_group)
+                    self.db.flush()
+                    group_name_to_id[group.group_name] = new_group.id
+                # Backfill course_group_id so deploy_tasks stamps the FK onto
+                # DeploymentInstanceAccess rows — even on the first deployment.
+                if not group.course_group_id:
+                    group.course_group_id = group_name_to_id[group.group_name]
 
         # Validate the target OpenStack project: must belong to the teacher
         # submitting this request. ``teacher_user`` was already resolved
