@@ -109,6 +109,13 @@ class DeploymentCredentialService:
                     "access_type": AccessType.DATABASE,
                     "username": cred.get("email") or cred.get("db_user") or cred.get("username"),
                     "password": cred.get("password"),
+                    # course_groups.id stamped by deploy_tasks from the
+                    # per-group ``course_group_id`` carried through
+                    # ``generated["deployment_groups"]``. Without this,
+                    # student self-service would never see app credentials
+                    # (postgres/pgAdmin/...) because the filter requires a
+                    # non-NULL group_id matching the student's membership.
+                    "group_id": cred.get("group_id"),
                     "connection_url": pgadmin_url if is_pgadmin else None,
                     "port": 80 if is_pgadmin else None,
                 })
@@ -119,6 +126,9 @@ class DeploymentCredentialService:
                     "access_type": AccessType.DATABASE,
                     "username": app_admin.get("email") or app_admin.get("db_user") or app_admin.get("username"),
                     "password": app_admin.get("password"),
+                    # Admin (teacher) app credentials: group_id intentionally
+                    # NULL — mirrors the SSH admin block. Lecturer-only.
+                    "group_id": None,
                     "connection_url": pgadmin_url if is_pgadmin else None,
                     "port": 80 if is_pgadmin else None,
                 })

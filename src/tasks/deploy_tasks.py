@@ -251,31 +251,102 @@ def deploy_stack(self, deployment_id: str) -> dict:
                 )
 
                 try:
-                    # Build user_json from `generated` so DB passwords match what Ansible sets
+                    # Build user_json from `generated` so DB passwords match what Ansible sets.
+                    #
+                    # Two-section layout:
+                    #   - ``instance.credentials`` / ``instance.admin_credentials``:
+                    #     SSH (Linux) credentials. Only emitted for templates whose
+                    #     app.yaml declares ``per_group.linux``; teacher always has
+                    #     an auto-generated linux block (admin key), so the admin
+                    #     SSH row is written for every template.
+                    #   - ``applications[]``: every NON-linux credential type
+                    #     declared in app.yaml (postgres, pgadmin, web_url, …).
+                    #     One ``applications`` entry per credential type, with
+                    #     a ``credentials`` list for the groups and an
+                    #     ``admin_credentials`` block for the teacher. Without
+                    #     this, templates like ansible-postgres-group-db that
+                    #     declare only ``per_group.postgres`` + ``per_group.pgadmin``
+                    #     would produce zero student-visible access rows.
+                    NON_APP_KEYS = {
+                        "username", "email", "group_name", "group_index",
+                        "course_group_id", "students", "linux",
+                    }
+
+                    group_entries = generated.get("deployment_groups", []) or []
+                    teacher_entry = generated.get("teacher", {}) or {}
+
+                    # SSH rows — same shape as before. Filter on linux.password
+                    # is preserved: templates without per_group.linux simply
+                    # don't get SSH access rows for their groups, which is
+                    # correct (those students log into the app, not the VM).
+                    ssh_credentials = [
+                        {
+                            "username": s["linux"]["username"],
+                            "password": s["linux"]["password"],
+                            "ssh_private_key": (s.get("linux", {}).get("ssh_key") or {}).get("private_key"),
+                            # course_groups.id this group corresponds to
+                            # (passed in from the wizard via GroupInfo.course_group_id).
+                            # Stamped onto DeploymentInstanceAccess.group_id so
+                            # student self-service can filter on it. None when
+                            # the wizard didn't supply it — row stays NULL and
+                            # remains invisible to students.
+                            "group_id": s.get("course_group_id"),
+                        }
+                        for s in group_entries
+                        if s.get("linux", {}).get("password")
+                    ]
+                    ssh_admin = (
+                        {
+                            "username": teacher_entry["linux"]["username"],
+                            "password": teacher_entry["linux"]["password"],
+                            "ssh_private_key": (teacher_entry["linux"].get("ssh_key") or {}).get("private_key"),
+                        }
+                        if teacher_entry.get("linux", {}).get("password")
+                        else None
+                    )
+
+                    # App-credentials section — collected per credential type
+                    # by union of keys across all group entries and the teacher
+                    # entry (minus the bookkeeping keys above and ``linux``,
+                    # which has its own SSH section).
+                    app_cred_types: list[str] = []
+                    for source in (*group_entries, teacher_entry):
+                        for key in source.keys():
+                            if key in NON_APP_KEYS or key in app_cred_types:
+                                continue
+                            app_cred_types.append(key)
+
+                    applications = []
+                    for cred_type in app_cred_types:
+                        group_creds = []
+                        for s in group_entries:
+                            cred = s.get(cred_type)
+                            if not isinstance(cred, dict) or not cred.get("password"):
+                                continue
+                            group_creds.append({
+                                **cred,
+                                "group_id": s.get("course_group_id"),
+                            })
+                        admin_cred = teacher_entry.get(cred_type)
+                        admin_block = (
+                            admin_cred
+                            if isinstance(admin_cred, dict) and admin_cred.get("password")
+                            else None
+                        )
+                        if not group_creds and not admin_block:
+                            continue
+                        applications.append({
+                            "name": cred_type,
+                            "credentials": group_creds,
+                            "admin_credentials": admin_block,
+                        })
+
                     credentials_for_db = {
                         "instance": {
-                            "credentials": [
-                                {
-                                    "username": s["linux"]["username"],
-                                    "password": s["linux"]["password"],
-                                    "ssh_private_key": (s.get("linux", {}).get("ssh_key") or {}).get("private_key"),
-                                    # course_groups.id this group corresponds to
-                                    # (passed in from the wizard via GroupInfo.course_group_id).
-                                    # Stamped onto DeploymentInstanceAccess.group_id so
-                                    # student self-service can filter on it. None when
-                                    # the wizard didn't supply it — row stays NULL and
-                                    # remains invisible to students.
-                                    "group_id": s.get("course_group_id"),
-                                }
-                                for s in generated.get("deployment_groups", [])
-                                if s.get("linux", {}).get("password")
-                            ],
-                            "admin_credentials": {
-                                "username": generated["teacher"]["linux"]["username"],
-                                "password": generated["teacher"]["linux"]["password"],
-                                "ssh_private_key": (generated["teacher"]["linux"].get("ssh_key") or {}).get("private_key"),
-                            } if generated.get("teacher", {}).get("linux", {}).get("password") else None,
+                            "credentials": ssh_credentials,
+                            "admin_credentials": ssh_admin,
                         },
+                        "applications": applications,
                     }
                     # Bind the returned DeploymentInstance so the post-Ansible
                     # activation-link fetch below can append rows to it. None
