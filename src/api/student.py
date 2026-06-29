@@ -216,6 +216,14 @@ async def get_student_credentials(
                         ssh_private_key=a.ssh_private_key,
                         connection_url=a.connection_url,
                         port=a.port,
+                        # Surface the group attribution so the UI can label
+                        # which credentials belong to which group — a student
+                        # may be a member of more than one course group on the
+                        # same deployment (multi-group lab assignments), and
+                        # without these fields all rows look identical in the
+                        # UI even though they target different group accounts.
+                        group_id=a.group_id,
+                        group_name=a.group.name if a.group else None,
                     )
                     for a in visible_accesses
                 ],
