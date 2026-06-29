@@ -16,8 +16,6 @@ import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from src.models.deployment import DeploymentStatus
 
 
