@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.core.exceptions import BadRequestException, ForbiddenException
+from src.core.exceptions import ForbiddenException
 from src.models.template import Template, TemplateVisibility
 from src.models.template_version import TemplateVersion, TemplateVersionApprovalStatus
 from src.services.template_version_service import TemplateVersionService
@@ -53,7 +53,9 @@ class TestActivateVersionSwitch:
         s.template_repo = MagicMock()
 
         tpl = _tpl()
-        v_old = _ver(tpl.id, "2.0.0", is_active=True)
+        # Ältere Version existiert bereits als die aktive — wird im Service
+        # über deactivate_other_versions implizit deaktiviert.
+        _ver(tpl.id, "2.0.0", is_active=True)
         v_new = _ver(tpl.id, "2.1.0", is_active=False)
         s.version_repo.get_by_id.return_value = v_new
         s.template_repo.get_by_id.return_value = tpl
@@ -76,7 +78,9 @@ class TestActivateVersionSwitch:
 
         tpl = _tpl()
         v_old = _ver(tpl.id, "2.0.0", is_active=False)
-        v_new = _ver(tpl.id, "2.1.0", is_active=True)
+        # Aktuell aktive Version, die durch das Activate der älteren Version
+        # implizit deaktiviert wird.
+        _ver(tpl.id, "2.1.0", is_active=True)
         s.version_repo.get_by_id.return_value = v_old
         s.template_repo.get_by_id.return_value = tpl
         s.version_repo.update.return_value = v_old

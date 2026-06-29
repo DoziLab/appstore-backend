@@ -8,11 +8,8 @@ wird verworfen.
 Diese Tests decken nur die Service-Logik ab (Unit-Level, mit MagicMock-DB).
 Die End-to-End-Validierung läuft als Frontend-Smoke-Test bzw. im API-Layer.
 """
-from datetime import datetime, timezone
 from unittest.mock import MagicMock
 from uuid import uuid4
-
-import pytest
 
 from src.models.template import Template, TemplateVisibility
 from src.models.template_version import TemplateVersion, TemplateVersionApprovalStatus
