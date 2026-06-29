@@ -1,7 +1,7 @@
 """cascade_delete_template_versions
 
 Revision ID: d5e8c2a91b34
-Revises: a7c4f2b91d34
+Revises: 034d40e1dad3
 Create Date: 2026-06-29 12:00:00.000000
 
 Make `template_versions.template_id` and `template_version_files.template_version_id`
@@ -14,7 +14,7 @@ from alembic import op
 
 
 revision: str = 'd5e8c2a91b34'
-down_revision: Union[str, Sequence[str], None] = 'a7c4f2b91d34'
+down_revision: Union[str, Sequence[str], None] = '034d40e1dad3'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
