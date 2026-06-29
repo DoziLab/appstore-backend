@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Optional, Union
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -7,7 +8,12 @@ from src.repositories.deployment_repository import DeploymentRepository
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
 from src.services.deployment_log_service import DeploymentLogService
 from src.services.openstack_heat_service import HeatStackService
-from src.schemas.deployment import DeploymentCreate
+from src.schemas.deployment import DeploymentCreate, StackAssignment
+from src.models.course import Course
+from src.models.course_group import CourseGroup
+from src.models.course_member import CourseMember
+from src.models.group_member import GroupMember
+from src.models.user import User as UserModel
 from src.models.deployment import Deployment, DeploymentStatus
 from src.models.deployment_log import DeploymentLogEventType, DeploymentLogLevel
 from src.models.template_version import TemplateVersion
@@ -18,6 +24,9 @@ from src.core.exceptions import ForbiddenException
 from src.services.template_version_file_service import TemplateVersionFileService
 from src.tasks.deploy_tasks import deploy_stack
 from src.utils.deployment_expiry import compute_expiry, compute_extension, utcnow
+
+
+logger = logging.getLogger(__name__)
 
 
 class DeploymentService:
@@ -70,7 +79,6 @@ class DeploymentService:
         # This is needed for both the private-template owner check below AND
         # the OpenStack-project ownership validation further down — so we do
         # the lookup once here and reuse `teacher_user`.
-        from src.models.user import User as UserModel
         teacher_user = self.db.query(UserModel).filter(
             UserModel.external_id == deployment_data.teacher.id
         ).first()
@@ -137,7 +145,6 @@ class DeploymentService:
 
         # Get or create Course entry based on keycloak_course_id
         # The course_id from frontend is the Keycloak group ID
-        from src.models.course import Course
         keycloak_course_id = deployment_data.course_id
 
         course = self.db.query(Course).filter(
@@ -152,6 +159,24 @@ class DeploymentService:
             )
             self.db.add(course)
             self.db.flush()  # Get the ID without committing
+
+        # Materialize the membership graph the wizard implied so students see
+        # their deployments. The /api/v1/student/* read path inner-joins
+        # CourseMember → GroupMember → CourseGroup → DeploymentInstanceAccess,
+        # so every student in the payload must end up with rows in all three.
+        # See appstore-backend#169.
+        #
+        # Done up-front (synchronously, before the Celery task fires) so that
+        # by the time `persist_credentials` stamps `course_group_id` onto
+        # `DeploymentInstanceAccess.group_id`, the CourseGroup row it points
+        # at is guaranteed to exist. Also lets us write the resolved
+        # `course_group_id` back into the `stack_assignments` payload that's
+        # persisted in `deployment_parameters` — so the credential task sees
+        # the FK regardless of whether the frontend bothered to send it.
+        stack_assignments_for_storage = self._upsert_course_membership_graph(
+            course=course,
+            stack_assignments=deployment_data.stack_assignments,
+        )
 
         # Validate the target OpenStack project: must belong to the teacher
         # submitting this request. ``teacher_user`` was already resolved
@@ -169,11 +194,14 @@ class DeploymentService:
                 "OpenStack project does not belong to teacher"
             )
 
-        # Store complete deployment info as JSON
+        # Store complete deployment info as JSON. The stack_assignments here
+        # carry the *resolved* `course_group_id` for every group, regardless
+        # of what the wizard sent — so the credential persistence task always
+        # has a non-null FK to stamp onto `DeploymentInstanceAccess.group_id`.
         deployment_parameters = json.dumps({
             "template_name": template.name,
             "parameters": provided,
-            "stack_assignments": [sa.model_dump() for sa in deployment_data.stack_assignments],
+            "stack_assignments": stack_assignments_for_storage,
             "teacher": deployment_data.teacher.model_dump()
         })
 
@@ -218,6 +246,171 @@ class DeploymentService:
         deploy_stack.delay(str(deployment.id))
 
         return deployment
+
+    def _upsert_course_membership_graph(
+        self,
+        course: Course,
+        stack_assignments: list[StackAssignment],
+    ) -> list[dict]:
+        """Idempotently materialize CourseMember / CourseGroup / GroupMember
+        rows for every student in the wizard payload.
+
+        Without this the `/api/v1/student/*` read path returns an empty list
+        because its inner join through CourseMember → GroupMember →
+        CourseGroup finds no matches. See appstore-backend#169.
+
+        The function also resolves a `course_group_id` for every group in the
+        payload (creating the CourseGroup if needed, matching by
+        ``(course_id, name)``) and returns a fresh list of stack_assignment
+        dicts with that id stamped onto each ``GroupInfo.course_group_id``.
+        That stamped list is what gets persisted in `deployment_parameters`,
+        so the credential task downstream stamps a non-null FK regardless of
+        what the frontend originally sent.
+
+        Idempotent end-to-end: every lookup is by stable natural key
+        (``users.external_id``, ``(course_id, name)``,
+        ``(group_id, course_member_id)``) and re-running the same payload is
+        a no-op.
+
+        Best-effort by design: a failure here logs and falls back to the
+        payload as-is. The deployment itself still goes through — the
+        lecturer's flow is unaffected — but students for that subtree may
+        not see their credentials until the row is created manually or the
+        deploy is retried. A hard error would punish the lecturer for a
+        state-bookkeeping problem they can't fix.
+        """
+        out: list[dict] = []
+        # Savepoint so a failure in the membership graph rolls back ONLY the
+        # rows added below, not the Course row the caller just flushed.
+        savepoint = self.db.begin_nested()
+        try:
+            for stack in stack_assignments:
+                stack_dict = stack.model_dump()
+                for idx, group in enumerate(stack.groups):
+                    course_group = self._get_or_create_course_group(
+                        course_id=str(course.id),
+                        name=group.group_name,
+                        hint_id=group.course_group_id,
+                    )
+                    for student in group.students:
+                        course_member = self._get_or_create_course_member(
+                            course_id=str(course.id),
+                            keycloak_user_id=student.id,
+                        )
+                        if course_member is None:
+                            # User has never logged in → no `users` row yet.
+                            # Skip silently: when the student first logs in
+                            # the row will be created by UserSyncService but
+                            # the membership graph won't backfill on its own.
+                            # That's an existing gap; we don't widen it here.
+                            continue
+                        self._get_or_create_group_member(
+                            group_id=course_group.id,
+                            course_member_id=course_member.id,
+                        )
+                    # Stamp resolved id back onto the dict we'll persist so
+                    # the credential task sees the FK even if the frontend
+                    # sent null.
+                    stack_dict["groups"][idx]["course_group_id"] = course_group.id
+                out.append(stack_dict)
+            savepoint.commit()
+        except Exception as exc:
+            # Don't fail the deployment — log and fall back to the raw payload.
+            # Worst case: students don't see their credentials until a retry
+            # or manual membership add. Same failure mode as before this fix.
+            savepoint.rollback()
+            logger.warning(
+                "Failed to materialize course membership graph for course %s: %s",
+                course.id,
+                exc,
+                exc_info=True,
+            )
+            return [sa.model_dump() for sa in stack_assignments]
+        return out
+
+    def _get_or_create_course_group(
+        self,
+        course_id: str,
+        name: str,
+        hint_id: Optional[str] = None,
+    ) -> CourseGroup:
+        """Idempotent CourseGroup upsert keyed on ``(course_id, name)``.
+
+        If the frontend already sent a ``course_group_id`` that points to a
+        row of THIS course, trust it (covers the case where the lecturer
+        renamed a group in the UI before deploying — we don't want to
+        spawn a duplicate). Otherwise match by name; create if missing.
+        """
+        if hint_id:
+            existing = self.db.query(CourseGroup).filter(
+                CourseGroup.id == hint_id,
+                CourseGroup.course_id == course_id,
+            ).first()
+            if existing:
+                return existing
+        existing = self.db.query(CourseGroup).filter(
+            CourseGroup.course_id == course_id,
+            CourseGroup.name == name,
+        ).first()
+        if existing:
+            return existing
+        cg = CourseGroup(course_id=course_id, name=name)
+        self.db.add(cg)
+        self.db.flush()
+        return cg
+
+    def _get_or_create_course_member(
+        self,
+        course_id: str,
+        keycloak_user_id: str,
+    ) -> Optional[CourseMember]:
+        """Idempotent CourseMember upsert keyed on ``(user_id, course_id)``.
+
+        Returns None when the student has no `users` row yet — they've never
+        logged in, so we can't FK to them. Surfaces as a debug log; the
+        deployment still proceeds for the other students.
+        """
+        user = self.db.query(UserModel).filter(
+            UserModel.external_id == keycloak_user_id
+        ).first()
+        if not user:
+            logger.debug(
+                "Skipping CourseMember upsert for unknown Keycloak user %s "
+                "(no local users row — student has never logged in)",
+                keycloak_user_id,
+            )
+            return None
+        existing = self.db.query(CourseMember).filter(
+            CourseMember.user_id == user.id,
+            CourseMember.course_id == course_id,
+        ).first()
+        if existing:
+            # Re-activate a soft-left member rather than creating a duplicate.
+            if existing.left_at is not None:
+                existing.left_at = None
+                self.db.flush()
+            return existing
+        cm = CourseMember(user_id=user.id, course_id=course_id)
+        self.db.add(cm)
+        self.db.flush()
+        return cm
+
+    def _get_or_create_group_member(
+        self,
+        group_id: str,
+        course_member_id: str,
+    ) -> GroupMember:
+        """Idempotent GroupMember upsert keyed on ``(group_id, course_member_id)``."""
+        existing = self.db.query(GroupMember).filter(
+            GroupMember.group_id == group_id,
+            GroupMember.course_member_id == course_member_id,
+        ).first()
+        if existing:
+            return existing
+        gm = GroupMember(group_id=group_id, course_member_id=course_member_id)
+        self.db.add(gm)
+        self.db.flush()
+        return gm
 
     def extend_deployment(self, deployment_id: str, runtime_months: int) -> Deployment:
         """Push ``expires_at`` out by ``runtime_months`` months.
