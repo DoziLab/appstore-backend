@@ -2,7 +2,7 @@
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -21,6 +21,18 @@ engine = create_engine(
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
 )
+
+
+# SQLite ignores ON DELETE CASCADE unless foreign_keys pragma is enabled per
+# connection — needed for the cascade-delete tests to mirror prod (Postgres)
+# behavior.
+@event.listens_for(engine, "connect")
+def _sqlite_enable_fks(dbapi_connection, _conn_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -376,5 +388,73 @@ class TestDeleteTemplate:
     def test_delete_template_invalid_uuid(self, client):
         """Test deleting template with invalid UUID."""
         response = client.delete("/api/v1/templates/not-a-uuid")
-        
+
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    def test_delete_template_with_versions_cascades(self, client, db_session, sample_template):
+        """Deleting a template with versions removes the versions too (cascade)."""
+        from src.models.template_version import TemplateVersion
+
+        version = TemplateVersion(
+            template_id=sample_template.id,
+            version="1.0.0",
+            git_commit_sha="abc123",
+            is_active=True,
+        )
+        db_session.add(version)
+        db_session.commit()
+        version_id = version.id
+
+        response = client.delete(f"/api/v1/templates/{sample_template.id}")
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+
+        # Versions should be gone too
+        assert db_session.query(TemplateVersion).filter_by(id=version_id).first() is None
+
+    def test_delete_template_with_deployments_returns_400(
+        self, client, db_session, sample_template, mock_user
+    ):
+        """Deleting a template whose versions still have deployments returns 400."""
+        from src.models.template_version import TemplateVersion
+        from src.models.deployment import Deployment, DeploymentStatus
+        from src.models.course import Course
+        from src.models.openstack_project import OpenstackProject
+
+        version = TemplateVersion(
+            template_id=sample_template.id,
+            version="1.0.0",
+            git_commit_sha="abc123",
+            is_active=True,
+        )
+        db_session.add(version)
+        db_session.commit()
+
+        # Minimal Course + OpenstackProject so the Deployment FK constraints
+        # are satisfied (we don't care about their content).
+        course = Course(id="course-1", keycloak_course_id="kc-course-1", name="Test Course")
+        os_project = OpenstackProject(
+            id="osp-1",
+            owner_user_id=mock_user.id,
+            openstack_project_id="ks-1",
+            openstack_project_name="test-osp",
+            auth_url="https://example.com",
+            username="user",
+            password="pw",
+            region_name="region1",
+        )
+        db_session.add_all([course, os_project])
+        db_session.commit()
+
+        deployment = Deployment(
+            name="test-deployment",
+            template_version_id=version.id,
+            course_id=course.id,
+            openstack_project_id=os_project.id,
+            status=DeploymentStatus.RUNNING,
+        )
+        db_session.add(deployment)
+        db_session.commit()
+
+        response = client.delete(f"/api/v1/templates/{sample_template.id}")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "deployment" in response.json()["detail"].lower()

@@ -34,7 +34,11 @@ class TemplateVersionFile(Base):
     )
     
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    template_version_id: Mapped[str] = mapped_column(String(36), ForeignKey("template_versions.id"), nullable=False)
+    template_version_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("template_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     file_type: Mapped[FileType] = mapped_column(
         SQLEnum(FileType),

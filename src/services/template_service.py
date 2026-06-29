@@ -6,7 +6,8 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from src.models.template import Template, TemplateVisibility
-from src.models.template_version import TemplateVersionApprovalStatus
+from src.models.template_version import TemplateVersion, TemplateVersionApprovalStatus
+from src.models.deployment import Deployment
 from src.repositories.template_repository import TemplateRepository
 from src.schemas.template import TemplateCreate, TemplateUpdate
 from src.core.exceptions import NotFoundException, ForbiddenException, BadRequestException
@@ -290,9 +291,12 @@ class TemplateService:
         user_id: str,
         is_admin: bool = False
     ) -> None:
-        """Delete a template.
+        """Delete a template and all its versions (cascades via FK).
 
-        Only template owners or admins can delete templates.
+        Only template owners or admins can delete templates. If any version of
+        the template still has deployments referencing it, deletion is rejected
+        with a 400 — otherwise the database FK constraint from `deployments`
+        would surface as an opaque 500.
 
         Args:
             template_id: Template ID
@@ -302,6 +306,7 @@ class TemplateService:
         Raises:
             NotFoundException: If template not found
             ForbiddenException: If user is not owner or admin
+            BadRequestException: If versions still have deployments
         """
         template = self.get_template(template_id, user_id=user_id, is_admin=is_admin)
 
@@ -318,27 +323,30 @@ class TemplateService:
             )
             raise ForbiddenException("You do not have permission to delete this template")
 
-        try:
-            uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
-            success = self.template_repo.delete(uuid_id)
-            if not success:
-                raise NotFoundException(f"Template with ID {template_id} not found")
+        # Pre-check: deployments would block the FK cascade with an opaque
+        # IntegrityError → surface a clear 400 instead.
+        deployment_count = (
+            self.db.query(Deployment)
+            .join(TemplateVersion, Deployment.template_version_id == TemplateVersion.id)
+            .filter(TemplateVersion.template_id == str(template_id))
+            .count()
+        )
+        if deployment_count > 0:
+            raise BadRequestException(
+                f"Cannot delete template: {deployment_count} deployment(s) still reference its versions. "
+                "Remove those deployments first."
+            )
 
-            logger.info(
-                "Template deleted",
-                extra={
-                    "template_id": str(template_id),
-                    "template_name": template.name,
-                    "deleted_by": user_id
-                }
-            )
-        except Exception as e:
-            logger.error(
-                f"Error deleting template: {e}",
-                extra={
-                    "template_id": str(template_id),
-                    "user_id": user_id
-                },
-                exc_info=True
-            )
-            raise
+        uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
+        success = self.template_repo.delete(uuid_id)
+        if not success:
+            raise NotFoundException(f"Template with ID {template_id} not found")
+
+        logger.info(
+            "Template deleted",
+            extra={
+                "template_id": str(template_id),
+                "template_name": template.name,
+                "deleted_by": user_id
+            }
+        )
