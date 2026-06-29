@@ -726,11 +726,14 @@ class TestRejectVersionWithReason:
     def pending_version(self, db_session, public_approved_template):
         from src.models.template_version import TemplateVersionApprovalStatus
 
+        # Auf demselben PUBLIC-Template gibt es schon v1.0.0 APPROVED — wir
+        # legen v1.1.0 PENDING an, damit der UniqueConstraint auf
+        # (template_id, version) nicht stört.
         v = TemplateVersion(
             template_id=public_approved_template.id,
-            version="1.0.0",
+            version="1.1.0",
             git_commit_sha="reject-test-sha",
-            is_active=True,
+            is_active=False,
             approval_status=TemplateVersionApprovalStatus.PENDING,
         )
         db_session.add(v)

@@ -4,7 +4,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from sqlalchemy import String, DateTime, Boolean, ForeignKey, Text, Enum as SQLEnum
+from sqlalchemy import String, DateTime, Boolean, ForeignKey, Text, Enum as SQLEnum, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
@@ -27,6 +27,19 @@ class TemplateVersion(Base):
     """Template Version database model."""
 
     __tablename__ = "template_versions"
+    __table_args__ = (
+        # Pro Template darf jede Versionsnummer nur einmal vorkommen.
+        # Der UI-Pfad „neue Versionen importieren" landete sonst bei
+        # ``2.0.0, 2.0.0, 2.0.0, …`` für Repos, die `app.yaml.app.version`
+        # nicht bumpen. Validierung läuft zusätzlich im Service-Layer
+        # (``src/utils/version_validator.py``), damit der Owner eine
+        # erklärende Fehlermeldung statt eines IntegrityError sieht.
+        UniqueConstraint(
+            'template_id',
+            'version',
+            name='uq_template_versions_template_id_version',
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     template_id: Mapped[str] = mapped_column(

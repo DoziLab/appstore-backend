@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
-from sqlalchemy import String, DateTime, Enum as SQLEnum, Text, ForeignKey
+from sqlalchemy import String, DateTime, Enum as SQLEnum, Text, ForeignKey, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base
@@ -33,6 +33,19 @@ class Template(Base):
     visibility: Mapped[TemplateVisibility] = mapped_column(
         SQLEnum(TemplateVisibility),
         default=TemplateVisibility.PRIVATE
+    )
+    # Owner-Wunsch „bitte veröffentlichen, sobald erste Version approved ist".
+    # Wir flippen das Template NICHT direkt auf PUBLIC, wenn der Owner beim
+    # Erstellen „öffentlich" wählt — stattdessen bleibt es PRIVATE und dieses
+    # Flag merkt sich den Veröffentlichungswunsch. Beim ersten admin-approve
+    # einer Version flippt die Service-Logik atomar `visibility → PUBLIC` und
+    # `publish_requested → False`. Bei reject wird der Wunsch verworfen;
+    # Owner muss erneut über PATCH `visibility: public` anstoßen.
+    publish_requested: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        server_default="false",
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

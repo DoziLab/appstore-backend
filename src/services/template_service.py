@@ -229,15 +229,27 @@ class TemplateService:
         
         try:
             # Visibility transition — owner-or-admin (already enforced above for
-            # the whole update payload). The transition itself resets the per-
-            # version approval state so the two views (marketplace vs. private)
-            # don't get mixed up:
-            #   private → public:  any version that was unset (NULL) flips to
-            #                      PENDING, awaiting admin review.
-            #   public → private:  every version's approval state is cleared
-            #                      (NULL) plus approved_by/at/reason are wiped.
+            # the whole update payload). Das Modell ist „Veröffentlichungswunsch
+            # statt Direktflip":
+            #
+            #   private → public, keine APPROVED Version vorhanden:
+            #       wir lassen das Template als PRIVATE stehen und setzen
+            #       ``publish_requested = True``. Das Approval-Flow startet:
+            #       jede ``approval_status=None``-Version flippt auf PENDING
+            #       und landet damit in der Admin-Queue. Erst beim ersten
+            #       erfolgreichen approve_version() flippt der Template-State
+            #       atomar auf PUBLIC.
+            #
+            #   private → public, mindestens eine APPROVED Version:
+            #       der Approval-Umweg ist hier nicht nötig (der Inhalt ist
+            #       schon admin-freigegeben). Wir flippen direkt auf PUBLIC.
+            #
+            #   public → private:
+            #       jeder Versions-Approval-State wird gewischt (NULL +
+            #       Metadaten leer). ``publish_requested`` wird ebenfalls
+            #       zurückgesetzt — ein vorheriger Wunsch ist obsolet, weil
+            #       der Owner gerade explizit auf privat schaltet.
             if "visibility" in update_data:
-                # Validate visibility value
                 try:
                     new_visibility = TemplateVisibility(update_data["visibility"])
                 except ValueError:
@@ -245,14 +257,26 @@ class TemplateService:
 
                 if new_visibility != template.visibility:
                     if new_visibility == TemplateVisibility.PUBLIC:
-                        # private → public: untyped versions enter the approval flow.
-                        # Versions that already carry an explicit state (legacy
-                        # data, or someone toggled back-and-forth) keep theirs.
-                        for v in template.versions:
-                            if v.approval_status is None:
-                                v.approval_status = TemplateVersionApprovalStatus.PENDING
+                        has_approved_version = any(
+                            v.approval_status == TemplateVersionApprovalStatus.APPROVED
+                            for v in template.versions
+                        )
+                        if has_approved_version:
+                            # Direkter Flip; ``publish_requested`` ggf. mit zurücksetzen.
+                            update_data["publish_requested"] = False
+                        else:
+                            # Veröffentlichungswunsch statt Direktflip — wir
+                            # blocken die ``visibility``-Änderung im Update,
+                            # damit das Template PRIVATE bleibt, und setzen
+                            # stattdessen das Wunsch-Flag.
+                            del update_data["visibility"]
+                            update_data["publish_requested"] = True
+                            for v in template.versions:
+                                if v.approval_status is None:
+                                    v.approval_status = TemplateVersionApprovalStatus.PENDING
                     else:
-                        # public → private: approval state is no longer meaningful.
+                        # public → private: Approval-State wischen, Wunsch löschen.
+                        update_data["publish_requested"] = False
                         for v in template.versions:
                             v.approval_status = None
                             v.approved_by_id = None

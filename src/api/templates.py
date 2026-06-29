@@ -213,15 +213,19 @@ async def import_template_from_github(
 ):
     """Create a new template plus its first version from a GitHub repository.
 
-    The template is always created with `visibility=private` (matching
-    `POST /templates`); admins can promote to public later via PATCH. The first
-    version follows the standard per-version approval rules.
+    Sichtbarkeitsregel:
+    - ``visibility=private`` (Default) → Template ist sofort owner-only nutzbar,
+      kein Approval-Flow.
+    - ``visibility=public`` → Template wird ALS PRIVATE + ``publish_requested=True``
+      persistiert; die erste Version geht durch den Admin-Approval-Flow. Erst
+      beim ersten approve_version() flippt das Template atomar auf PUBLIC.
+      So sieht der Owner sofort „wartet auf Erst-Freigabe" statt eines
+      fälschlich-öffentlichen Templates ohne approved Version. Admin-Caller
+      umgehen den Flow (Auto-Approval + Direkt-Promotion).
 
-    For private repos the calling user must have linked our GitHub App via
-    `POST /auth/github/install`. Public repos work without an installation
-    (subject to GitHub's 60/h unauthenticated rate limit). The endpoint
-    resolves the repo's commit SHA, fetches `app.yaml`, and persists every
-    file in the same folder as a new Template + TemplateVersion + files.
+    Für private Repos muss der Caller unsere GitHub App via
+    ``POST /auth/github/install`` verbunden haben. Public Repos funktionieren
+    auch ohne Installation (GitHub-API 60/h-Rate-Limit).
     """
     service = GithubImportService(db)
     template = service.import_to_new_template(
@@ -273,6 +277,7 @@ async def import_new_version_from_github(
         is_active=payload.is_active,
         user_id=current_user["user_id"],
         user_roles=current_user.get("roles", []),
+        replace_existing=payload.replace_existing,
     )
 
     version_response = TemplateVersionResponse.model_validate(version)

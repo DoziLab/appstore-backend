@@ -34,6 +34,7 @@ import yaml
 from sqlalchemy.orm import Session
 
 from src.core.exceptions import BadRequestException, NotFoundException, ForbiddenException
+from src.models.deployment import Deployment
 from src.models.template import Template, TemplateVisibility
 from src.models.template_version import TemplateVersion, TemplateVersionApprovalStatus
 from src.models.template_version_file import TemplateVersionFile, FileType
@@ -43,6 +44,7 @@ from src.repositories.template_version_repository import TemplateVersionReposito
 from src.repositories.template_version_file_repository import TemplateVersionFileRepository
 from src.services.github_app_service import GITHUB_API_VERSION, GithubAppService
 from src.services.github_installation_service import GithubInstallationService
+from src.utils import version_validator
 from src.utils.app_manifest_parser import AppManifestParser
 
 logger = logging.getLogger(__name__)
@@ -339,10 +341,27 @@ class GithubImportService:
     ) -> Template:
         """Create a brand-new Template + first TemplateVersion populated from GitHub.
 
-        ``visibility`` defaults to PRIVATE. Pass PUBLIC explicitly to make the
-        template marketplace-visible; the first version then enters the
-        per-version approval flow (PENDING unless caller is admin).
+        ``visibility`` defaults to PRIVATE. Wird PUBLIC explizit übergeben,
+        landet das Template als PRIVATE + ``publish_requested=True`` in der DB:
+        Es bleibt bis zur ersten admin-Genehmigung versteckt und flippt beim
+        ``approve_version()`` atomar auf PUBLIC. So sieht der Owner sofort
+        „wartet auf Erst-Freigabe" statt eines fälschlich-öffentlichen
+        Templates ohne approved Version.
+
+        Admin-Caller umgehen den Wunsch-Umweg nicht — die admin-spezifische
+        Auto-Approval setzt direkt approval_status=APPROVED auf der Version
+        und löst dadurch im approve_version()-Pfad den Flip aus. Hier in
+        ``import_to_new_template`` wird approve_version() aber NICHT
+        aufgerufen, daher müssen wir den Flip für Admin-Caller hier explizit
+        machen.
         """
+        # Wenn der Caller PUBLIC will: Template als PRIVATE + publish_requested
+        # anlegen. ``_initial_approval`` erkennt das (via publish_requested) und
+        # vergibt PENDING/APPROVED genauso wie auf einem echten PUBLIC-Template.
+        wants_public = visibility == TemplateVisibility.PUBLIC
+        effective_visibility = (
+            TemplateVisibility.PRIVATE if wants_public else visibility
+        )
         template = Template(
             id=str(uuid4()),
             name=name,
@@ -350,13 +369,14 @@ class GithubImportService:
             owner_id=owner_user_id,
             repo_url=github_url,
             icon_url=icon_url,
-            visibility=visibility,
+            visibility=effective_visibility,
+            publish_requested=wants_public,
         )
         self.db.add(template)
         self.db.flush()
 
         try:
-            self._import_version_for_template(
+            version = self._import_version_for_template(
                 template=template,
                 github_url=github_url,
                 app_yaml_path=app_yaml_path,
@@ -367,6 +387,25 @@ class GithubImportService:
         except Exception:
             self.db.rollback()
             raise
+
+        # Admin-Caller, die sich ein „öffentlich" gewünscht haben: die erste
+        # Version ist bereits APPROVED (via _initial_approval), also gilt der
+        # Promotion-Trigger sofort. Wir flippen Template-State hier atomar
+        # statt einen separaten approve_version-Roundtrip zu verlangen.
+        if (
+            wants_public
+            and version.approval_status == TemplateVersionApprovalStatus.APPROVED
+        ):
+            template.visibility = TemplateVisibility.PUBLIC
+            template.publish_requested = False
+            logger.info(
+                "Template promoted to public on admin-import (auto-approval)",
+                extra={
+                    "template_id": template.id,
+                    "version_id": str(version.id),
+                    "owner_id": owner_user_id,
+                },
+            )
 
         self.db.commit()
         self.db.refresh(template)
@@ -381,8 +420,16 @@ class GithubImportService:
         is_active: bool,
         user_id: str,
         user_roles: list[str],
+        replace_existing: bool = False,
     ) -> TemplateVersion:
-        """Append a new TemplateVersion (with files) to an existing Template."""
+        """Append a new TemplateVersion (with files) to an existing Template.
+
+        ``replace_existing`` aktiviert den Replace-Pfad bei Kollision auf der
+        Versionsnummer: existiert bereits eine Row mit demselben
+        ``version``-String, wird sie inkl. ihrer Files gelöscht und durch
+        die neu importierte ersetzt. Blockiert, wenn aktive Deployments an
+        der Bestands-Row hängen (`VERSION_REPLACE_BLOCKED_BY_DEPLOYMENTS`).
+        """
         template = self.template_repo.get_by_id(template_id)
         if not template:
             raise NotFoundException(f"Template with ID {template_id} not found")
@@ -400,6 +447,7 @@ class GithubImportService:
             user_id=user_id,
             user_roles=user_roles,
             is_active=is_active,
+            replace_existing=replace_existing,
         )
         self.db.commit()
         self.db.refresh(version)
@@ -418,6 +466,7 @@ class GithubImportService:
         user_id: str,
         user_roles: list[str],
         is_active: bool,
+        replace_existing: bool = False,
     ) -> TemplateVersion:
         parsed_url = self.parse_github_url(github_url)
 
@@ -516,15 +565,89 @@ class GithubImportService:
                     "size": len(content.encode("utf-8")),
                 })
 
-        # Determine version string
+        # Versions-String: ``app.yaml.app.version`` ist Pflicht und einzige
+        # Quelle. Kein Timestamp-Fallback mehr — fehlende oder leere Versionen
+        # sind ein expliziter Fehler, damit das UI dem Owner einen
+        # verlinkbaren „im Repo bumpen"-Pfad anbieten kann (siehe
+        # version_validator.ERR_MISSING_IN_MANIFEST).
         manifest_version = ((parsed_manifest.get("app") or {}).get("version") or "").strip()
-        version_string = manifest_version or self._derive_fallback_version(template.id)
+        if not manifest_version:
+            raise BadRequestException(
+                "`app.yaml` enthält kein `app.version`-Feld (oder es ist leer). "
+                "Bitte ergänze z. B. `app:\\n  version: 1.0.0` im Repo und versuche erneut.",
+                code=version_validator.ERR_MISSING_IN_MANIFEST,
+                details={"manifest_path": effective_app_yaml_path},
+            )
 
-        # Refuse duplicate (template_id, git_commit_sha) - existing constraint
-        existing = self.version_repo.get_by_commit_sha(template.id, commit_sha)
-        if existing:
+        version_validator.assert_valid_semver(manifest_version)
+        version_string = manifest_version
+
+        # Refuse duplicate (template_id, git_commit_sha) - existing constraint.
+        # Wird BEVOR der Versions-String-Check gemacht, weil derselbe Commit
+        # garantiert dieselbe app.yaml und damit dieselbe Versionsnummer hat —
+        # die Fehlermeldung „commit bereits importiert" ist hier präziser.
+        existing_by_sha = self.version_repo.get_by_commit_sha(template.id, commit_sha)
+        if existing_by_sha:
             raise BadRequestException(
                 f"This template already has a version for commit {commit_sha[:8]}"
+            )
+
+        # Versions-String-Uniqueness + Monotonie gegen die existierenden
+        # Versionen. Bei Kollision schlägt der Validator mit
+        # ERR_ALREADY_EXISTS an, was das Frontend differenziert (Replace-
+        # Pfad anbieten) — außer der Caller hat replace_existing=True
+        # mitgegeben, dann lassen wir die Bestands-Row gleich austauschen.
+        existing_versions = template.versions or self.version_repo.get_by_template_id(
+            template.id, active_only=False
+        )
+        existing_strings = [v.version for v in existing_versions]
+
+        replace_target: TemplateVersion | None = None
+        if replace_existing and version_string in existing_strings:
+            # Replace-Pfad: existierende Row mit demselben String identifizieren,
+            # auf Deployment-Refs prüfen, dann löschen. Files sind via
+            # ``cascade="all, delete-orphan"`` an der Version verbunden.
+            replace_target = next(
+                (v for v in existing_versions if v.version == version_string),
+                None,
+            )
+            if replace_target is None:
+                # Race oder Inkonsistenz — defensiv mit klarer Meldung.
+                raise BadRequestException(
+                    f"Cannot find existing version row for '{version_string}' to replace.",
+                )
+
+            deployment_count = (
+                self.db.query(Deployment)
+                .filter(Deployment.template_version_id == replace_target.id)
+                .count()
+            )
+            if deployment_count > 0:
+                raise BadRequestException(
+                    f"Version '{version_string}' kann nicht ersetzt werden: "
+                    f"{deployment_count} aktive Deployment(s) verwenden sie. "
+                    "Bitte bumpe `app.version` im Repo statt zu ersetzen.",
+                    code=version_validator.ERR_REPLACE_BLOCKED_BY_DEPLOYMENTS,
+                    details={
+                        "version": version_string,
+                        "deployment_count": deployment_count,
+                        "existing_version_id": replace_target.id,
+                    },
+                )
+
+            # Replace genehmigt — alte Row löschen. Die Monotonie-Vergleichs-
+            # Liste schließt die Replace-Target-Version aus, weil sie gleich
+            # ersetzt wird; sonst würde ``assert_strictly_greater`` immer
+            # auf ALREADY_EXISTS triggern.
+            self.db.delete(replace_target)
+            self.db.flush()
+            existing_strings = [s for s in existing_strings if s != version_string]
+        else:
+            # Kein Replace gewünscht / Kollision möglich → Validator wirft
+            # entweder ALREADY_EXISTS oder NOT_STRICTLY_GREATER mit Details.
+            version_validator.assert_strictly_greater(
+                version_string,
+                existing_strings,
             )
 
         approval_status = self._initial_approval(template, user_roles)
@@ -603,14 +726,21 @@ class GithubImportService:
     ) -> TemplateVersionApprovalStatus | None:
         """Map (template, caller) to the initial approval status of a new version.
 
-        - Private templates: ``None`` — approval doesn't apply (owner-only).
-        - Public templates, admin caller: ``APPROVED`` (auto-promote).
-        - Public templates, other caller: ``PENDING`` (admin review needed).
+        - PUBLIC templates: admin caller → ``APPROVED`` (auto-promote);
+          everyone else → ``PENDING`` (admin review needed).
+        - PRIVATE templates WITH ``publish_requested=True``: same as PUBLIC.
+          The template hasn't been promoted to PUBLIC yet — that happens
+          atomically on the first approve_version() call — but the approval
+          flow is already running, so new versions must enter PENDING.
+        - PRIVATE templates without publish_requested: ``None`` — approval
+          doesn't apply (owner-only).
 
-        Mirrors ``TemplateVersionService._initial_approval``; both services
-        create versions through different paths but with identical semantics.
+        Mirrored helper — keep in sync with the identical copy in
+        ``TemplateVersionService._initial_approval`` (template_version_service.py).
         """
-        if template.visibility != TemplateVisibility.PUBLIC:
+        is_public = template.visibility == TemplateVisibility.PUBLIC
+        is_pending_public = bool(getattr(template, "publish_requested", False))
+        if not is_public and not is_pending_public:
             return None
         is_admin = UserRole.ADMIN.value in (user_roles or [])
         return (
@@ -618,9 +748,3 @@ class GithubImportService:
             if is_admin
             else TemplateVersionApprovalStatus.PENDING
         )
-
-    @staticmethod
-    def _derive_fallback_version(template_id: str) -> str:
-        """Fallback if app.yaml has no `app.version` field."""
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        return f"0.0.0+{timestamp}"

@@ -31,10 +31,28 @@ class ForbiddenException(StarletteHTTPException):
 
 
 class BadRequestException(StarletteHTTPException):
-    """Exception raised for invalid client requests."""
-    
-    def __init__(self, message: str = "Invalid request"):
+    """Exception raised for invalid client requests.
+
+    Trägt optional einen strukturierten ``code`` und ``details``-Payload, damit
+    Clients gezielt darauf branchen können (z.B. „Version-String bereits
+    vergeben → Replace-Pfad anbieten") statt Fehlertexte per Regex zu parsen.
+    Der ``message`` bleibt menschenlesbar; ``code`` ist eine kurze
+    SCREAMING_SNAKE-Konvention, ``details`` ein beliebiges JSON-fähiges Dict.
+
+    Wenn nur ``message`` gesetzt ist, verhält sich die Exception identisch zu
+    vorher — Bestandscode bleibt 1:1 kompatibel.
+    """
+
+    def __init__(
+        self,
+        message: str = "Invalid request",
+        *,
+        code: str | None = None,
+        details: dict | None = None,
+    ):
         super().__init__(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+        self.code = code
+        self.details = details or None
 
 
 class ConflictException(StarletteHTTPException):
@@ -98,11 +116,22 @@ async def http_exception_handler(
             "event": "http_exception"
         }
     )
-    
+
+    # Strukturierte BadRequest-Codes mitgeben, wenn vorhanden: das Frontend
+    # branchst auf `errors.code` (z.B. „VERSION_ALREADY_EXISTS") und kann
+    # `errors.details` als Datenträger nutzen, statt den `message`-String
+    # per Regex zu parsen.
+    errors_payload = None
+    if isinstance(exc, BadRequestException) and exc.code:
+        errors_payload = {"code": exc.code}
+        if exc.details:
+            errors_payload["details"] = exc.details
+
     return ResponseBuilder.error(
         message=str(exc.detail),
         status_code=exc.status_code,
         request_id=request_id,
+        errors=errors_payload,
     )
 
 

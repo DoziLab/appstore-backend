@@ -113,6 +113,14 @@ async def list_approval_queue(
         None,
         description="Optional: filter by parent template visibility (private/public)",
     ),
+    include_publish_requested: bool = Query(
+        True,
+        description=(
+            "When visibility=public, also include PRIVATE templates that have "
+            "publish_requested=true (templates waiting for their first approval "
+            "before being promoted to PUBLIC). Default True."
+        ),
+    ),
     sort: Literal[
         "created_at_desc",
         "created_at_asc",
@@ -130,8 +138,8 @@ async def list_approval_queue(
     - The parent template's metadata (`template.{name, owner_id, visibility}`)
     - The parsed `parameters` from app.yaml (resource requirements)
 
-    Filters: `status`, `template_id`, `visibility`. Sortable via `sort`.
-    Admin-only.
+    Filters: `status`, `template_id`, `visibility`, `include_publish_requested`.
+    Sortable via `sort`. Admin-only.
     """
     service = TemplateVersionService(db)
 
@@ -142,6 +150,7 @@ async def list_approval_queue(
         template_id=str(template_id) if template_id else None,
         visibility=visibility,
         sort=sort,
+        include_publish_requested=include_publish_requested,
     )
 
     items = []

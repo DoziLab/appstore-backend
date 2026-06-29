@@ -151,6 +151,7 @@ class TemplateVersionRepository(BaseRepository[TemplateVersion]):
         template_id: Optional[str | UUID] = None,
         visibility: Optional[TemplateVisibility] = None,
         sort: QueueSort = "created_at_desc",
+        include_publish_requested: bool = True,
     ) -> tuple[list[tuple[TemplateVersion, Template]], int]:
         """List versions filtered by approval status, joined with their template.
 
@@ -161,6 +162,14 @@ class TemplateVersionRepository(BaseRepository[TemplateVersion]):
         Optional filters narrow the queue: `template_id` to a single template,
         `visibility` to public/private templates only. `sort` selects ordering;
         default is newest-first by `created_at`.
+
+        ``include_publish_requested`` (default ``True``): wenn ``visibility`` auf
+        ``PUBLIC`` gesetzt ist, schließt die Queue zusätzlich Templates ein, die
+        zwar noch ``PRIVATE`` sind, aber ``publish_requested=True`` tragen —
+        also „wartet auf die Erst-Genehmigung, danach wird's PUBLIC". Diese
+        Versionen sind logisch im Marketplace-Pfad und sollen sichtbar sein.
+        Wenn der Admin explizit ``include_publish_requested=False`` setzt,
+        sieht er nur die Versionen tatsächlich-öffentlicher Templates.
         """
         query = (
             self.db.query(self.model, Template)
@@ -172,7 +181,20 @@ class TemplateVersionRepository(BaseRepository[TemplateVersion]):
             query = query.filter(self.model.template_id == str(template_id))
 
         if visibility is not None:
-            query = query.filter(Template.visibility == visibility)
+            if (
+                visibility == TemplateVisibility.PUBLIC
+                and include_publish_requested
+            ):
+                # PUBLIC OR (PRIVATE AND publish_requested)
+                query = query.filter(
+                    (Template.visibility == TemplateVisibility.PUBLIC)
+                    | (
+                        (Template.visibility == TemplateVisibility.PRIVATE)
+                        & (Template.publish_requested.is_(True))
+                    )
+                )
+            else:
+                query = query.filter(Template.visibility == visibility)
 
         total = query.with_entities(func.count(self.model.id)).scalar() or 0
 
