@@ -277,7 +277,11 @@ def deploy_stack(self, deployment_id: str) -> dict:
                             } if generated.get("teacher", {}).get("linux", {}).get("password") else None,
                         },
                     }
-                    DeploymentCredentialService(db).persist_credentials_for_stack(
+                    # Bind the returned DeploymentInstance so the post-Ansible
+                    # activation-link fetch below can append rows to it. None
+                    # if persistence failed (see except clause); the post-
+                    # Ansible block guards against that.
+                    instance = DeploymentCredentialService(db).persist_credentials_for_stack(
                         deployment_id=deployment_id,
                         stack_name=stack_name,
                         openstack_stack_id=stack_id,
@@ -287,6 +291,7 @@ def deploy_stack(self, deployment_id: str) -> dict:
                         flavor=stack_params.get("flavor"),
                     )
                 except Exception as cred_error:
+                    instance = None
                     logger.error(f"Failed to persist credentials for stack {idx}: {cred_error}", exc_info=True)
                     log_service.log(
                         deployment_id=deployment_id,
@@ -345,6 +350,73 @@ def deploy_stack(self, deployment_id: str) -> dict:
                                 ],
                             }
                             ansible.run_playbooks(playbooks=playbooks, extra_vars=extra_vars)
+
+                            # --- 5. Post-Ansible: collect any per-stack
+                            #     output JSON the playbook wrote into
+                            #     /opt/dozilab/. Currently only Overleaf
+                            #     uses this — it writes activation links
+                            #     there because the Overleaf CLI generates
+                            #     one-time setup URLs at provisioning time
+                            #     (we have no password/SSH key to persist
+                            #     pre-Ansible). Any future app may opt in
+                            #     by writing the same shape; the fetch is
+                            #     a no-op when the file is absent.
+                            # TODO: when a second app needs this, replace
+                            #     the hardcoded path with a list declared
+                            #     in app.yaml (e.g. ``post_ansible_outputs``).
+                            try:
+                                users_json = ansible.fetch_remote_json(
+                                    "/opt/dozilab/OVERLEAF_USERS.json"
+                                )
+                                if users_json and instance is not None:
+                                    # Map the playbook's per-group ``username``
+                                    # (e.g. "gruppe01") to the matching
+                                    # course_groups.id stamped onto the
+                                    # generated deployment_groups entries.
+                                    username_to_group_id: dict[str, str | None] = {}
+                                    for s in generated.get("deployment_groups", []):
+                                        course_group_id = s.get("course_group_id")
+                                        linux_username = s.get("linux", {}).get("username")
+                                        if linux_username:
+                                            username_to_group_id[linux_username] = course_group_id
+                                        # Fallback for credential specs that
+                                        # set a top-level username but no
+                                        # linux block.
+                                        top_username = s.get("username")
+                                        if top_username:
+                                            username_to_group_id.setdefault(
+                                                top_username, course_group_id
+                                            )
+
+                                    written = DeploymentCredentialService(db).persist_activation_links(
+                                        instance_id=instance.id,
+                                        overleaf_users_json=users_json,
+                                        username_to_group_id=username_to_group_id,
+                                    )
+                                    log_service.log(
+                                        deployment_id=deployment_id,
+                                        event_type=DeploymentLogEventType.ANSIBLE_COMPLETED,
+                                        message=f"Persisted {written} activation-link credential(s) for stack {idx}",
+                                        level=DeploymentLogLevel.INFO,
+                                        details={"stack_index": idx, "count": written},
+                                    )
+                            except Exception as fetch_err:
+                                # Never fail the deployment because of a
+                                # post-fetch issue — the file still lives on
+                                # the VM at /opt/dozilab/OVERLEAF_USERS.{json,txt}
+                                # for manual recovery.
+                                logger.warning(
+                                    "Post-Ansible activation-link fetch failed for "
+                                    f"deployment {deployment_id} stack {idx}: {fetch_err}",
+                                    exc_info=True,
+                                )
+                                log_service.log(
+                                    deployment_id=deployment_id,
+                                    event_type=DeploymentLogEventType.ANSIBLE_COMPLETED,
+                                    message=f"Stack {idx} done; activation-link fetch skipped: {fetch_err}",
+                                    level=DeploymentLogLevel.WARNING,
+                                    details={"stack_index": idx, "error": str(fetch_err)},
+                                )
                         except CancelledException as cancel_err:
                             # Cancel was observed mid-SSH-wait or mid-playbook.
                             # Don't escalate to FAILED — log and exit cleanly.

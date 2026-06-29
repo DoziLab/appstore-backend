@@ -18,6 +18,11 @@ class AccessType(str, Enum):
     RDP = "rdp"
     VNC = "vnc"
     DATABASE = "database"
+    # One-time activation/setup link the playbook generates on the VM
+    # (e.g. Overleaf account setup). Carried in connection_url; no
+    # password / SSH key. Stored as a Postgres enum value of the same
+    # name — see the Alembic migration that adds it.
+    ACTIVATION_LINK = "activation_link"
 
 
 class DeploymentInstanceAccess(Base):
