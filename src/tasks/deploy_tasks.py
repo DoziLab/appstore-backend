@@ -212,6 +212,7 @@ def _provision_one_stack_assignment(
     total_stacks: int,
     cancel_check: Callable[[], bool] | None = None,
     preserved_user_json: dict | None = None,
+    on_stack_created: Callable[[str], None] | None = None,
 ) -> tuple[Optional[str], Optional[DeploymentInstance]]:
     """Run the create-stack → Ansible → persist-credentials cycle for one
     stack assignment.
@@ -248,6 +249,14 @@ def _provision_one_stack_assignment(
         preserved_user_json: When set, skip credential GENERATION and reuse
             this user_json verbatim. Used by ``redeploy_instance`` with
             ``preserve_credentials=True`` so students keep their logins.
+        on_stack_created: Optional callback invoked with the new Heat
+            ``stack_id`` IMMEDIATELY after ``create_stack`` returns and
+            BEFORE the long-running Ansible phase starts. Callers use this
+            to persist the new stack id onto the parent deployment so a
+            worker crash mid-Ansible can't leave the Heat stack orphaned.
+            Failures inside the callback are logged and swallowed —
+            persistence is best-effort here; the caller's later final
+            commit is the source of truth.
 
     Returns:
         Tuple ``(stack_id, instance)``:
@@ -312,6 +321,25 @@ def _provision_one_stack_assignment(
         timeout_mins=60,
     )
     stack_id: str = stack_result["stack_id"]
+
+    # Persist the new stack id onto the parent deployment IMMEDIATELY,
+    # before the long-running Ansible phase. Without this, a worker crash
+    # / OOM / pod restart mid-Ansible would leave the Heat stack alive in
+    # OpenStack but invisible to ``delete_deployment`` (which only walks
+    # ``deployment.openstack_stack_id``), creating an orphan stack with
+    # no DB pointer to clean it up. Failures here are best-effort: the
+    # caller still does a final commit on the way out which is the source
+    # of truth, and ``delete_deployment`` has a defensive fallback that
+    # also walks ``DeploymentInstance.openstack_server_id``.
+    if on_stack_created is not None:
+        try:
+            on_stack_created(stack_id)
+        except Exception as persist_err:
+            logger.warning(
+                f"on_stack_created callback failed for stack {stack_index} "
+                f"({stack_id}): {persist_err}",
+                exc_info=True,
+            )
 
     log_service.log(
         deployment_id=deployment_id,
@@ -726,6 +754,23 @@ def deploy_stack(self, deployment_id: str) -> dict:
                 stack_name = _build_stack_name(deployment, idx)
                 cancel_check = lambda: is_cancel_requested(db, deployment_id)  # noqa: E731
 
+                def _persist_stack_id_now(new_id: str) -> None:
+                    """Append ``new_id`` to ``created_stack_ids`` and flush
+                    onto the deployment row immediately — invoked by the
+                    helper right after ``heat_service.create_stack`` returns,
+                    before Ansible. Closes the orphan-stack window that
+                    would otherwise span the (multi-minute) Ansible phase.
+                    """
+                    created_stack_ids.append(new_id)
+                    try:
+                        deployment.openstack_stack_id = json.dumps(created_stack_ids)
+                        db.commit()
+                    except Exception as persist_err:
+                        db.rollback()
+                        logger.warning(
+                            f"Failed to incrementally persist stack id {new_id}: {persist_err}"
+                        )
+
                 stack_id, _instance = _provision_one_stack_assignment(
                     db=db,
                     deployment=deployment,
@@ -740,16 +785,15 @@ def deploy_stack(self, deployment_id: str) -> dict:
                     stack_index=idx,
                     total_stacks=len(stack_assignments_raw),
                     cancel_check=cancel_check,
+                    on_stack_created=_persist_stack_id_now,
                 )
-                if stack_id:
+                # The callback above already appended + persisted ``stack_id``.
+                # Guard against an edge case where the helper returns a stack
+                # id WITHOUT having called the callback (e.g. future refactor
+                # that produces a stack id by another route): make sure we
+                # don't leave the id out of the snapshot.
+                if stack_id and stack_id not in created_stack_ids:
                     created_stack_ids.append(stack_id)
-
-                    # Persist the new stack ID incrementally so a parallel cancel
-                    # (DELETE request → delete_deployment task) can find every
-                    # Heat stack we've created so far. Without this, the cleanup
-                    # would miss stacks created in later loop iterations because
-                    # `openstack_stack_id` is otherwise only flushed at the very
-                    # end of the task.
                     try:
                         deployment.openstack_stack_id = json.dumps(created_stack_ids)
                         db.commit()
@@ -1003,6 +1047,79 @@ def _gc_orphan_student_memberships(db, user_ids: set[str]) -> None:
         )
 
 
+def _collect_stack_ids_for_cleanup(db, deployment) -> list[str]:
+    """Return every Heat stack id this deployment owns, drawing from BOTH
+    the deployment row and its DeploymentInstance rows.
+
+    ``deployment.openstack_stack_id`` is a JSON array maintained by
+    ``deploy_stack`` / ``redeploy_instance`` as they go. The
+    ``on_stack_created`` callback persists each new id incrementally so
+    the array stays in sync with OpenStack, but a worker crash between
+    ``heat_service.create_stack`` and that commit would leave a fresh
+    Heat stack alive with no entry in the array.
+
+    To make ``delete_deployment`` resilient to that exact failure mode,
+    we additionally walk ``DeploymentInstance.openstack_server_id``
+    (which stores the same Heat stack id and is committed inside the
+    transaction that persists the instance row). The union of both
+    sources, deduplicated while preserving insertion order, is what we
+    actually pass to Heat for deletion.
+
+    Args:
+        db: SQLAlchemy session bound to this task.
+        deployment: The Deployment row being torn down. Must be live in
+            ``db`` so the lazy-loaded ``instances`` relationship resolves.
+
+    Returns:
+        Ordered list of unique Heat stack ids to delete. Empty when the
+        deployment never produced any stack (rare, but happens on early
+        failures).
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+
+    raw = deployment.openstack_stack_id
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                ids_from_deployment: list[str] = [str(s) for s in parsed if s]
+            else:
+                ids_from_deployment = [str(parsed)]
+        except (json.JSONDecodeError, TypeError):
+            # Treat as a single legacy id.
+            ids_from_deployment = [str(raw)]
+        for sid in ids_from_deployment:
+            if sid and sid not in seen:
+                seen.add(sid)
+                out.append(sid)
+
+    # Fallback / defense-in-depth: any DeploymentInstance whose Heat stack
+    # id never made it into the deployment-level array (e.g. crash mid-
+    # Ansible on first redeploy of a wedged VM) still gets cleaned up.
+    try:
+        instances = db.query(DeploymentInstance).filter(
+            DeploymentInstance.deployment_id == deployment.id
+        ).all()
+    except Exception as e:
+        logger.warning(
+            f"Could not query DeploymentInstance rows for stack-id fallback: {e}"
+        )
+        instances = []
+
+    for inst in instances:
+        sid = inst.openstack_server_id
+        if sid and sid not in seen:
+            seen.add(sid)
+            out.append(sid)
+            logger.info(
+                f"Stack id {sid} recovered from DeploymentInstance {inst.id} "
+                "(was missing from deployment.openstack_stack_id)"
+            )
+
+    return out
+
+
 @celery_app.task(bind=True)
 def delete_deployment(self, deployment_id: str) -> dict:
     """Delete a deployment's OpenStack resources and remove DB record.
@@ -1066,9 +1183,20 @@ def delete_deployment(self, deployment_id: str) -> dict:
         if deployment is None:
             return {"status": "already_gone", "deployment_id": deployment_id}
 
+        # Build the full set of stack ids to tear down. Primary source is
+        # ``deployment.openstack_stack_id`` (JSON array), but we also walk
+        # ``DeploymentInstance.openstack_server_id`` as a defensive fallback:
+        # if a previous redeploy / deploy_stack ever crashed between
+        # ``heat_service.create_stack`` and the final commit that flushes
+        # the id onto the deployment row, the stack would otherwise be
+        # invisible to the cleanup here even though its DeploymentInstance
+        # row points at it. Union of both sources guarantees no orphan
+        # stacks survive a clean delete.
+        stack_ids = _collect_stack_ids_for_cleanup(db, deployment)
+
         # If there is an associated Heat stack, attempt to delete it
         any_stack_delete_failed = False
-        if deployment.openstack_stack_id:
+        if stack_ids:
             try:
                 # The OpenStack project is now persisted on the deployment row
                 # itself (FK), so deletion always targets the project the
@@ -1083,15 +1211,6 @@ def delete_deployment(self, deployment_id: str) -> dict:
                     )
                 else:
                     heat_service = HeatStackService(openstack_project)
-
-                    # Parse stack IDs (can be single ID or JSON array)
-                    try:
-                        stack_ids = json.loads(deployment.openstack_stack_id)
-                        if not isinstance(stack_ids, list):
-                            stack_ids = [stack_ids]
-                    except (json.JSONDecodeError, TypeError):
-                        # Fallback: treat as single stack ID
-                        stack_ids = [deployment.openstack_stack_id]
 
                     logger.info(f"Deleting {len(stack_ids)} Heat stack(s)")
                     deleted_count = 0
@@ -1914,6 +2033,29 @@ def redeploy_instance(
         stack_name = _build_redeploy_stack_name(deployment, stack_idx, instance_id)
 
         try:
+            def _persist_new_stack_id_now(new_id: str) -> None:
+                """Append the newly-created Heat stack id onto the parent
+                deployment's id list AS SOON AS Heat returns it — before
+                the multi-minute Ansible phase. Closes the orphan window:
+                without this, a worker crash mid-Ansible would leave the
+                fresh stack in OpenStack with no reference in
+                ``deployment.openstack_stack_id`` for ``delete_deployment``
+                to find. ``delete_deployment`` has a defensive fallback
+                via ``DeploymentInstance.openstack_server_id`` as well,
+                but persisting eagerly here keeps that fallback as a
+                belt-and-braces measure rather than the only safety net.
+                """
+                remaining_stack_ids.append(new_id)
+                try:
+                    deployment.openstack_stack_id = json.dumps(remaining_stack_ids)
+                    db.commit()
+                except Exception as persist_err:
+                    db.rollback()
+                    logger.warning(
+                        f"Failed to incrementally persist redeployed stack id "
+                        f"{new_id}: {persist_err}"
+                    )
+
             new_stack_id, new_instance = _provision_one_stack_assignment(
                 db=db,
                 deployment=deployment,
@@ -1929,6 +2071,7 @@ def redeploy_instance(
                 total_stacks=1,
                 cancel_check=None,
                 preserved_user_json=preserved_user_json,
+                on_stack_created=_persist_new_stack_id_now,
             )
         except Exception as e:
             logger.exception(f"Redeploy of instance {instance_id} failed: {e}")
@@ -1943,9 +2086,11 @@ def redeploy_instance(
             # the Heat service (CREATE_FAILED / timeout) or by the credential
             # persist step (which keeps the stack id alive so the user can
             # retry). Add it back to the deployment so a future delete cleans
-            # up rather than silently leaking the stack.
+            # up rather than silently leaking the stack. The ``on_stack_created``
+            # callback may have ALREADY appended it for the CREATE_COMPLETE-
+            # then-Ansible-failed path, so dedupe before persisting.
             orphan = getattr(e, "stack_id", None)
-            if orphan:
+            if orphan and orphan not in remaining_stack_ids:
                 remaining_stack_ids.append(orphan)
                 try:
                     deployment.openstack_stack_id = json.dumps(remaining_stack_ids)
@@ -1970,8 +2115,13 @@ def redeploy_instance(
                 "error": str(e),
             }
 
-        # Persist the new stack id back onto the parent deployment.
-        if new_stack_id:
+        # Persist the new stack id back onto the parent deployment. The
+        # ``on_stack_created`` callback above already appended it right
+        # after Heat returned, so this block is a no-op in the normal
+        # flow. It stays as a safety net for the edge case where the
+        # callback was skipped or failed: we re-flush the in-memory
+        # ``remaining_stack_ids`` list so the on-disk JSON matches.
+        if new_stack_id and new_stack_id not in remaining_stack_ids:
             remaining_stack_ids.append(new_stack_id)
             try:
                 deployment.openstack_stack_id = json.dumps(remaining_stack_ids)
