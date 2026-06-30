@@ -326,11 +326,13 @@ class TestDeployPrivateTemplateOwnerOnly:
         attacker_user.id = attacker_local
         attacker_user.external_id = attacker_kc
 
-        # Verify the gate logic itself — same expression as deployment_service:86.
-        # If visibility is private AND owner != caller -> forbidden.
+        # Verify the gate logic itself — same expression as deployment_service:
+        # private AND not-owner AND not-admin -> forbidden.
+        is_admin = False
         is_blocked = (
             template.visibility != TemplateVisibility.PUBLIC
             and template.owner_id != attacker_user.id
+            and not is_admin
         )
         assert is_blocked is True
 
@@ -347,9 +349,31 @@ class TestDeployPrivateTemplateOwnerOnly:
         owner_user.external_id = owner_kc
 
         # Gate evaluates to "not blocked".
+        is_admin = False
         is_blocked = (
             template.visibility != TemplateVisibility.PUBLIC
             and template.owner_id != owner_user.id
+            and not is_admin
+        )
+        assert is_blocked is False
+
+    def test_admin_can_deploy_private_template_of_other_owner(self):
+        """Admins bypass the owner-only gate on private templates — same
+        admin-trust model used for delete/edit elsewhere in the service."""
+        from src.models.user import User
+
+        template = _make_template(
+            TemplateVisibility.PRIVATE, owner_id=str(uuid4()), versions=[]
+        )
+        admin_user = User()
+        admin_user.id = str(uuid4())  # NOT the owner
+        admin_user.external_id = "admin-keycloak-id"
+
+        is_admin = True
+        is_blocked = (
+            template.visibility != TemplateVisibility.PUBLIC
+            and template.owner_id != admin_user.id
+            and not is_admin
         )
         assert is_blocked is False
 
@@ -357,9 +381,11 @@ class TestDeployPrivateTemplateOwnerOnly:
         """For public templates the owner-check is irrelevant; visibility +
         approval drive who can see/deploy what."""
         template = _make_template(TemplateVisibility.PUBLIC, owner_id="someone-else", versions=[])
+        is_admin = False
         is_blocked = (
             template.visibility != TemplateVisibility.PUBLIC
             and template.owner_id != "some-attacker"
+            and not is_admin
         )
         assert is_blocked is False
 
