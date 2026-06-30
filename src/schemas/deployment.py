@@ -196,6 +196,84 @@ class DeploymentResponse(BaseModel):
     )
 
 
+class DeploymentRedeployRequest(BaseModel):
+    """Body for ``POST /deployments/{id}/redeploy`` and
+    ``POST /deployments/{id}/instances/{instance_id}/redeploy``.
+
+    Per the product spec, a "Config" in this codebase = the optional template
+    parameters surfaced by the underlying app (e.g. an on/off toggle "include
+    example notebooks"). A redeploy may **carry over** the deployment's existing
+    parameter map unchanged, or **override** it for the whole deployment
+    (``deployment_parameter_overrides``) and/or for individual VMs
+    (``instance_parameter_overrides``).
+
+    Merge order during the actual redeploy task::
+
+        template defaults  →  deployment.deployment_parameters
+                           →  deployment_parameter_overrides
+                           →  instance_parameter_overrides[<instance_id>]
+
+    ``preserve_credentials`` controls whether the existing
+    ``DeploymentInstanceAccess`` rows (passwords, SSH keys, activation links)
+    are kept and re-bound to the freshly-created instance, or wiped and
+    regenerated from scratch. Default ``False`` mirrors a clean
+    destroy-and-recreate; pass ``True`` to keep students' logins working
+    across the redeploy.
+    """
+
+    deployment_parameter_overrides: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Parameters to merge ON TOP of the deployment's stored "
+            "``deployment_parameters`` for every redeployed VM. Keys absent here "
+            "fall back to the deployment's stored value (then to template defaults). "
+            "Pass an empty dict to keep the deployment-level params unchanged."
+        ),
+    )
+    instance_parameter_overrides: Optional[dict[str, dict[str, Any]]] = Field(
+        default=None,
+        description=(
+            "Per-VM parameter overrides keyed by DeploymentInstance.id. "
+            "Each entry is merged ON TOP of the deployment-level overrides for "
+            "that one VM only. Keys not present in any layer fall back to "
+            "template defaults. Instance IDs not in this map use the "
+            "deployment-level overrides as-is. Ignored when redeploying a single "
+            "instance via the per-instance endpoint — pass the override under "
+            "``deployment_parameter_overrides`` there since there's only one VM "
+            "in scope."
+        ),
+    )
+    preserve_credentials: bool = Field(
+        default=False,
+        description=(
+            "When True, the existing per-VM credentials (DeploymentInstanceAccess "
+            "rows) are re-bound to the freshly-created instance instead of being "
+            "regenerated. Useful to avoid breaking student logins during a quick "
+            "config change. Default False = clean destroy-and-recreate, fresh "
+            "passwords/keys/activation links."
+        ),
+    )
+
+    # ``extra="forbid"`` mirrors the contract recently tightened in PR #178
+    # for course-filters: a typo in the request body (e.g. ``preserve_credential``)
+    # should surface as 422 instead of being silently dropped — silent drops on
+    # a destructive operation like redeploy are particularly easy to misdiagnose.
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "example": {
+                "deployment_parameter_overrides": {
+                    "include_example_notebooks": True,
+                },
+                "instance_parameter_overrides": {
+                    "instance-uuid-of-group-3": {"flavor": "gp1.medium"},
+                },
+                "preserve_credentials": False,
+            }
+        }
+    )
+
+
 class DeploymentExtend(BaseModel):
     """Body for ``PATCH /deployments/{id}/extend``.
 

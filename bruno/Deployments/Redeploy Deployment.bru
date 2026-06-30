@@ -1,0 +1,160 @@
+meta {
+  name: Redeploy Deployment
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{base_url}}/api/v1/deployments/{{deployment_id}}/redeploy?openstack_project_id={{openstack_project_local_id}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+params:query {
+  openstack_project_id: {{openstack_project_local_id}}
+}
+
+params:path {
+  deployment_id:
+}
+
+body:json {
+  {
+    "deployment_parameter_overrides": {
+      "include_example_notebooks": true
+    },
+    "instance_parameter_overrides": {
+      "instance-uuid-of-group-3": {
+        "flavor": "gp1.medium"
+      }
+    },
+    "preserve_credentials": false
+  }
+}
+
+docs {
+  # Redeploy Deployment (all VMs)
+
+  Destroy-and-recreate **every VM** (DeploymentInstance) in this deployment, one
+  after another, optionally with overridden parameters (template / config values).
+
+  Unlike `POST /deployments/{id}/restart` (which only triggers a Heat
+  `update_stack` on the existing stack), this fully rebuilds each VM from
+  scratch:
+
+  1. Heat stack deleted
+  2. Heat stack recreated with merged parameters
+  3. Ansible re-run
+  4. Credentials regenerated (unless `preserve_credentials=true`)
+
+  Use it when a config / template parameter changed and you want the change to
+  actually take effect.
+
+  ## Authorization
+  - **Owner (Lecturer)** or **Admin** only
+  - Lecturers can only redeploy their own deployments
+  - Admins can redeploy any deployment
+
+  ## Body
+
+  All fields are optional. Empty body = redeploy with the stored
+  `deployment_parameters` unchanged and fresh credentials.
+
+  | Field                            | Type                                | Description |
+  |----------------------------------|-------------------------------------|-------------|
+  | `deployment_parameter_overrides` | `dict[str, Any]`                    | Merged ON TOP of the deployment's stored parameters for every redeployed VM. |
+  | `instance_parameter_overrides`   | `dict[instance_id, dict[str, Any]]` | Per-VM overrides, keyed by `DeploymentInstance.id`. Merged ON TOP of `deployment_parameter_overrides` for that one VM. |
+  | `preserve_credentials`           | `bool` (default `false`)            | Keep the existing per-VM credentials instead of regenerating them. Useful to avoid breaking student logins during a quick config change. |
+
+  ### Merge order
+
+  Later layers win:
+
+      template defaults
+          ↓
+      deployment.deployment_parameters
+          ↓
+      deployment_parameter_overrides
+          ↓
+      instance_parameter_overrides[<instance_id>]
+
+  ## Process
+
+  1. API validates permissions and deployment state.
+  2. A single Celery task `redeploy_deployment` is enqueued.
+  3. The task iterates **sequentially** over every DeploymentInstance row and
+     reuses the `redeploy_instance` task per VM (to avoid quota exhaustion in
+     parallel mode).
+  4. For each VM: status flips to `REDEPLOYING` → Heat stack deleted → Heat
+     stack recreated with merged params → Ansible run → credentials persisted.
+  5. The parent deployment stays in `RUNNING` between instances; siblings
+     remain reachable for students.
+
+  ## Response
+
+  Returns 202 Accepted; the actual redeploy runs asynchronously.
+
+  ## Example Response
+
+  ```json
+  {
+    "success": true,
+    "data": {
+      "deployment_id": "deploy-123",
+      "instance_count": 5,
+      "status": "redeploy_queued",
+      "preserve_credentials": false
+    },
+    "message": "Redeploy requested for 5 instance(s); operation in progress",
+    "request_id": "req-456"
+  }
+  ```
+
+  ## Error Responses
+
+  **404 Not Found**
+  ```json
+  {"success": false, "message": "Deployment with ID xyz not found"}
+  ```
+
+  **403 Forbidden** (lecturer trying to redeploy another lecturer's deployment)
+  ```json
+  {"success": false, "message": "You do not have permission to access this deployment"}
+  ```
+
+  **400 Bad Request** (deployment in transitional state)
+  ```json
+  {"success": false, "message": "Cannot redeploy deployment in creating state. Please wait for the current operation to complete."}
+  ```
+
+  **400 Bad Request** (deployment has no instances)
+  ```json
+  {"success": false, "message": "Deployment has no instances to redeploy"}
+  ```
+
+  **500 Internal Server Error** (task enqueue failure)
+  ```json
+  {"success": false, "message": "Failed to enqueue redeploy task"}
+  ```
+
+  ## Tracking Progress
+
+  - Per-VM status visible on each `DeploymentInstance.status` (flips through
+    `REDEPLOYING` → `CREATING` → `RUNNING|FAILED`).
+  - Live log stream: `GET /deployments/{id}/logs/stream`.
+  - The deployment's `openstack_stack_id` JSON array is rewritten incrementally
+    as old stack IDs are dropped and new ones are added — so a follow-up DELETE
+    still cleans up correctly.
+
+  ## Caveats
+
+  - `preserve_credentials=true` can only carry over credentials that are
+    persisted in `DeploymentInstanceAccess`. Passwords generated ad-hoc inside
+    Ansible playbooks (without a credential spec entry) are still regenerated.
+  - The Heat stack name format stays `<deployment-slug>-s<idx>-<dep4>`, so
+    OpenStack tags / dashboards keep working across redeploys.
+}
