@@ -58,7 +58,7 @@ class CourseFilterService:
                 f"Course filter with name '{data.name}' already exists"
             )
 
-    def update_filter(self, filter_id: str | UUID, data: CourseFilterUpdate) -> CourseFilter:
+    def update_filter(self, filter_id: UUID, data: CourseFilterUpdate) -> CourseFilter:
         instance = self.get_filter(filter_id)
 
         update_data = data.model_dump(exclude_unset=True)
@@ -86,6 +86,6 @@ class CourseFilterService:
             )
         return updated or instance
 
-    def delete_filter(self, filter_id: str | UUID) -> bool:
+    def delete_filter(self, filter_id: UUID) -> bool:
         self.get_filter(filter_id)
         return self.repo.delete(filter_id)
