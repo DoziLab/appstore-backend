@@ -30,7 +30,7 @@ class DeploymentService:
         self.openstack_repo = OpenstackProjectRepository(db)
         self.log_service = DeploymentLogService(db)
     
-    def create_deployment(self, deployment_data: DeploymentCreate, request_id: Union[str, None] = None) -> Deployment:
+    def create_deployment(self, deployment_data: DeploymentCreate, request_id: Union[str, None] = None, is_admin: bool = False) -> Deployment:
         """Create a new deployment and trigger async deployment task.
         
         Args:
@@ -79,14 +79,20 @@ class DeploymentService:
                 f"Teacher user not found for Keycloak ID {deployment_data.teacher.id}"
             )
 
-        # Gate: private templates can only be deployed by their owner. Admins
-        # and other lecturers cannot run private templates even if they
+        # Gate: private templates can only be deployed by their owner OR by
+        # an admin. Other lecturers cannot run private templates even if they
         # somehow obtained the template_version_id — that's the whole point of
-        # "private". For public templates the visibility/approval system
-        # already controls who sees the template at all, no extra gate here.
-        if template.visibility != TemplateVisibility.PUBLIC and template.owner_id != teacher_user.id:
+        # "private". Admins are the system-wide bypass for management actions
+        # (delete/edit) and we extend the same trust to running deploys. For
+        # public templates the visibility/approval system already controls
+        # who sees the template at all, no extra gate here.
+        if (
+            template.visibility != TemplateVisibility.PUBLIC
+            and template.owner_id != teacher_user.id
+            and not is_admin
+        ):
             raise ForbiddenException(
-                "Only the template owner can deploy a private template version"
+                "Only the template owner or an admin can deploy a private template version"
             )
 
         # Validate template parameters required by the template version

@@ -297,9 +297,11 @@ async def create_deployment(
         Created deployment with status QUEUED
     """
     service = DeploymentService(db)
+    is_admin = UserRole.ADMIN.value in user.get("roles", [])
     deployment = service.create_deployment(
         deployment_data,
-        request_id=request_id
+        request_id=request_id,
+        is_admin=is_admin,
     )
     
     # Convert SQLAlchemy model to response schema
