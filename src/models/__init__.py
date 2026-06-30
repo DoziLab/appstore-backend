@@ -2,6 +2,7 @@
 
 # Import all model classes to make them available for SQLAlchemy relationship resolution
 from src.models.course import Course
+from src.models.course_filter import CourseFilter
 from src.models.course_group import CourseGroup
 from src.models.course_member import CourseMember
 from src.models.deployment import Deployment, DeploymentStatus
@@ -19,6 +20,7 @@ from src.models.user import User
 
 __all__ = [
     "Course",
+    "CourseFilter",
     "CourseGroup",
     "CourseMember",
     "Deployment",
