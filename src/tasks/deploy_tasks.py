@@ -597,6 +597,133 @@ def _fail(repo, log_service, deployment_id: str, error_msg: str) -> dict:
 
 
 
+def _gc_orphan_student_memberships(db, user_ids: set[str]) -> None:
+    """Drop CourseMember / GroupMember / User rows for users that no longer
+    have any deployment behind them.
+
+    Called from ``delete_deployment`` AFTER the deployment row is gone. For
+    each candidate user:
+      1. Walk their CourseMember rows.
+      2. For each CourseMember, count its GroupMember rows that still point
+         to a course_group with at least one DeploymentInstanceAccess on any
+         live DeploymentInstance. If zero remain → drop the GroupMembers and
+         the CourseMember.
+      3. Once a user has no CourseMember rows left, drop the User row.
+
+    Limited to users that are pure students. The caller's
+    ``DeploymentService._sync_student_memberships`` is the only place we
+    auto-create User rows from a wizard payload, and only for students;
+    lecturers/admins arrive via Keycloak login (UserSyncService) and
+    additionally own templates / OpenStack projects, so this function
+    leaves them alone via the explicit "no owner rows" guard.
+    """
+    if not user_ids:
+        return
+
+    from src.models.course_member import CourseMember
+    from src.models.deployment_instance import DeploymentInstance
+    from src.models.deployment_instance_access import DeploymentInstanceAccess
+    from src.models.group_member import GroupMember
+    from src.models.openstack_project import OpenstackProject
+    from src.models.template import Template
+    from src.models.user import User
+
+    removed_users = 0
+    removed_course_members = 0
+    removed_group_members = 0
+
+    for user_id in user_ids:
+        # Guard: skip anyone who owns templates or openstack projects —
+        # cannot be a pure student. This is the safety net against
+        # accidentally pruning a lecturer if user_ids ever contains one.
+        owns_templates = (
+            db.query(Template.id).filter(Template.owner_id == user_id).first()
+            is not None
+        )
+        owns_openstack = (
+            db.query(OpenstackProject.id)
+            .filter(OpenstackProject.owner_user_id == user_id)
+            .first()
+            is not None
+        )
+        if owns_templates or owns_openstack:
+            continue
+
+        course_members = db.query(CourseMember).filter(
+            CourseMember.user_id == user_id
+        ).all()
+
+        for cm in course_members:
+            # Which group_memberships of this course_member still point to a
+            # group that has any live DeploymentInstanceAccess?
+            live_group_member_ids = {
+                row[0]
+                for row in db.query(GroupMember.id)
+                .join(
+                    DeploymentInstanceAccess,
+                    DeploymentInstanceAccess.group_id == GroupMember.group_id,
+                )
+                .join(
+                    DeploymentInstance,
+                    DeploymentInstance.id
+                    == DeploymentInstanceAccess.deployment_instance_id,
+                )
+                .filter(GroupMember.course_member_id == cm.id)
+                .distinct()
+                .all()
+            }
+
+            stale_group_members = (
+                db.query(GroupMember)
+                .filter(GroupMember.course_member_id == cm.id)
+                .all()
+            )
+            for gm in stale_group_members:
+                if gm.id in live_group_member_ids:
+                    continue
+                db.delete(gm)
+                removed_group_members += 1
+
+            # After pruning, does this CourseMember have any live group
+            # memberships left? If not, drop the CourseMember itself.
+            db.flush()
+            remaining = (
+                db.query(GroupMember.id)
+                .filter(GroupMember.course_member_id == cm.id)
+                .first()
+            )
+            if remaining is None:
+                db.delete(cm)
+                removed_course_members += 1
+
+        db.flush()
+        # If no CourseMember rows survived → user is no longer tied to ANY
+        # course → safe to drop. We also re-check owner relationships in case
+        # something raced.
+        remaining_cm = (
+            db.query(CourseMember.id)
+            .filter(CourseMember.user_id == user_id)
+            .first()
+        )
+        if remaining_cm is None:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user is not None:
+                db.delete(user)
+                removed_users += 1
+
+    db.commit()
+    if removed_users or removed_course_members or removed_group_members:
+        logger.info(
+            "Student GC complete",
+            extra={
+                "removed_users": removed_users,
+                "removed_course_members": removed_course_members,
+                "removed_group_members": removed_group_members,
+                "candidates": len(user_ids),
+            },
+        )
+
+
 @celery_app.task(bind=True)
 def delete_deployment(self, deployment_id: str) -> dict:
     """Delete a deployment's OpenStack resources and remove DB record.
@@ -758,6 +885,39 @@ def delete_deployment(self, deployment_id: str) -> dict:
                 "task_id": task_id,
             }
 
+        # Before tearing down DB rows, collect the student users tied to this
+        # deployment so we can clean them up after the deployment row is gone.
+        # We snapshot user/course-member ids now — once the DeploymentInstance
+        # → access → group_id chain is deleted there's no way to walk back to
+        # the affected students.
+        student_user_ids: set[str] = set()
+        try:
+            from src.models.deployment_instance import DeploymentInstance
+            from src.models.deployment_instance_access import DeploymentInstanceAccess
+            from src.models.group_member import GroupMember
+            from src.models.course_member import CourseMember
+
+            student_user_ids = {
+                row[0]
+                for row in db.query(CourseMember.user_id)
+                .join(GroupMember, GroupMember.course_member_id == CourseMember.id)
+                .join(
+                    DeploymentInstanceAccess,
+                    DeploymentInstanceAccess.group_id == GroupMember.group_id,
+                )
+                .join(
+                    DeploymentInstance,
+                    DeploymentInstance.id == DeploymentInstanceAccess.deployment_instance_id,
+                )
+                .filter(DeploymentInstance.deployment_id == deployment_id)
+                .distinct()
+                .all()
+            }
+        except Exception as e:
+            logger.warning(
+                f"Failed to snapshot student users for cleanup {deployment_id}: {e}"
+            )
+
         # Delete logs first (before deployment record)
         try:
             log_repo = DeploymentLogRepository(db)
@@ -795,6 +955,25 @@ def delete_deployment(self, deployment_id: str) -> dict:
                 logger.warning(f"Deployment record not found when attempting delete: {deployment_id}")
         except Exception as e:
             logger.error(f"Failed to delete deployment record {deployment_id}: {e}", exc_info=True)
+
+        # Garbage-collect student users + course/group memberships that no
+        # longer have ANY deployment behind them. Rationale:
+        #   * Students don't own templates or OpenStack projects (only lecturers
+        #     /admins do), so a user with no remaining CourseMember rows is
+        #     guaranteed to be a former student.
+        #   * Each course_member -> group_member chain that survives here would
+        #     otherwise live forever, growing the membership tables monotonically.
+        # We re-query the surviving access rows (across ALL other deployments)
+        # to decide what's safe to drop — a student in two deployments stays
+        # until the second one is also deleted.
+        try:
+            _gc_orphan_student_memberships(db, student_user_ids)
+        except Exception as e:
+            logger.warning(
+                f"Student cleanup failed for deployment {deployment_id}: {e}",
+                exc_info=True,
+            )
+            db.rollback()
 
         return {"status": "deleted", "deployment_id": deployment_id, "task_id": task_id}
 
