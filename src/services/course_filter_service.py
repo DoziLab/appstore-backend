@@ -61,12 +61,12 @@ class CourseFilterService:
     def update_filter(self, filter_id: UUID, data: CourseFilterUpdate) -> CourseFilter:
         instance = self.get_filter(filter_id)
 
-        update_data = data.model_dump(exclude_unset=True)
-        if not update_data:
-            return instance
+        # ``name`` is required at the schema level, so ``new_name`` is always
+        # present and non-blank here. A no-op (same name) still flows through
+        # so ``updated_at`` advances — that's a fine default for PATCH.
+        new_name = data.name
 
-        new_name = update_data.get("name")
-        if new_name and new_name != instance.name:
+        if new_name != instance.name:
             existing = self.repo.get_by_name(new_name)
             if existing and existing.id != instance.id:
                 raise ConflictException(
@@ -74,7 +74,7 @@ class CourseFilterService:
                 )
 
         try:
-            updated = self.repo.update(filter_id, **update_data)
+            updated = self.repo.update(filter_id, name=new_name)
         except IntegrityError as e:
             self.db.rollback()
             logger.warning(

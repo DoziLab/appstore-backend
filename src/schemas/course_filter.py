@@ -1,6 +1,5 @@
 """Course filter schemas for request/response validation."""
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -18,25 +17,39 @@ class CourseFilterCreate(BaseModel):
             raise ValueError("name must not be blank")
         return v
 
-    model_config = ConfigDict(json_schema_extra={"example": {"name": "SQL"}})
+    # ``extra="forbid"`` lets us reject typos / stale clients up-front instead
+    # of silently dropping unknown keys (Pydantic's default).
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"example": {"name": "SQL"}},
+    )
 
 
 class CourseFilterUpdate(BaseModel):
-    """Schema for renaming a course filter."""
+    """Schema for renaming a course filter.
 
-    name: Optional[str] = Field(None, description="Neuer Filter-String", min_length=1, max_length=255)
+    Today the only editable field is ``name`` — and it is REQUIRED here, not
+    optional. Rationale: a PATCH with no editable field is a no-op, and
+    silently accepting ``{}`` lets buggy clients ship a deploy that „works"
+    in CI and surprises us in prod. If a second editable field is added later,
+    relax this back to ``Optional`` and add a model-level ``at-least-one-set``
+    validator.
+    """
+
+    name: str = Field(..., description="Neuer Filter-String", min_length=1, max_length=255)
 
     @field_validator("name")
     @classmethod
-    def _strip(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
+    def _strip(cls, v: str) -> str:
         v = v.strip()
         if not v:
             raise ValueError("name must not be blank")
         return v
 
-    model_config = ConfigDict(json_schema_extra={"example": {"name": "SQL Grundlagen"}})
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"example": {"name": "SQL Grundlagen"}},
+    )
 
 
 class CourseFilterResponse(BaseModel):
