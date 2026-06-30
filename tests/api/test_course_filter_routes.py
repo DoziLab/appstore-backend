@@ -359,3 +359,72 @@ def test_delete_filter_lecturer_returns_403():
 
     response = client.delete(f"/api/v1/course-filters/{uuid4()}")
     assert response.status_code == 403
+
+
+# ── strict schema: required + no extra fields ─────────────────────────────────
+
+
+def test_create_filter_rejects_extra_fields():
+    """``extra="forbid"`` blocks unknown keys so a typo / stale client surfaces
+    as 422 instead of being silently dropped."""
+    app.dependency_overrides[get_current_user] = _admin_user
+    app.dependency_overrides[get_db] = lambda: MagicMock()
+
+    response = client.post(
+        "/api/v1/course-filters",
+        json={"name": "SQL", "color": "red"},
+    )
+    assert response.status_code == 422
+
+
+def test_update_filter_empty_body_returns_422():
+    """``name`` is required on PATCH — an empty body is not a valid no-op."""
+    app.dependency_overrides[get_current_user] = _admin_user
+    app.dependency_overrides[get_db] = lambda: MagicMock()
+
+    response = client.patch(f"/api/v1/course-filters/{uuid4()}", json={})
+    assert response.status_code == 422
+
+
+def test_update_filter_rejects_extra_fields():
+    """Same forbid-extra contract on PATCH so frontend doesn't accidentally
+    POST fields that look editable but aren't."""
+    app.dependency_overrides[get_current_user] = _admin_user
+    app.dependency_overrides[get_db] = lambda: MagicMock()
+
+    response = client.patch(
+        f"/api/v1/course-filters/{uuid4()}",
+        json={"name": "x", "id": "spoofed"},
+    )
+    assert response.status_code == 422
+
+
+def test_update_filter_to_same_name_succeeds():
+    """No-op rename (same name) is intentionally allowed — flows through and
+    bumps ``updated_at``. The duplicate-check skips because the existing row
+    IS the same row."""
+    fid = str(uuid4())
+    existing = _make_filter("SQL", fid=fid)
+
+    repo = MagicMock()
+    repo.get_by_id.return_value = existing
+    # If the service mistakenly hit get_by_name here, it would short-circuit
+    # to 409 because existing.id matches. Make sure it never gets called.
+    repo.get_by_name.side_effect = AssertionError(
+        "get_by_name must not be called when name is unchanged"
+    )
+    repo.update.return_value = existing
+
+    app.dependency_overrides[get_current_user] = _admin_user
+    app.dependency_overrides[get_db] = lambda: MagicMock()
+
+    with patch(
+        "src.services.course_filter_service.CourseFilterRepository",
+        return_value=repo,
+    ):
+        response = client.patch(
+            f"/api/v1/course-filters/{fid}", json={"name": "SQL"}
+        )
+
+    assert response.status_code == 200
+    repo.update.assert_called_once()
