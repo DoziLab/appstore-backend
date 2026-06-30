@@ -11,7 +11,7 @@ from src.core.response_builder import ResponseBuilder
 from src.core.dependencies import RequestID, Pagination, CurrentUser, require_roles
 from src.repositories.deployment_repository import DeploymentRepository
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
-from src.schemas.deployment import DeploymentResponse, DeploymentCreate, DeploymentExtend
+from src.schemas.deployment import DeploymentResponse, DeploymentCreate, DeploymentExtend, DeploymentRedeployRequest
 from src.services.deployment_service import DeploymentService
 from src.services.deployment_log_service import DeploymentLogService
 from src.services.openstack_heat_service import HeatStackService
@@ -23,8 +23,10 @@ from src.schemas.deployment import (
 )
 from src.tasks.deploy_tasks import delete_deployment as delete_deployment_task
 from src.tasks.deploy_tasks import restart_deployment as restart_deployment_task
+from src.tasks.deploy_tasks import redeploy_instance as redeploy_instance_task
+from src.tasks.deploy_tasks import redeploy_deployment as redeploy_deployment_task
 from src.models.deployment import DeploymentStatus, Deployment
-from src.models.deployment_instance import DeploymentInstance
+from src.models.deployment_instance import DeploymentInstance, DeploymentInstanceStatus
 from src.models.deployment_instance_access import DeploymentInstanceAccess
 from src.models.template_version import TemplateVersion
 
@@ -872,6 +874,229 @@ async def restart_deployment(
     return ResponseBuilder.success(
         data={"deployment_id": deployment_id, "status": "restart_queued"},
         message="Restart requested; operation is in progress",
+        request_id=request_id,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+
+
+@router.post(
+    "/{deployment_id}/redeploy",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Redeploy every VM in a deployment",
+    responses={
+        202: {"description": "Redeploy requested; operation in progress"},
+        400: {"description": "Deployment is in an invalid state or has no instances"},
+        403: {"description": "Forbidden - not owner or insufficient role"},
+        404: {"description": "Deployment not found"},
+        500: {"description": "Failed to enqueue redeploy task"},
+    },
+)
+async def redeploy_deployment_endpoint(
+    deployment_id: str,
+    db: DBSession,
+    request_id: RequestID,
+    user: CurrentUser,
+    payload: DeploymentRedeployRequest | None = None,
+    openstack_project_id: UUID | None = Query(
+        None,
+        description="OpenStack project (local DB id) the deployment must belong to. Required for non-admin users.",
+    ),
+):
+    """Destroy-and-recreate every VM (``DeploymentInstance``) in this
+    deployment, one after another, optionally with overridden parameters.
+
+    Unlike :func:`restart_deployment` (which only triggers a Heat
+    ``update_stack`` on the existing stack), this rebuilds each VM from
+    scratch: Heat stack deleted → Heat stack recreated → Ansible re-run →
+    credentials regenerated (unless ``preserve_credentials=true``). Use it
+    when a config / template parameter changed and you want the change to
+    actually take effect.
+
+    Sequential by design — running them in parallel risks tripping the
+    OpenStack project quota mid-class. The parent deployment stays in
+    ``RUNNING`` between instances so the UI can show per-VM progress and
+    siblings stay reachable.
+
+    **Authorization:** Owner (lecturer) or Admin only.
+    """
+    deployment_repo = DeploymentRepository(db)
+    deployment = deployment_repo.get_by_id(deployment_id)
+    if not deployment:
+        raise NotFoundException(f"Deployment with ID {deployment_id} not found")
+
+    authorize_deployment_access(deployment, user, openstack_project_id, db)
+
+    transitional_states = [
+        DeploymentStatus.CREATING,
+        DeploymentStatus.DELETING,
+        DeploymentStatus.RESTARTING,
+    ]
+    if deployment.status in transitional_states:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Cannot redeploy deployment in {deployment.status.value} state. "
+                f"Please wait for the current operation to complete."
+            ),
+        )
+
+    # If any instance is already mid-redeploy, refuse — two redeploy tasks racing
+    # the same Heat stack would corrupt deployment.openstack_stack_id and leak
+    # stacks. We only need to find ONE such instance to reject.
+    in_flight = (
+        db.query(DeploymentInstance.id)
+        .filter(
+            DeploymentInstance.deployment_id == deployment_id,
+            DeploymentInstance.status == DeploymentInstanceStatus.REDEPLOYING,
+        )
+        .first()
+    )
+    if in_flight is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "A redeploy is already in progress for at least one instance "
+                "in this deployment; wait for it to finish before queuing another."
+            ),
+        )
+
+    instance_count = (
+        db.query(DeploymentInstance)
+        .filter(DeploymentInstance.deployment_id == deployment_id)
+        .count()
+    )
+    if instance_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deployment has no instances to redeploy",
+        )
+
+    body = payload or DeploymentRedeployRequest()
+    # We deliberately don't wrap .delay() in a broad except: a broker outage or
+    # a non-serialisable override value should surface as the underlying error
+    # (Celery's own message) so the caller can diagnose it, instead of being
+    # masked behind a generic "Failed to enqueue redeploy task".
+    redeploy_deployment_task.delay(
+        deployment_id,
+        deployment_parameter_overrides=body.deployment_parameter_overrides,
+        instance_parameter_overrides=body.instance_parameter_overrides,
+        preserve_credentials=body.preserve_credentials,
+    )
+
+    return ResponseBuilder.success(
+        data={
+            "deployment_id": deployment_id,
+            "instance_count": instance_count,
+            "status": "redeploy_queued",
+            "preserve_credentials": body.preserve_credentials,
+        },
+        message=f"Redeploy requested for {instance_count} instance(s); operation in progress",
+        request_id=request_id,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+
+
+@router.post(
+    "/{deployment_id}/instances/{instance_id}/redeploy",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Redeploy a single VM (DeploymentInstance)",
+    responses={
+        202: {"description": "Redeploy requested; operation in progress"},
+        400: {"description": "Deployment or instance is in an invalid state"},
+        403: {"description": "Forbidden - not owner or insufficient role"},
+        404: {"description": "Deployment or instance not found"},
+        500: {"description": "Failed to enqueue redeploy task"},
+    },
+)
+async def redeploy_instance_endpoint(
+    deployment_id: str,
+    instance_id: str,
+    db: DBSession,
+    request_id: RequestID,
+    user: CurrentUser,
+    payload: DeploymentRedeployRequest | None = None,
+    openstack_project_id: UUID | None = Query(
+        None,
+        description="OpenStack project (local DB id) the deployment must belong to. Required for non-admin users.",
+    ),
+):
+    """Destroy-and-recreate exactly one VM inside an existing deployment.
+
+    Use this when one VM is wedged, or to apply a config change to a
+    single group without touching its siblings. The parent deployment
+    stays in ``RUNNING`` for the duration — only the target instance
+    flips to ``REDEPLOYING``.
+
+    Body parameters mirror the deployment-wide endpoint, with one
+    semantic shift: ``deployment_parameter_overrides`` is treated as the
+    full override for this one VM (since there's only one in scope).
+    ``instance_parameter_overrides`` is ignored here — pass per-VM
+    parameters directly in ``deployment_parameter_overrides``.
+
+    **Authorization:** Owner (lecturer) or Admin only.
+    """
+    deployment_repo = DeploymentRepository(db)
+    deployment = deployment_repo.get_by_id(deployment_id)
+    if not deployment:
+        raise NotFoundException(f"Deployment with ID {deployment_id} not found")
+
+    authorize_deployment_access(deployment, user, openstack_project_id, db)
+
+    transitional_states = [
+        DeploymentStatus.CREATING,
+        DeploymentStatus.DELETING,
+        DeploymentStatus.RESTARTING,
+    ]
+    if deployment.status in transitional_states:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Cannot redeploy instance while deployment is in {deployment.status.value} state."
+            ),
+        )
+
+    instance = (
+        db.query(DeploymentInstance)
+        .filter(
+            DeploymentInstance.id == instance_id,
+            DeploymentInstance.deployment_id == deployment_id,
+        )
+        .first()
+    )
+    if not instance:
+        raise NotFoundException(
+            f"Instance {instance_id} not found in deployment {deployment_id}"
+        )
+
+    # Refuse if this instance is already mid-redeploy — a second task racing the
+    # first one would delete a stack the first already removed (raises and flips
+    # status to FAILED) and the survivors would corrupt deployment.openstack_stack_id.
+    if instance.status == DeploymentInstanceStatus.REDEPLOYING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Instance {instance_id} is already being redeployed; "
+                "wait for the current operation to finish."
+            ),
+        )
+
+    body = payload or DeploymentRedeployRequest()
+    # No broad except around .delay() — see redeploy_deployment_endpoint above.
+    redeploy_instance_task.delay(
+        deployment_id,
+        instance_id,
+        deployment_parameter_overrides=body.deployment_parameter_overrides,
+        preserve_credentials=body.preserve_credentials,
+    )
+
+    return ResponseBuilder.success(
+        data={
+            "deployment_id": deployment_id,
+            "instance_id": instance_id,
+            "status": "redeploy_queued",
+            "preserve_credentials": body.preserve_credentials,
+        },
+        message="Redeploy requested for instance; operation in progress",
         request_id=request_id,
         status_code=status.HTTP_202_ACCEPTED,
     )

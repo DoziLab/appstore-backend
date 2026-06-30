@@ -9,9 +9,18 @@ from src.core.database import Base
 
 
 class DeploymentInstanceStatus(str, Enum):
-    """Deployment instance status values."""
+    """Deployment instance status values.
+
+    ``REDEPLOYING`` is set on a single instance while ``redeploy_instance``
+    tears down its Heat stack and rebuilds it. The parent ``Deployment`` row
+    stays in ``RUNNING`` during that — only this one instance is transient,
+    so siblings remain reachable. When the redeploy succeeds the row is
+    replaced with a fresh ``DeploymentInstance``; the old row is deleted as
+    part of the task, mirroring delete_deployment's instance teardown.
+    """
     CREATING = "creating"
     RUNNING = "running"
+    REDEPLOYING = "redeploying"
     FAILED = "failed"
     DELETED = "deleted"
 

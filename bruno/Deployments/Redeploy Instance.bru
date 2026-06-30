@@ -1,0 +1,141 @@
+meta {
+  name: Redeploy Instance
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{base_url}}/api/v1/deployments/{{deployment_id}}/instances/{{instance_id}}/redeploy?openstack_project_id={{openstack_project_local_id}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+params:query {
+  openstack_project_id: {{openstack_project_local_id}}
+}
+
+params:path {
+  deployment_id:
+  instance_id:
+}
+
+body:json {
+  {
+    "deployment_parameter_overrides": {
+      "include_example_notebooks": true,
+      "flavor": "gp1.medium"
+    },
+    "preserve_credentials": false
+  }
+}
+
+docs {
+  # Redeploy Instance (single VM)
+
+  Destroy-and-recreate **exactly one VM** (DeploymentInstance) inside an
+  existing deployment.
+
+  Use this when one VM is wedged, or to apply a config change to a single
+  group without touching its siblings. The parent deployment stays in
+  `RUNNING` for the duration — only the targeted instance flips to
+  `REDEPLOYING`.
+
+  ## Authorization
+  - **Owner (Lecturer)** or **Admin** only
+  - Lecturers can only redeploy instances of their own deployments
+  - Admins can redeploy any instance
+
+  ## Body
+
+  All fields are optional. Empty body = redeploy with the deployment's stored
+  parameters unchanged and fresh credentials.
+
+  | Field                            | Type                     | Description |
+  |----------------------------------|--------------------------|-------------|
+  | `deployment_parameter_overrides` | `dict[str, Any]`         | Merged ON TOP of the deployment's stored parameters for this VM. Since there's only one VM in scope, treat this as the full override map for this instance. |
+  | `preserve_credentials`           | `bool` (default `false`) | Keep the existing access rows (passwords / SSH keys / activation links) on the freshly-created instance instead of regenerating them. |
+
+  > **Note:** The `instance_parameter_overrides` field accepted by the
+  > deployment-wide endpoint is **ignored here**. Pass per-VM parameters
+  > directly in `deployment_parameter_overrides`.
+
+  ## Process
+
+  1. API validates permissions, deployment state, and instance existence.
+  2. Celery task `redeploy_instance` is enqueued.
+  3. Task flips instance status to `REDEPLOYING`.
+  4. If `preserve_credentials=true`: snapshots the current access rows.
+  5. Old Heat stack deleted, old `DeploymentInstance` + access rows wiped.
+  6. New Heat stack created with merged parameters (same `-s<idx>-<dep4>` slug
+     so OpenStack tags stay consistent).
+  7. Ansible runs; credentials are persisted (or restored from snapshot).
+  8. The deployment's `openstack_stack_id` JSON array is rewritten so the old
+     ID is dropped and the new one is added — a future DELETE walks the right
+     list.
+
+  ## Response
+
+  Returns 202 Accepted; the actual redeploy runs asynchronously.
+
+  ## Example Response
+
+  ```json
+  {
+    "success": true,
+    "data": {
+      "deployment_id": "deploy-123",
+      "instance_id": "inst-A",
+      "status": "redeploy_queued",
+      "preserve_credentials": false
+    },
+    "message": "Redeploy requested for instance; operation in progress",
+    "request_id": "req-456"
+  }
+  ```
+
+  ## Error Responses
+
+  **404 Not Found** (deployment missing)
+  ```json
+  {"success": false, "message": "Deployment with ID xyz not found"}
+  ```
+
+  **404 Not Found** (instance missing or belongs to a different deployment)
+  ```json
+  {"success": false, "message": "Instance inst-A not found in deployment deploy-123"}
+  ```
+
+  **403 Forbidden** (lecturer not the owner)
+  ```json
+  {"success": false, "message": "You do not have permission to access this deployment"}
+  ```
+
+  **400 Bad Request** (deployment in transitional state)
+  ```json
+  {"success": false, "message": "Cannot redeploy instance while deployment is in deleting state."}
+  ```
+
+  **500 Internal Server Error** (task enqueue failure)
+  ```json
+  {"success": false, "message": "Failed to enqueue redeploy task"}
+  ```
+
+  ## Tracking Progress
+
+  - Watch this single instance's `.status` (REDEPLOYING → CREATING → RUNNING|FAILED).
+  - Live log stream: `GET /deployments/{id}/logs/stream`.
+  - Sibling VMs remain reachable throughout — no class-wide outage.
+
+  ## Caveats
+
+  - The instance lookup uses the row's stored `vm_name` (`-s<idx>-<dep4>` suffix)
+    to recover which `stack_assignment` produced it. Manually-renamed VMs may
+    fail with `Cannot recover stack_assignment for instance ...`.
+  - `preserve_credentials=true` only restores credentials present in
+    `DeploymentInstanceAccess`. Passwords generated ad-hoc inside Ansible
+    playbooks (no credential spec entry) are still regenerated.
+}
