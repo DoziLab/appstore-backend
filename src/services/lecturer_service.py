@@ -183,15 +183,16 @@ class LecturerService:
 
         # For each template, count active versions once per template so the
         # detail view doesn't lie about "empty" templates.
-        version_counts = dict(
-            self.db.query(
+        version_counts: dict[str, int] = {
+            row[0]: row[1]
+            for row in self.db.query(
                 TemplateVersion.template_id,
                 func.count(TemplateVersion.id),
             )
             .filter(TemplateVersion.template_id.in_([t.id for t in templates] or [""]))
             .group_by(TemplateVersion.template_id)
             .all()
-        )
+        }
 
         return {
             "id": user.id,

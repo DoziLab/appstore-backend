@@ -15,7 +15,6 @@ for the same reason.
 from __future__ import annotations
 
 import logging
-from uuid import UUID
 
 from src.celery_app import celery_app
 from src.core.database import SessionLocal
