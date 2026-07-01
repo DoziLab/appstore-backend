@@ -2,7 +2,8 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, status, Query, Depends
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi.responses import Response
 
 from src.core.response_builder import ResponseBuilder
 from src.core.dependencies import DBSession, RequestID, Pagination, require_roles, CurrentUser
@@ -15,6 +16,7 @@ from src.schemas.template import (
 )
 from src.schemas.template_version import TemplateVersionResponse
 from src.services.template_service import TemplateService
+from src.services.template_icon_service import TemplateIconService
 from src.services.github_import_service import GithubImportService
 from src.models.user import UserRole
 from src.models.template import TemplateVisibility
@@ -233,7 +235,6 @@ async def import_template_from_github(
         app_yaml_path=payload.app_yaml_path,
         name=payload.name,
         description=payload.description,
-        icon_url=payload.icon_url,
         owner_user_id=current_user["user_id"],
         owner_user_roles=current_user.get("roles", []),
         # The pydantic validator normalises this to "private"/"public" (or
@@ -286,3 +287,126 @@ async def import_new_version_from_github(
         message="Template version imported from GitHub successfully",
         request_id=request_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Icon-Upload
+# ---------------------------------------------------------------------------
+#
+# Der Upload lebt bewusst auf einem eigenen Endpoint statt am POST/PATCH
+# /templates, damit die JSON-API rein-JSON bleibt und Clients ohne
+# Anpassung weiterlaufen. Die drei Endpoints (POST/GET/DELETE) sind
+# symmetrisch und respektieren die Standard-Sichtbarkeitsregeln:
+# Admin darf alles, Owner darf sein eigenes, Fremde nur PUBLIC-Templates
+# mit mindestens einer APPROVED Version (letzteres nur für den Serve-
+# Endpoint — Upload/Delete sind owner-or-admin-only).
+
+
+@router.post(
+    "/{template_id}/icon",
+    status_code=status.HTTP_201_CREATED,
+    response_model=None,
+)
+async def upload_template_icon(
+    template_id: UUID,
+    db: DBSession,
+    request_id: RequestID,
+    current_user: CurrentUser,
+    file: UploadFile = File(..., description="Icon image (PNG, JPEG or WebP, max 5 MB)"),
+):
+    """Upload (or replace) the icon image for a template.
+
+    Owner-or-admin-only. Erlaubte Formate: ``image/png``, ``image/jpeg``,
+    ``image/webp``; maximale Größe: 5 MB (konfigurierbar via
+    ``settings.max_icon_size_bytes``).
+
+    Der Endpoint speichert die Bytes in der Tabelle ``template_icons`` und
+    setzt in der Template-Response ``icon_path`` auf
+    ``/api/v1/templates/{id}/icon``. Templates ohne hochgeladenes Bild
+    haben ``icon_path = null`` — das Frontend zeigt dann einen
+    Placeholder.
+    """
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
+    content = await file.read()
+    service = TemplateIconService(db)
+    icon = service.upload_icon(
+        template_id=str(template_id),
+        content=content,
+        content_type=file.content_type or "application/octet-stream",
+        file_name=file.filename,
+        user_id=current_user["user_id"],
+        is_admin=is_admin,
+    )
+    return ResponseBuilder.created(
+        data={
+            "id": icon.id,
+            "template_id": icon.template_id,
+            "content_type": icon.content_type,
+            "file_name": icon.file_name,
+            "size_bytes": icon.size_bytes,
+            "icon_path": f"/api/v1/templates/{icon.template_id}/icon",
+        },
+        message="Template icon uploaded successfully",
+        request_id=request_id,
+    )
+
+
+@router.get("/{template_id}/icon")
+async def get_template_icon(
+    template_id: UUID,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """Return the raw icon bytes for a template.
+
+    Same visibility rules as GET /templates/{id}: admin sees everything,
+    owner sees their own, others only PUBLIC templates with at least one
+    APPROVED version. Sends the stored MIME type as ``Content-Type`` and
+    an ETag derived from the icon row ID for browser caching.
+    """
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
+    service = TemplateIconService(db)
+    icon = service.get_icon(
+        template_id=str(template_id),
+        user_id=current_user["user_id"],
+        is_admin=is_admin,
+    )
+    headers = {
+        # 5 Minuten private cache reichen — das Icon ändert sich selten,
+        # aber ein PATCH sollte binnen kurzer Zeit sichtbar sein.
+        "Cache-Control": "private, max-age=300",
+        "ETag": f'"{icon.id}"',
+    }
+    if icon.file_name:
+        headers["Content-Disposition"] = f'inline; filename="{icon.file_name}"'
+    return Response(
+        content=icon.content,
+        media_type=icon.content_type,
+        headers=headers,
+    )
+
+
+@router.delete(
+    "/{template_id}/icon",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_template_icon(
+    template_id: UUID,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """Remove the uploaded icon for a template.
+
+    Owner-or-admin-only. Idempotent: wenn kein Icon existiert, ist die
+    Antwort trotzdem 204 (Client muss nicht wissen, ob vorher eins da war).
+    Danach fällt ``icon_path`` auf ``null`` zurück — Frontend rendert
+    einen Placeholder.
+    """
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
+    service = TemplateIconService(db)
+    service.delete_icon(
+        template_id=str(template_id),
+        user_id=current_user["user_id"],
+        is_admin=is_admin,
+    )
+    return None

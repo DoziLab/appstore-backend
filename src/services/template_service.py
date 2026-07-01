@@ -88,7 +88,6 @@ class TemplateService:
                 name=template_data.name,
                 description=template_data.description,
                 repo_url=template_data.repo_url,
-                icon_url=template_data.icon_url,
                 visibility=TemplateVisibility.PRIVATE,
                 owner_id=owner_id,
             )

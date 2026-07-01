@@ -25,11 +25,6 @@ class Template(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
     repo_url: Mapped[str] = mapped_column(String(500), nullable=False)
-    icon_url: Mapped[str | None] = mapped_column(
-        String(500),
-        nullable=True,
-        comment="Icon URL or identifier (e.g., mdi:server, /icons/template.svg, 🚀)"
-    )
     visibility: Mapped[TemplateVisibility] = mapped_column(
         SQLEnum(TemplateVisibility),
         default=TemplateVisibility.PRIVATE
@@ -59,5 +54,19 @@ class Template(Base):
         passive_deletes=True,
     )
     category_assignments: Mapped[list["TemplateCategoryAssignment"]] = relationship("TemplateCategoryAssignment", back_populates="template")
+
+    # Hochgeladenes Icon-Bild (optional). Getrennte Tabelle statt Spalte am
+    # Template, damit ``SELECT * FROM templates`` keinen 1-5 MB BLOB pro Row
+    # mitlädt. ``uselist=False`` weil per Unique-Constraint auf
+    # ``template_icons.template_id`` maximal ein Icon pro Template existiert.
+    # Die ``content``-Spalte auf ``TemplateIcon`` ist ``deferred``, wird also
+    # nur beim Serve-Endpoint tatsächlich aus der DB gezogen.
+    icon: Mapped["TemplateIcon | None"] = relationship(
+        "TemplateIcon",
+        back_populates="template",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
 
 

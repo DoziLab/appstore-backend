@@ -2032,7 +2032,6 @@ APPS = [
             "Ubuntu VM mit mehreren Benutzerkonten, verwaltet durch Ansible. "
             "Pro Gruppe wird ein Linux-Account mit eigenem Arbeitsverzeichnis erstellt."
         ),
-        "icon_url": "mdi:server-network",
         "version": "2.1.0",
         "files": [
             {"name": "app.yaml",                "type": FileType.APP_MANIFEST,    "path": "app.yaml",                       "content": MULTIUSER_APP_YAML,         "primary": False},
@@ -2051,7 +2050,6 @@ APPS = [
             "eine eigene Datenbank und einen eigenen DB-Rollen-Account. Der Dozent "
             "hat lesenden/schreibenden Zugriff auf alle Gruppen-DBs."
         ),
-        "icon_url": "mdi:database",
         "version": "2.0.0",
         "files": [
             {"name": "app.yaml",   "type": FileType.APP_MANIFEST,    "path": "app.yaml",            "content": POSTGRES_APP_YAML,     "primary": False},
@@ -2127,7 +2125,6 @@ def _seed_one_app(db: Session, owner_id: str, app: dict) -> None:
             name=app["name"],
             description=app["description"],
             repo_url="https://github.com/dozilab/appstore-templates",
-            icon_url=app["icon_url"],
             visibility=TemplateVisibility.PUBLIC,
         )
         db.add(template)
