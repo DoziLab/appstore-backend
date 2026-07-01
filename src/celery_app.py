@@ -17,6 +17,7 @@ celery_app = Celery(
         "src.tasks.deploy_tasks",
         "src.tasks.sync_tasks",
         "src.tasks.expiry_tasks",
+        "src.tasks.lecturer_tasks",
     ],
 )
 
