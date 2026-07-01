@@ -2,7 +2,7 @@
 
 Deckt POST/GET/DELETE ab, inkl. Content-Type-Whitelist, Größenlimit,
 Owner/Admin-Gate, sowie das Zusammenspiel mit der TemplateResponse
-(``effective_icon`` schaltet nach dem Upload auf die Serve-URL um).
+(``icon_path`` zeigt nach dem Upload auf den Serve-Endpoint, sonst null).
 """
 import pytest
 from fastapi import status
@@ -157,9 +157,9 @@ class TestUploadIcon:
         assert data["template_id"] == sample_template.id
         assert data["content_type"] == "image/png"
         assert data["size_bytes"] == len(PNG_1x1)
-        assert data["url"] == f"/api/v1/templates/{sample_template.id}/icon"
+        assert data["icon_path"] == f"/api/v1/templates/{sample_template.id}/icon"
 
-    def test_upload_updates_effective_icon_in_template_response(
+    def test_upload_populates_icon_path_in_template_response(
         self, owner_client, sample_template
     ):
         owner_client.post(
@@ -169,9 +169,8 @@ class TestUploadIcon:
         get_resp = owner_client.get(f"/api/v1/templates/{sample_template.id}")
         assert get_resp.status_code == status.HTTP_200_OK
         body = get_resp.json()["data"]
-        assert body["has_uploaded_icon"] is True
-        assert body["effective_icon"] == f"/api/v1/templates/{sample_template.id}/icon"
-        # icon_url gibt es nicht mehr — nur noch effective_icon / has_uploaded_icon
+        assert body["icon_path"] == f"/api/v1/templates/{sample_template.id}/icon"
+        # icon_url gibt es nicht mehr — nur noch icon_path
         assert "icon_url" not in body
 
     def test_upload_svg_rejected_415(self, owner_client, sample_template):
@@ -271,11 +270,10 @@ class TestDeleteIcon:
         # Icon ist danach weg → GET liefert 404.
         get_resp = owner_client.get(f"/api/v1/templates/{sample_template.id}/icon")
         assert get_resp.status_code == status.HTTP_404_NOT_FOUND
-        # ``effective_icon`` ist ohne Upload ``None`` — Frontend rendert Placeholder.
+        # ``icon_path`` ist ohne Upload ``None`` — Frontend rendert Placeholder.
         tpl_resp = owner_client.get(f"/api/v1/templates/{sample_template.id}")
         body = tpl_resp.json()["data"]
-        assert body["has_uploaded_icon"] is False
-        assert body["effective_icon"] is None
+        assert body["icon_path"] is None
 
     def test_delete_is_idempotent(self, owner_client, sample_template):
         """Auch ohne vorher hochgeladenes Icon liefert DELETE 204."""

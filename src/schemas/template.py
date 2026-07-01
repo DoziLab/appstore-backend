@@ -85,10 +85,9 @@ class TemplateResponse(BaseModel):
     # `owner_username` are exposed to clients.
     owner: Any = Field(default=None, exclude=True, repr=False)
 
-    # Internes Feld für die ``effective_icon``-Berechnung. Wird von SQLAlchemy
+    # Internes Feld für die ``icon_path``-Berechnung. Wird von SQLAlchemy
     # via ``from_attributes=True`` gefüllt, aus der Response aber
-    # ausgeblendet — Clients bekommen nur ``effective_icon`` /
-    # ``has_uploaded_icon``.
+    # ausgeblendet — Clients bekommen nur ``icon_path``.
     icon: Any = Field(default=None, exclude=True, repr=False)
 
     @computed_field  # type: ignore[prop-decorator]
@@ -117,23 +116,16 @@ class TemplateResponse(BaseModel):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def has_uploaded_icon(self) -> bool:
-        """True wenn ein Icon-Bild via ``POST /templates/{id}/icon`` hochgeladen wurde.
+    def icon_path(self) -> Optional[str]:
+        """Relativer API-Pfad zum Icon-Bild, oder ``None``.
 
-        Wird aus der ``TemplateIcon``-Relation abgeleitet und ist dasselbe
-        Signal, das ``effective_icon`` intern nutzt — praktisch fürs
-        Frontend, um „Icon entfernen"-Buttons konditional zu rendern.
-        """
-        return self.icon is not None
+        Wenn ein Icon-Bild via ``POST /templates/{id}/icon`` hochgeladen
+        wurde → ``/api/v1/templates/{id}/icon``. Sonst ``None`` — der
+        Client rendert dann einen Default-Placeholder.
 
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def effective_icon(self) -> Optional[str]:
-        """Icon-URL für das Frontend, falls ein Bild hochgeladen wurde.
-
-        Wenn ein Icon existiert → ``/api/v1/templates/{id}/icon``.
-        Sonst ``None`` — der Client rendert dann einen Default-Placeholder.
-        Externe URLs oder ``mdi:*``-Identifier gibt es nicht mehr.
+        Bewusst *path*, nicht *url*: der Wert enthält keinen Origin und
+        muss vom Client gegen die API-Base-URL aufgelöst werden (dieselbe
+        Base-URL, gegen die auch alle anderen ``/api/v1/*``-Calls laufen).
         """
         if self.icon is not None:
             return f"/api/v1/templates/{self.id}/icon"
@@ -152,8 +144,7 @@ class TemplateResponse(BaseModel):
                 "owner_username": "bberg",
                 "repo_url": "https://github.com/example/flask-template",
                 "visibility": "public",
-                "has_uploaded_icon": False,
-                "effective_icon": None,
+                "icon_path": None,
                 "versions": [],
                 "created_at": "2024-11-27T10:00:00Z",
                 "updated_at": "2024-11-27T10:00:00Z"

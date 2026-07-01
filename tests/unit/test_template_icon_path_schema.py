@@ -1,8 +1,9 @@
-"""Tests für ``effective_icon`` und ``has_uploaded_icon`` auf TemplateResponse.
+"""Tests für ``icon_path`` auf TemplateResponse.
 
 Nach dem Umbau kennt das Backend nur noch hochgeladene Icon-Bilder;
 ``mdi:*``/URL-Strings gibt es nicht mehr. Frontend rendert entweder
-``effective_icon`` als ``<img src="…">`` oder einen Placeholder.
+``icon_path`` als ``<img src="…">`` (gegen die API-Base-URL aufgelöst)
+oder einen Placeholder.
 """
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -29,38 +30,36 @@ def _orm_template(**overrides):
     return SimpleNamespace(**defaults)
 
 
-class TestEffectiveIcon:
-    def test_uploaded_icon_returns_serve_url(self):
+class TestIconPath:
+    def test_uploaded_icon_returns_serve_path(self):
         icon = SimpleNamespace(id="icon-42")
         response = TemplateResponse.model_validate(_orm_template(icon=icon))
-        assert response.effective_icon == "/api/v1/templates/tmpl-1/icon"
-        assert response.has_uploaded_icon is True
+        assert response.icon_path == "/api/v1/templates/tmpl-1/icon"
 
     def test_no_icon_returns_none(self):
-        """Ohne Upload ist ``effective_icon`` ``None`` — kein Fallback."""
+        """Ohne Upload ist ``icon_path`` ``None`` — kein Fallback."""
         response = TemplateResponse.model_validate(_orm_template(icon=None))
-        assert response.effective_icon is None
-        assert response.has_uploaded_icon is False
+        assert response.icon_path is None
 
 
 class TestSerializedPayloadShape:
     def test_raw_icon_object_not_leaked_into_json(self):
         """Die ORM-Icon-Relation darf nicht in die Response wandern —
-        Clients bekommen nur ``effective_icon`` + ``has_uploaded_icon``."""
+        Clients bekommen nur ``icon_path``."""
         icon = SimpleNamespace(id="icon-42", content_type="image/png")
         payload = TemplateResponse.model_validate(
             _orm_template(icon=icon)
         ).model_dump(mode="json")
 
         assert "icon" not in payload
-        assert "icon_url" not in payload  # Feld existiert nicht mehr
-        assert payload["effective_icon"] == "/api/v1/templates/tmpl-1/icon"
-        assert payload["has_uploaded_icon"] is True
+        assert "icon_url" not in payload  # Altes Feld existiert nicht mehr
+        assert "effective_icon" not in payload  # Zwischenname war effective_icon
+        assert "has_uploaded_icon" not in payload  # ebenfalls entfernt
+        assert payload["icon_path"] == "/api/v1/templates/tmpl-1/icon"
 
     def test_json_payload_when_no_upload(self):
         payload = TemplateResponse.model_validate(
             _orm_template(icon=None)
         ).model_dump(mode="json")
 
-        assert payload["effective_icon"] is None
-        assert payload["has_uploaded_icon"] is False
+        assert payload["icon_path"] is None

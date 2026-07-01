@@ -321,9 +321,9 @@ async def upload_template_icon(
     ``settings.max_icon_size_bytes``).
 
     Der Endpoint speichert die Bytes in der Tabelle ``template_icons`` und
-    setzt in der Template-Response ``effective_icon`` auf
+    setzt in der Template-Response ``icon_path`` auf
     ``/api/v1/templates/{id}/icon``. Templates ohne hochgeladenes Bild
-    haben ``effective_icon = null`` — das Frontend zeigt dann einen
+    haben ``icon_path = null`` — das Frontend zeigt dann einen
     Placeholder.
     """
     is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
@@ -344,7 +344,7 @@ async def upload_template_icon(
             "content_type": icon.content_type,
             "file_name": icon.file_name,
             "size_bytes": icon.size_bytes,
-            "url": f"/api/v1/templates/{icon.template_id}/icon",
+            "icon_path": f"/api/v1/templates/{icon.template_id}/icon",
         },
         message="Template icon uploaded successfully",
         request_id=request_id,
@@ -399,8 +399,8 @@ async def delete_template_icon(
 
     Owner-or-admin-only. Idempotent: wenn kein Icon existiert, ist die
     Antwort trotzdem 204 (Client muss nicht wissen, ob vorher eins da war).
-    Danach fällt ``effective_icon`` auf ``null`` zurück — Frontend
-    rendert einen Placeholder.
+    Danach fällt ``icon_path`` auf ``null`` zurück — Frontend rendert
+    einen Placeholder.
     """
     is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
     service = TemplateIconService(db)
