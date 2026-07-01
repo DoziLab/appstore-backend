@@ -13,11 +13,15 @@ GITHUB_URL_DESCRIPTION = (
 
 
 class TemplateCreate(BaseModel):
-    """Schema for creating a template."""
+    """Schema for creating a template.
+
+    Icons werden nicht mehr im Metadata-Body übergeben — der Client legt
+    das Template zunächst ohne Icon an und lädt anschließend optional ein
+    Bild via ``POST /templates/{id}/icon`` hoch.
+    """
     name: str = Field(..., description="Name of the template", max_length=255)
     description: Optional[str] = Field(None, description="Template description")
     repo_url: str = Field(..., description="Git repository URL", max_length=500)
-    icon_url: Optional[str] = Field(None, description="Icon URL or identifier (mdi:server, fa:server, 🚀, /icons/template.svg)", max_length=500)
     visibility: str = Field(default="private", description="Template visibility (private/public)")
 
     model_config = ConfigDict(
@@ -26,7 +30,6 @@ class TemplateCreate(BaseModel):
                 "name": "Python Flask Template",
                 "description": "A template for Flask web applications",
                 "repo_url": "https://github.com/example/flask-template",
-                "icon_url": "mdi:flask",
                 "visibility": "public"
             }
         }
@@ -34,11 +37,14 @@ class TemplateCreate(BaseModel):
 
 
 class TemplateUpdate(BaseModel):
-    """Schema for updating a template."""
+    """Schema for updating a template.
+
+    Wie ``TemplateCreate`` — kein Icon-Feld mehr. Bild-Änderungen laufen
+    über den dedizierten Upload-Endpoint.
+    """
     name: Optional[str] = Field(None, description="Name of the template", max_length=255)
     description: Optional[str] = Field(None, description="Template description")
     repo_url: Optional[str] = Field(None, description="Git repository URL", max_length=500)
-    icon_url: Optional[str] = Field(None, description="Icon URL or identifier (mdi:server, fa:server, 🚀, /icons/template.svg)", max_length=500)
     visibility: Optional[str] = Field(None, description="Template visibility (private/public) - Only admins can change this")
 
     model_config = ConfigDict(
@@ -46,7 +52,6 @@ class TemplateUpdate(BaseModel):
             "example": {
                 "name": "Updated Template Name",
                 "description": "Updated description",
-                "icon_url": "mdi:server"
             }
         }
     )
@@ -59,7 +64,6 @@ class TemplateResponse(BaseModel):
     description: Optional[str] = Field(None, description="Template description")
     owner_id: str = Field(..., description="Owner user ID")
     repo_url: str = Field(..., description="Git repository URL")
-    icon_url: Optional[str] = Field(None, description="Icon URL or identifier")
     visibility: str = Field(..., description="Template visibility")
     publish_requested: bool = Field(
         default=False,
@@ -83,7 +87,8 @@ class TemplateResponse(BaseModel):
 
     # Internes Feld für die ``effective_icon``-Berechnung. Wird von SQLAlchemy
     # via ``from_attributes=True`` gefüllt, aus der Response aber
-    # ausgeblendet — Clients bekommen nur ``effective_icon``.
+    # ausgeblendet — Clients bekommen nur ``effective_icon`` /
+    # ``has_uploaded_icon``.
     icon: Any = Field(default=None, exclude=True, repr=False)
 
     @computed_field  # type: ignore[prop-decorator]
@@ -115,25 +120,24 @@ class TemplateResponse(BaseModel):
     def has_uploaded_icon(self) -> bool:
         """True wenn ein Icon-Bild via ``POST /templates/{id}/icon`` hochgeladen wurde.
 
-        Wird aus der ``TemplateIcon``-Relation abgeleitet und dient dem
-        Frontend als billiges Signal, ob ``effective_icon`` auf den
-        Serve-Endpoint verweist oder auf ``icon_url``.
+        Wird aus der ``TemplateIcon``-Relation abgeleitet und ist dasselbe
+        Signal, das ``effective_icon`` intern nutzt — praktisch fürs
+        Frontend, um „Icon entfernen"-Buttons konditional zu rendern.
         """
         return self.icon is not None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def effective_icon(self) -> Optional[str]:
-        """Bevorzugter Icon-Wert für das Frontend.
+        """Icon-URL für das Frontend, falls ein Bild hochgeladen wurde.
 
-        Wenn ein Icon-Bild hochgeladen wurde → ``/api/v1/templates/{id}/icon``.
-        Andernfalls Fallback auf ``icon_url`` (``mdi:*``, externe URL, …).
-        Ist beides leer, ist der Wert ``None`` — der Client rendert dann
-        einen Default-Placeholder.
+        Wenn ein Icon existiert → ``/api/v1/templates/{id}/icon``.
+        Sonst ``None`` — der Client rendert dann einen Default-Placeholder.
+        Externe URLs oder ``mdi:*``-Identifier gibt es nicht mehr.
         """
         if self.icon is not None:
             return f"/api/v1/templates/{self.id}/icon"
-        return self.icon_url
+        return None
 
     model_config = ConfigDict(
         from_attributes=True,
@@ -147,8 +151,9 @@ class TemplateResponse(BaseModel):
                 "owner_email": "berg@dhbw.de",
                 "owner_username": "bberg",
                 "repo_url": "https://github.com/example/flask-template",
-                "icon_url": "mdi:flask",
                 "visibility": "public",
+                "has_uploaded_icon": False,
+                "effective_icon": None,
                 "versions": [],
                 "created_at": "2024-11-27T10:00:00Z",
                 "updated_at": "2024-11-27T10:00:00Z"
@@ -164,10 +169,12 @@ class GithubImportNewTemplate(BaseModel):
     no approval flow). Pass ``visibility="public"`` to make it marketplace-
     visible — the first version then enters the standard approval flow
     (``pending`` unless the caller is an admin).
+
+    Icons werden nach dem Import optional via ``POST /templates/{id}/icon``
+    hochgeladen — kein Icon-Feld mehr auf dem Import-Body.
     """
     name: str = Field(..., max_length=255)
     description: Optional[str] = None
-    icon_url: Optional[str] = Field(None, max_length=500)
     github_url: str = Field(..., description=GITHUB_URL_DESCRIPTION, max_length=1000)
     app_yaml_path: Optional[str] = Field(
         default=None,
@@ -231,4 +238,3 @@ class GithubImportNewVersion(BaseModel):
             }
         }
     )
-

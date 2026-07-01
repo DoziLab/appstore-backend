@@ -89,7 +89,6 @@ def sample_template(db_session, owner):
         owner_id=owner.id,
         repo_url="https://github.com/example/icon-template",
         visibility=TemplateVisibility.PUBLIC,
-        icon_url="mdi:server",
     )
     db_session.add(template)
     db_session.commit()
@@ -172,8 +171,8 @@ class TestUploadIcon:
         body = get_resp.json()["data"]
         assert body["has_uploaded_icon"] is True
         assert body["effective_icon"] == f"/api/v1/templates/{sample_template.id}/icon"
-        # icon_url bleibt als Rohfeld erhalten
-        assert body["icon_url"] == "mdi:server"
+        # icon_url gibt es nicht mehr — nur noch effective_icon / has_uploaded_icon
+        assert "icon_url" not in body
 
     def test_upload_svg_rejected_415(self, owner_client, sample_template):
         response = owner_client.post(
@@ -272,11 +271,11 @@ class TestDeleteIcon:
         # Icon ist danach weg → GET liefert 404.
         get_resp = owner_client.get(f"/api/v1/templates/{sample_template.id}/icon")
         assert get_resp.status_code == status.HTTP_404_NOT_FOUND
-        # ``effective_icon`` fällt wieder auf ``icon_url`` zurück.
+        # ``effective_icon`` ist ohne Upload ``None`` — Frontend rendert Placeholder.
         tpl_resp = owner_client.get(f"/api/v1/templates/{sample_template.id}")
         body = tpl_resp.json()["data"]
         assert body["has_uploaded_icon"] is False
-        assert body["effective_icon"] == "mdi:server"
+        assert body["effective_icon"] is None
 
     def test_delete_is_idempotent(self, owner_client, sample_template):
         """Auch ohne vorher hochgeladenes Icon liefert DELETE 204."""

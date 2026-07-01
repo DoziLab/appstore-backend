@@ -15,10 +15,10 @@ def _orm_template(owner=None, **overrides):
         description="A test template",
         owner_id="user-1",
         repo_url="https://github.com/example/test",
-        icon_url=None,
         visibility="private",
         versions=None,
         owner=owner,
+        icon=None,
         created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )

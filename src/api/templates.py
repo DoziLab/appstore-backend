@@ -235,7 +235,6 @@ async def import_template_from_github(
         app_yaml_path=payload.app_yaml_path,
         name=payload.name,
         description=payload.description,
-        icon_url=payload.icon_url,
         owner_user_id=current_user["user_id"],
         owner_user_roles=current_user.get("roles", []),
         # The pydantic validator normalises this to "private"/"public" (or
@@ -322,10 +321,10 @@ async def upload_template_icon(
     ``settings.max_icon_size_bytes``).
 
     Der Endpoint speichert die Bytes in der Tabelle ``template_icons`` und
-    setzt in der Template-Response ab sofort ``effective_icon`` auf
-    ``/api/v1/templates/{id}/icon`` — d.h. das Frontend braucht nur eine
-    URL zu rendern, egal ob externes ``icon_url`` (``mdi:*``, externe URL)
-    oder hochgeladenes Bild.
+    setzt in der Template-Response ``effective_icon`` auf
+    ``/api/v1/templates/{id}/icon``. Templates ohne hochgeladenes Bild
+    haben ``effective_icon = null`` — das Frontend zeigt dann einen
+    Placeholder.
     """
     is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
     content = await file.read()
@@ -400,8 +399,8 @@ async def delete_template_icon(
 
     Owner-or-admin-only. Idempotent: wenn kein Icon existiert, ist die
     Antwort trotzdem 204 (Client muss nicht wissen, ob vorher eins da war).
-    ``icon_url`` bleibt unverändert und wird nach dem Löschen wieder das
-    ``effective_icon``, falls gesetzt.
+    Danach fällt ``effective_icon`` auf ``null`` zurück — Frontend
+    rendert einen Placeholder.
     """
     is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
     service = TemplateIconService(db)

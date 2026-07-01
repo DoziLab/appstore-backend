@@ -334,7 +334,6 @@ class GithubImportService:
         app_yaml_path: Optional[str],
         name: str,
         description: Optional[str],
-        icon_url: Optional[str],
         owner_user_id: str,
         owner_user_roles: list[str],
         visibility: TemplateVisibility = TemplateVisibility.PRIVATE,
@@ -368,7 +367,6 @@ class GithubImportService:
             description=description,
             owner_id=owner_user_id,
             repo_url=github_url,
-            icon_url=icon_url,
             visibility=effective_visibility,
             publish_requested=wants_public,
         )

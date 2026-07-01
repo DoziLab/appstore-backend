@@ -25,11 +25,6 @@ class Template(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     owner_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False)
     repo_url: Mapped[str] = mapped_column(String(500), nullable=False)
-    icon_url: Mapped[str | None] = mapped_column(
-        String(500),
-        nullable=True,
-        comment="Icon URL or identifier (e.g., mdi:server, /icons/template.svg, 🚀)"
-    )
     visibility: Mapped[TemplateVisibility] = mapped_column(
         SQLEnum(TemplateVisibility),
         default=TemplateVisibility.PRIVATE

@@ -1,8 +1,8 @@
-"""Tests für die ``effective_icon``-Aggregation auf TemplateResponse.
+"""Tests für ``effective_icon`` und ``has_uploaded_icon`` auf TemplateResponse.
 
-Frontend soll nur ein Feld rendern müssen: hochgeladenes Bild → Serve-URL,
-sonst Fallback auf ``icon_url``, sonst ``None``. Die rohe Icon-Relation
-wird bewusst ausgeblendet.
+Nach dem Umbau kennt das Backend nur noch hochgeladene Icon-Bilder;
+``mdi:*``/URL-Strings gibt es nicht mehr. Frontend rendert entweder
+``effective_icon`` als ``<img src="…">`` oder einen Placeholder.
 """
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -18,7 +18,6 @@ def _orm_template(**overrides):
         description=None,
         owner_id="user-1",
         repo_url="https://github.com/example/test",
-        icon_url=None,
         visibility="private",
         versions=None,
         owner=None,
@@ -31,33 +30,15 @@ def _orm_template(**overrides):
 
 
 class TestEffectiveIcon:
-    def test_uploaded_icon_wins_over_icon_url(self):
-        """Wenn beide gesetzt sind, wird die Serve-URL des Uploads zurückgegeben."""
+    def test_uploaded_icon_returns_serve_url(self):
         icon = SimpleNamespace(id="icon-42")
-        response = TemplateResponse.model_validate(
-            _orm_template(icon_url="mdi:server", icon=icon)
-        )
+        response = TemplateResponse.model_validate(_orm_template(icon=icon))
         assert response.effective_icon == "/api/v1/templates/tmpl-1/icon"
         assert response.has_uploaded_icon is True
 
-    def test_icon_url_only_returned_when_no_upload(self):
-        response = TemplateResponse.model_validate(
-            _orm_template(icon_url="mdi:server", icon=None)
-        )
-        assert response.effective_icon == "mdi:server"
-        assert response.has_uploaded_icon is False
-
-    def test_external_url_returned_when_no_upload(self):
-        response = TemplateResponse.model_validate(
-            _orm_template(icon_url="https://cdn.example.com/logo.png", icon=None)
-        )
-        assert response.effective_icon == "https://cdn.example.com/logo.png"
-        assert response.has_uploaded_icon is False
-
-    def test_none_when_neither_set(self):
-        response = TemplateResponse.model_validate(
-            _orm_template(icon_url=None, icon=None)
-        )
+    def test_no_icon_returns_none(self):
+        """Ohne Upload ist ``effective_icon`` ``None`` — kein Fallback."""
+        response = TemplateResponse.model_validate(_orm_template(icon=None))
         assert response.effective_icon is None
         assert response.has_uploaded_icon is False
 
@@ -68,21 +49,18 @@ class TestSerializedPayloadShape:
         Clients bekommen nur ``effective_icon`` + ``has_uploaded_icon``."""
         icon = SimpleNamespace(id="icon-42", content_type="image/png")
         payload = TemplateResponse.model_validate(
-            _orm_template(icon_url="mdi:server", icon=icon)
+            _orm_template(icon=icon)
         ).model_dump(mode="json")
 
         assert "icon" not in payload
+        assert "icon_url" not in payload  # Feld existiert nicht mehr
         assert payload["effective_icon"] == "/api/v1/templates/tmpl-1/icon"
         assert payload["has_uploaded_icon"] is True
-        # icon_url bleibt als Rohfeld sichtbar, damit Bearbeitungs-UIs
-        # den ursprünglichen Wert weiter im Formular haben.
-        assert payload["icon_url"] == "mdi:server"
 
-    def test_json_payload_when_only_icon_url_set(self):
+    def test_json_payload_when_no_upload(self):
         payload = TemplateResponse.model_validate(
-            _orm_template(icon_url="mdi:server", icon=None)
+            _orm_template(icon=None)
         ).model_dump(mode="json")
 
-        assert payload["effective_icon"] == "mdi:server"
+        assert payload["effective_icon"] is None
         assert payload["has_uploaded_icon"] is False
-        assert payload["icon_url"] == "mdi:server"

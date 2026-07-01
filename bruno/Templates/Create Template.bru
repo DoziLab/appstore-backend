@@ -18,8 +18,7 @@ body:json {
   {
     "name": "Python Flask Template",
     "description": "A template for Flask web applications",
-    "repo_url": "https://github.com/example/flask-template",
-    "icon_url": "mdi:flask"
+    "repo_url": "https://github.com/example/flask-template"
   }
 }
 
@@ -46,8 +45,11 @@ docs {
   - `name` (required, ≤ 255)
   - `description` (optional)
   - `repo_url` (required, ≤ 500)
-  - `icon_url` (optional, ≤ 500) — e.g. `mdi:flask`, `🚀`, `/icons/template.svg`
   - `visibility` (ignored on create; backend pins to `private`)
+
+  Icons: das Feld `icon_url` gibt es nicht mehr. Nach dem Anlegen kann
+  optional ein Icon-Bild via `POST /templates/{id}/icon` hochgeladen werden
+  (multipart, PNG/JPEG/WebP, max 5 MB).
 
   ## Returns
 

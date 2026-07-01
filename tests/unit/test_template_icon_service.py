@@ -29,7 +29,6 @@ def _tpl(owner_id: str = "owner-1") -> Template:
     t.description = None
     t.owner_id = owner_id
     t.repo_url = "https://example.com"
-    t.icon_url = None
     t.visibility = TemplateVisibility.PRIVATE
     t.publish_requested = False
     t.versions = []
