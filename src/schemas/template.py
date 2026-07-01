@@ -81,6 +81,11 @@ class TemplateResponse(BaseModel):
     # `owner_username` are exposed to clients.
     owner: Any = Field(default=None, exclude=True, repr=False)
 
+    # Internes Feld für die ``effective_icon``-Berechnung. Wird von SQLAlchemy
+    # via ``from_attributes=True`` gefüllt, aus der Response aber
+    # ausgeblendet — Clients bekommen nur ``effective_icon``.
+    icon: Any = Field(default=None, exclude=True, repr=False)
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def owner_name(self) -> Optional[str]:
@@ -104,6 +109,31 @@ class TemplateResponse(BaseModel):
     def owner_username(self) -> Optional[str]:
         """Cached preferred_username of the owner; ``None`` for legacy users."""
         return getattr(self.owner, "username", None) if self.owner else None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def has_uploaded_icon(self) -> bool:
+        """True wenn ein Icon-Bild via ``POST /templates/{id}/icon`` hochgeladen wurde.
+
+        Wird aus der ``TemplateIcon``-Relation abgeleitet und dient dem
+        Frontend als billiges Signal, ob ``effective_icon`` auf den
+        Serve-Endpoint verweist oder auf ``icon_url``.
+        """
+        return self.icon is not None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def effective_icon(self) -> Optional[str]:
+        """Bevorzugter Icon-Wert für das Frontend.
+
+        Wenn ein Icon-Bild hochgeladen wurde → ``/api/v1/templates/{id}/icon``.
+        Andernfalls Fallback auf ``icon_url`` (``mdi:*``, externe URL, …).
+        Ist beides leer, ist der Wert ``None`` — der Client rendert dann
+        einen Default-Placeholder.
+        """
+        if self.icon is not None:
+            return f"/api/v1/templates/{self.id}/icon"
+        return self.icon_url
 
     model_config = ConfigDict(
         from_attributes=True,

@@ -60,4 +60,18 @@ class Template(Base):
     )
     category_assignments: Mapped[list["TemplateCategoryAssignment"]] = relationship("TemplateCategoryAssignment", back_populates="template")
 
+    # Hochgeladenes Icon-Bild (optional). Getrennte Tabelle statt Spalte am
+    # Template, damit ``SELECT * FROM templates`` keinen 1-5 MB BLOB pro Row
+    # mitlädt. ``uselist=False`` weil per Unique-Constraint auf
+    # ``template_icons.template_id`` maximal ein Icon pro Template existiert.
+    # Die ``content``-Spalte auf ``TemplateIcon`` ist ``deferred``, wird also
+    # nur beim Serve-Endpoint tatsächlich aus der DB gezogen.
+    icon: Mapped["TemplateIcon | None"] = relationship(
+        "TemplateIcon",
+        back_populates="template",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
+
 

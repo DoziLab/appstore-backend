@@ -14,6 +14,7 @@ from src.models.openstack_project import OpenstackProject
 from src.models.template import Template
 from src.models.template_category import TemplateCategory
 from src.models.template_category_assignment import TemplateCategoryAssignment
+from src.models.template_icon import TemplateIcon
 from src.models.template_version import TemplateVersion
 from src.models.template_version_file import TemplateVersionFile
 from src.models.user import User
@@ -34,6 +35,7 @@ __all__ = [
     "Template",
     "TemplateCategory",
     "TemplateCategoryAssignment",
+    "TemplateIcon",
     "TemplateVersion",
     "TemplateVersionFile",
     "User",
