@@ -6,7 +6,7 @@ from typing import Optional, Any
 
 # Allowed lifetime presets matching the Wizard dropdown.
 # Keep this in sync with appstore-frontend/src/pages/DeploymentWizard.tsx.
-ALLOWED_RUNTIME_MONTHS = (1, 3, 4, 6, 12, 24)
+ALLOWED_RUNTIME_MONTHS = (1, 3, 4, 6, 12, 24, 36)
 DEFAULT_RUNTIME_MONTHS = 4
 
 

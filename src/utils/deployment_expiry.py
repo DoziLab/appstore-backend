@@ -19,7 +19,7 @@ MAX_WARNING_DAYS = 14
 WARNING_FRACTION_OF_RUNTIME = 0.25
 
 # Average month length used to derive timedelta from ``runtime_months``. Calendar
-# months vary; over 1..24 months this ~30.44-day approximation drifts at most a
+# months vary; over 1..36 months this ~30.44-day approximation drifts at most a
 # day or two from the calendar date — acceptable for an expiry deadline.
 DAYS_PER_MONTH = 30
 

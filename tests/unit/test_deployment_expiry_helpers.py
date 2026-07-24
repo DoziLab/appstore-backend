@@ -20,7 +20,7 @@ def _now() -> datetime:
     return datetime(2026, 6, 20, 12, 0, 0, tzinfo=timezone.utc)
 
 
-@pytest.mark.parametrize("months", [1, 3, 4, 6, 12, 24])
+@pytest.mark.parametrize("months", [1, 3, 4, 6, 12, 24, 36])
 def test_compute_expiry_returns_two_future_timestamps(months: int):
     """expires_at and expiry_warning_at must both be in the future."""
     now = _now()
