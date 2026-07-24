@@ -716,17 +716,24 @@ parameters:
 
 
 class TestRejectVersionWithReason:
-    """Tests for `POST /template-versions/{id}/reject` with optional reason body."""
+    """Tests for `POST /template-versions/{id}/reject` with optional reason body.
+
+    Approval/rejection only apply to PUBLIC templates — private templates now
+    return ``approval_status=None`` and the approve/reject endpoints 400 them.
+    """
 
     @pytest.fixture
-    def pending_version(self, db_session, private_template):
+    def pending_version(self, db_session, public_approved_template):
         from src.models.template_version import TemplateVersionApprovalStatus
 
+        # Auf demselben PUBLIC-Template gibt es schon v1.0.0 APPROVED — wir
+        # legen v1.1.0 PENDING an, damit der UniqueConstraint auf
+        # (template_id, version) nicht stört.
         v = TemplateVersion(
-            template_id=private_template.id,
-            version="1.0.0",
+            template_id=public_approved_template.id,
+            version="1.1.0",
             git_commit_sha="reject-test-sha",
-            is_active=True,
+            is_active=False,
             approval_status=TemplateVersionApprovalStatus.PENDING,
         )
         db_session.add(v)
@@ -797,12 +804,53 @@ class TestRejectVersionWithReason:
 
 
 class TestImportFromGithubVisibility:
-    """The import-from-github schema no longer accepts a visibility field."""
+    """The import-from-github schema accepts an optional visibility field
+    (private/public). Default is private. Invalid values are rejected.
 
-    def test_schema_rejects_visibility_field(self):
-        """Visibility is no longer part of the import body — extra fields are ignored
-        but the schema's resolved value is always None / the default. Confirm
-        that the field truly isn't on the model."""
+    This used to be a hard ban on the field; now lecturers can choose at
+    import time whether the template lives in private or public space."""
+
+    def test_schema_exposes_visibility_field(self):
         from src.schemas.template import GithubImportNewTemplate
 
-        assert "visibility" not in GithubImportNewTemplate.model_fields
+        assert "visibility" in GithubImportNewTemplate.model_fields
+
+    def test_default_visibility_is_private(self):
+        from src.schemas.template import GithubImportNewTemplate
+
+        p = GithubImportNewTemplate(
+            name="x",
+            github_url="https://github.com/a/b",
+        )
+        assert p.visibility == "private"
+
+    def test_explicit_public_visibility_accepted(self):
+        from src.schemas.template import GithubImportNewTemplate
+
+        p = GithubImportNewTemplate(
+            name="x",
+            github_url="https://github.com/a/b",
+            visibility="public",
+        )
+        assert p.visibility == "public"
+
+    def test_uppercase_visibility_normalised(self):
+        from src.schemas.template import GithubImportNewTemplate
+
+        p = GithubImportNewTemplate(
+            name="x",
+            github_url="https://github.com/a/b",
+            visibility="PUBLIC",
+        )
+        assert p.visibility == "public"
+
+    def test_invalid_visibility_rejected(self):
+        from src.schemas.template import GithubImportNewTemplate
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            GithubImportNewTemplate(
+                name="x",
+                github_url="https://github.com/a/b",
+                visibility="secret",
+            )

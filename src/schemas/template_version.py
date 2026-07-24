@@ -111,7 +111,13 @@ class TemplateVersionResponse(BaseModel):
     version: str = Field(..., description="Semantic version (e.g., 0.2.0)")
     git_commit_sha: str = Field(..., description="Git commit SHA")
     is_active: bool = Field(..., description="Whether this version is active")
-    approval_status: str = Field(..., description="Approval status (pending/approved/rejected/deprecated)")
+    approval_status: Optional[str] = Field(
+        None,
+        description=(
+            "Approval status (pending/approved/rejected/deprecated) for public "
+            "templates. Null for private templates — approval doesn't apply."
+        ),
+    )
     approved_by_id: Optional[str] = Field(None, description="Admin user ID who approved/rejected this version")
     approved_at: Optional[datetime] = Field(None, description="Approval/rejection timestamp")
     rejection_reason: Optional[str] = Field(None, description="Optional admin-provided reason when rejected")
@@ -150,6 +156,13 @@ class TemplateQueueInfo(BaseModel):
     name: str
     owner_id: str
     visibility: str
+    publish_requested: bool = Field(
+        default=False,
+        description=(
+            "True when this PRIVATE template is awaiting its first approval "
+            "before being promoted to PUBLIC. Admin UI shows a hint."
+        ),
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

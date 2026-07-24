@@ -19,6 +19,7 @@ from src.schemas.template_version import (
     TemplateVersionWithFilesCreate,
 )
 from src.core.exceptions import NotFoundException, BadRequestException, ForbiddenException
+from src.utils import version_validator
 from src.utils.app_manifest_parser import AppManifestParser
 
 logger = logging.getLogger(__name__)
@@ -112,12 +113,34 @@ class TemplateVersionService:
     @staticmethod
     def _initial_approval(
         template: Template, user_roles: list[str]
-    ) -> TemplateVersionApprovalStatus:
-        """Auto-approve admin-created versions on public templates; otherwise PENDING."""
+    ) -> TemplateVersionApprovalStatus | None:
+        """Map (template, caller) to the initial approval status of a new version.
+
+        - PUBLIC templates: admin caller → ``APPROVED`` (auto-promote);
+          everyone else → ``PENDING`` (admin review needed).
+        - PRIVATE templates WITH ``publish_requested=True``: same as PUBLIC.
+          The template hasn't been promoted to PUBLIC yet — that happens
+          atomically on the first approve_version() call — but the approval
+          flow is already running, so new versions must enter PENDING and
+          show up in the admin queue.
+        - PRIVATE templates without publish_requested: ``None`` — approval
+          doesn't apply (owner-only).
+
+        Mirrored helper — keep in sync with the identical copy in
+        ``GithubImportService._initial_approval`` (github_import_service.py).
+        Both services create versions through different paths but with
+        identical semantics.
+        """
+        is_public = template.visibility == TemplateVisibility.PUBLIC
+        is_pending_public = bool(getattr(template, "publish_requested", False))
+        if not is_public and not is_pending_public:
+            return None
         is_admin = UserRole.ADMIN.value in (user_roles or [])
-        if is_admin and template.visibility == TemplateVisibility.PUBLIC:
-            return TemplateVersionApprovalStatus.APPROVED
-        return TemplateVersionApprovalStatus.PENDING
+        return (
+            TemplateVersionApprovalStatus.APPROVED
+            if is_admin
+            else TemplateVersionApprovalStatus.PENDING
+        )
 
     def create_version(
         self,
@@ -130,6 +153,12 @@ class TemplateVersionService:
 
         Approval status is decided by `_initial_approval`. If `user_roles` is
         not provided, falls back to is_admin to keep older callers compatible.
+
+        Versionsnummer-Regeln (auch hier durchgesetzt, nicht nur im
+        GitHub-Import-Pfad):
+        - Muss valid Semver-2.0 sein.
+        - Muss innerhalb des Templates eindeutig sein.
+        - Muss strikt größer als die höchste existierende Semver-Version sein.
         """
         template = self.template_repo.get_by_id(version_data.template_id)
         if not template:
@@ -146,6 +175,19 @@ class TemplateVersionService:
             raise BadRequestException(
                 f"Version with commit SHA {version_data.git_commit_sha} already exists for this template"
             )
+
+        # Semver + Uniqueness + Monotonie. Wirft strukturiert mit den
+        # ERR_*-Codes, das Frontend kann pro Code unterschiedlich reagieren.
+        existing_strings = [
+            v.version
+            for v in self.version_repo.get_by_template_id(
+                version_data.template_id, active_only=False
+            )
+        ]
+        version_validator.assert_strictly_greater(
+            version_data.version,
+            existing_strings,
+        )
 
         roles = user_roles if user_roles is not None else ([UserRole.ADMIN.value] if is_admin else [])
         approval_status = self._initial_approval(template, roles)
@@ -194,6 +236,20 @@ class TemplateVersionService:
             raise BadRequestException(
                 f"Version with commit SHA {payload.git_commit_sha} already exists for this template"
             )
+
+        # Versionsnummer-Validierung (semver, eindeutig, strikt monoton).
+        # Selbe Regeln wie im GitHub-Import-Pfad, hier aber auf den vom
+        # User direkt übergebenen Payload-String angewendet.
+        existing_strings = [
+            v.version
+            for v in self.version_repo.get_by_template_id(
+                payload.template_id, active_only=False
+            )
+        ]
+        version_validator.assert_strictly_greater(
+            payload.version,
+            existing_strings,
+        )
 
         # Build merged file set: base_version's files first, payload.files overlay by file_path
         merged: dict[str, dict] = {}
@@ -299,17 +355,62 @@ class TemplateVersionService:
         version_id: str | UUID,
         admin_user_id: str,
     ) -> TemplateVersion:
-        """Admin-only: mark a pending version as approved."""
+        """Admin-only: mark a pending version as approved.
+
+        Erlaubt für:
+        - ``visibility == PUBLIC`` (Standard-Approval-Flow auf bereits
+          öffentlichen Templates).
+        - ``visibility == PRIVATE`` UND ``publish_requested == True``
+          (Erst-Veröffentlichung: das Template wurde mit „öffentlich"
+          angelegt, ist bis zur ersten Genehmigung aber privat geblieben).
+          In diesem Fall flippt diese Methode atomar
+          ``template.visibility → PUBLIC`` und
+          ``template.publish_requested → False``.
+
+        Wirft ``BadRequestException`` für genuinly-private Templates ohne
+        publish_requested — dort macht der Approval-Begriff keinen Sinn.
+        """
         version = self.version_repo.get_by_id(version_id)
         if not version:
             raise NotFoundException(f"Template version with ID {version_id} not found")
+
+        template = self.template_repo.get_by_id(version.template_id)
+        if not template:
+            raise NotFoundException(f"Template with ID {version.template_id} not found")
+
+        is_public = template.visibility == TemplateVisibility.PUBLIC
+        is_pending_public = bool(getattr(template, "publish_requested", False))
+        if not is_public and not is_pending_public:
+            raise BadRequestException(
+                "Approval flow applies only to public templates"
+            )
 
         version.approval_status = TemplateVersionApprovalStatus.APPROVED
         version.approved_by_id = admin_user_id
         version.approved_at = datetime.now(timezone.utc)
         version.rejection_reason = None
+
+        # Erst-Veröffentlichung: Template jetzt atomar auf PUBLIC heben.
+        # Wir loggen den Promotion-Event separat, weil er für Audit-Zwecke
+        # bedeutsamer ist als ein normales approve.
+        promoted_to_public = False
+        if not is_public and is_pending_public:
+            template.visibility = TemplateVisibility.PUBLIC
+            template.publish_requested = False
+            promoted_to_public = True
+
         self.db.commit()
         self.db.refresh(version)
+
+        if promoted_to_public:
+            logger.info(
+                "Template promoted to public on first approval",
+                extra={
+                    "template_id": template.id,
+                    "version_id": str(version.id),
+                    "approved_by": admin_user_id,
+                },
+            )
 
         logger.info(
             "Template version approved",
@@ -317,6 +418,7 @@ class TemplateVersionService:
                 "version_id": str(version.id),
                 "template_id": version.template_id,
                 "approved_by": admin_user_id,
+                "promoted_to_public": promoted_to_public,
             },
         )
         return version
@@ -329,16 +431,42 @@ class TemplateVersionService:
     ) -> TemplateVersion:
         """Admin-only: mark a pending version as rejected.
 
-        `reason` is optional free-text persisted on the version.
+        ``reason`` is optional free-text persisted on the version.
+
+        Erlaubt für die gleichen Fälle wie ``approve_version`` (siehe dort).
+        Bei Rejection eines Templates mit ``publish_requested=True`` wird
+        der Veröffentlichungswunsch verworfen: das Template bleibt PRIVATE
+        und ``publish_requested → False``. Der Owner muss eine neue
+        Veröffentlichung explizit über PATCH `visibility: public` anstoßen
+        — so wird verhindert, dass jeder neue Versions-Import einer
+        bereits abgelehnten Initiative automatisch erneut in die
+        Admin-Queue rutscht.
         """
         version = self.version_repo.get_by_id(version_id)
         if not version:
             raise NotFoundException(f"Template version with ID {version_id} not found")
 
+        template = self.template_repo.get_by_id(version.template_id)
+        if not template:
+            raise NotFoundException(f"Template with ID {version.template_id} not found")
+
+        is_public = template.visibility == TemplateVisibility.PUBLIC
+        is_pending_public = bool(getattr(template, "publish_requested", False))
+        if not is_public and not is_pending_public:
+            raise BadRequestException(
+                "Approval flow applies only to public templates"
+            )
+
         version.approval_status = TemplateVersionApprovalStatus.REJECTED
         version.approved_by_id = admin_user_id
         version.approved_at = datetime.now(timezone.utc)
         version.rejection_reason = reason
+
+        publish_request_cleared = False
+        if not is_public and is_pending_public:
+            template.publish_requested = False
+            publish_request_cleared = True
+
         self.db.commit()
         self.db.refresh(version)
 
@@ -349,6 +477,7 @@ class TemplateVersionService:
                 "template_id": version.template_id,
                 "rejected_by": admin_user_id,
                 "has_reason": reason is not None,
+                "publish_request_cleared": publish_request_cleared,
             },
         )
         return version
@@ -435,6 +564,24 @@ class TemplateVersionService:
 
         update_data = version_data.model_dump(exclude_unset=True)
 
+        # Versions-String-Änderungen validieren: Semver + Uniqueness +
+        # Monotonie. Wir prüfen NUR, wenn der Caller das Feld setzt; sonst
+        # bleibt die existierende Versionsnummer wie sie ist (auch dann,
+        # wenn sie z.B. nach Dedupe-Migration "+dedupe-..." enthält).
+        new_version_str = update_data.get("version")
+        if new_version_str is not None and new_version_str != version.version:
+            existing_strings = [
+                v.version
+                for v in self.version_repo.get_by_template_id(
+                    version.template_id, active_only=False
+                )
+                if v.id != version.id  # eigene Row aus der Vergleichsmenge raus
+            ]
+            version_validator.assert_strictly_greater(
+                new_version_str,
+                existing_strings,
+            )
+
         if update_data.get("is_active") is True:
             self.version_repo.deactivate_other_versions(
                 version.template_id,
@@ -483,7 +630,14 @@ class TemplateVersionService:
         user_id: str,
         is_admin: bool = False
     ) -> TemplateVersion:
-        """Activate a version (owner-or-admin)."""
+        """Activate a version (owner-or-admin).
+
+        Setzt ``is_active=True`` auf der gewählten Version und deaktiviert
+        alle anderen Versionen desselben Templates. Es gibt keine Sperre
+        gegen Downgrades — der Owner darf eine ältere Version wieder zur
+        aktiven (= im DeploymentWizard vorausgewählten) Version machen,
+        falls die jüngste Version z.B. einen Bug hat.
+        """
         version = self.version_repo.get_by_id(version_id)
         if not version:
             raise NotFoundException(f"Template version with ID {version_id} not found")
@@ -513,6 +667,7 @@ class TemplateVersionService:
         template_id: Optional[str | UUID] = None,
         visibility: Optional[TemplateVisibility] = None,
         sort: QueueSort = "created_at_desc",
+        include_publish_requested: bool = True,
     ) -> tuple[list[tuple[TemplateVersion, Template]], int]:
         """Admin approval queue: list versions filtered by approval status.
 
@@ -520,6 +675,12 @@ class TemplateVersionService:
         admin-only authorization before invoking this.
 
         Returns `(rows, total)` where each row is `(version, template)`.
+
+        ``include_publish_requested`` (default ``True``): siehe
+        ``TemplateVersionRepository.list_by_approval_status``. Mit dem Default
+        sieht der Admin auch Versionen aus PRIVATE-Templates, die auf ihre
+        Erst-Genehmigung warten — sonst würden Neu-Anlagen via „öffentlich"
+        unauffindbar in der Queue versanden.
         """
         return self.version_repo.list_by_approval_status(
             approval_status=approval_status,
@@ -528,6 +689,7 @@ class TemplateVersionService:
             template_id=template_id,
             visibility=visibility,
             sort=sort,
+            include_publish_requested=include_publish_requested,
         )
 
     def get_version_parameters(self, version_id: str | UUID) -> list[dict]:

@@ -2,6 +2,7 @@
 
 # Import all model classes to make them available for SQLAlchemy relationship resolution
 from src.models.course import Course
+from src.models.course_filter import CourseFilter
 from src.models.course_group import CourseGroup
 from src.models.course_member import CourseMember
 from src.models.deployment import Deployment, DeploymentStatus
@@ -13,12 +14,14 @@ from src.models.openstack_project import OpenstackProject
 from src.models.template import Template
 from src.models.template_category import TemplateCategory
 from src.models.template_category_assignment import TemplateCategoryAssignment
+from src.models.template_icon import TemplateIcon
 from src.models.template_version import TemplateVersion
 from src.models.template_version_file import TemplateVersionFile
 from src.models.user import User
 
 __all__ = [
     "Course",
+    "CourseFilter",
     "CourseGroup",
     "CourseMember",
     "Deployment",
@@ -32,6 +35,7 @@ __all__ = [
     "Template",
     "TemplateCategory",
     "TemplateCategoryAssignment",
+    "TemplateIcon",
     "TemplateVersion",
     "TemplateVersionFile",
     "User",

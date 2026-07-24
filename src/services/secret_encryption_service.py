@@ -90,34 +90,36 @@ def get_encryption_service(key: Optional[str] = None) -> SecretEncryptionService
 
 class EncryptedString(TypeDecorator):
     """SQLAlchemy type that automatically encrypts/decrypts string values.
-    
+
     Usage:
         password: Mapped[str] = mapped_column(EncryptedString(255))
-    
+
     IMPORTANT: Never log the decrypted value.
+
+    Behavior on misconfiguration: if ``ENCRYPTION_KEY`` is missing or invalid,
+    both directions raise ``SecretEncryptionError`` — we never silently store
+    or return plaintext. Treat ``ENCRYPTION_KEY`` as a hard runtime requirement.
     """
     impl = String
     cache_ok = True
 
     def process_bind_param(self, value: Optional[str], dialect: Any) -> Optional[str]:
-        """Encrypt value before storing in database."""
+        """Encrypt value before storing in database.
+
+        Raises ``SecretEncryptionError`` if encryption is not configured —
+        better to fail the write than to persist a plaintext secret unnoticed.
+        """
         if value is None:
             return None
-        try:
-            service = get_encryption_service()
-            return service.encrypt(value)
-        except SecretEncryptionError:
-            # If encryption not configured, store as-is (for development only)
-            # In production, this should raise an error
-            return value
+        return get_encryption_service().encrypt(value)
 
     def process_result_value(self, value: Optional[str], dialect: Any) -> Optional[str]:
-        """Decrypt value when loading from database."""
+        """Decrypt value when loading from database.
+
+        Raises ``SecretEncryptionError`` if decryption fails (missing key,
+        wrong key, or corrupted token). The caller should not see a
+        possibly-encrypted blob masquerading as plaintext.
+        """
         if value is None:
             return None
-        try:
-            service = get_encryption_service()
-            return service.decrypt(value)
-        except SecretEncryptionError:
-            # If decryption fails, return encrypted value (backward compatibility)
-            return value
+        return get_encryption_service().decrypt(value)

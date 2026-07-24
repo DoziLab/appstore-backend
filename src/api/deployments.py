@@ -3,7 +3,7 @@ from uuid import UUID
 import asyncio
 import json
 from fastapi import APIRouter, status, Query, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, PlainTextResponse
 from src.core.exceptions import NotFoundException
 from src.models.user import UserRole, User
 from src.core.dependencies import DBSession
@@ -11,7 +11,7 @@ from src.core.response_builder import ResponseBuilder
 from src.core.dependencies import RequestID, Pagination, CurrentUser, require_roles
 from src.repositories.deployment_repository import DeploymentRepository
 from src.repositories.openstack_project_repository import OpenstackProjectRepository
-from src.schemas.deployment import DeploymentResponse, DeploymentCreate, DeploymentExtend
+from src.schemas.deployment import DeploymentResponse, DeploymentCreate, DeploymentExtend, DeploymentRedeployRequest
 from src.services.deployment_service import DeploymentService
 from src.services.deployment_log_service import DeploymentLogService
 from src.services.openstack_heat_service import HeatStackService
@@ -23,8 +23,11 @@ from src.schemas.deployment import (
 )
 from src.tasks.deploy_tasks import delete_deployment as delete_deployment_task
 from src.tasks.deploy_tasks import restart_deployment as restart_deployment_task
+from src.tasks.deploy_tasks import redeploy_instance as redeploy_instance_task
+from src.tasks.deploy_tasks import redeploy_deployment as redeploy_deployment_task
 from src.models.deployment import DeploymentStatus, Deployment
-from src.models.deployment_instance import DeploymentInstance
+from src.models.deployment_instance import DeploymentInstance, DeploymentInstanceStatus
+from src.models.deployment_instance_access import DeploymentInstanceAccess
 from src.models.template_version import TemplateVersion
 
 router = APIRouter(
@@ -296,9 +299,11 @@ async def create_deployment(
         Created deployment with status QUEUED
     """
     service = DeploymentService(db)
+    is_admin = UserRole.ADMIN.value in user.get("roles", [])
     deployment = service.create_deployment(
         deployment_data,
-        request_id=request_id
+        request_id=request_id,
+        is_admin=is_admin,
     )
     
     # Convert SQLAlchemy model to response schema
@@ -470,6 +475,16 @@ async def stream_deployment_logs(
     Sends all existing logs immediately, then polls for new ones every second
     until the deployment reaches a terminal state (RUNNING, FAILED, DELETED).
     The stream closes automatically when done.
+
+    Implementation notes:
+      * Authorization runs against the request's DB session, but the polling
+        loop opens its OWN fresh SessionLocal each tick. Reusing the request
+        session would never see commits from the Celery worker (the session
+        caches identity-mapped objects within a single transaction).
+      * Sync SQLAlchemy calls are wrapped in run_in_threadpool so the event
+        loop stays free for other SSE clients.
+      * A heartbeat comment is sent every ~15s so proxies/browsers don't
+        consider the connection dead during long Ansible phases.
     """
     deployment_repo = DeploymentRepository(db)
     deployment = deployment_repo.get_by_id(deployment_id)
@@ -480,47 +495,89 @@ async def stream_deployment_logs(
     authorize_deployment_access(deployment, user, openstack_project_id, db)
 
     TERMINAL_STATUSES = {"RUNNING", "FAILED", "DELETED", "CANCELLED"}
+    HEARTBEAT_EVERY_SECONDS = 15
+    POLL_INTERVAL_SECONDS = 1
+
+    # Snapshot the (immutable) deployment_id for the closure; do NOT capture
+    # the ORM `deployment` object — it's bound to the request session which
+    # closes when this handler returns.
+    dep_id = deployment_id
+
+    def _fetch_state(since_seen: set[str], since_id_param: str | None):
+        """Open a fresh DB session, return (new_log_payloads, current_status).
+
+        Runs in the threadpool so the event loop isn't blocked on DB I/O.
+        """
+        from src.core.database import SessionLocal
+        local_db = SessionLocal()
+        try:
+            local_repo = DeploymentRepository(local_db)
+            current = local_repo.get_by_id(dep_id)
+            if current is None:
+                return [], "DELETED"
+
+            current_status = (
+                current.status.value if hasattr(current.status, "value") else str(current.status)
+            ).upper()
+
+            local_log_service = DeploymentLogService(local_db)
+            logs = local_log_service.get_deployment_logs(dep_id)
+
+            # First iteration: seed seen-set from since_id if provided
+            if since_id_param and not since_seen:
+                for log in logs:
+                    if str(log.id) == since_id_param:
+                        break
+                    since_seen.add(str(log.id))
+
+            new_payloads: list[str] = []
+            for log in logs:
+                lid = str(log.id)
+                if lid in since_seen:
+                    continue
+                since_seen.add(lid)
+                new_payloads.append(json.dumps({
+                    "id": lid,
+                    "deployment_id": str(log.deployment_id),
+                    "event_type": log.event_type.value if hasattr(log.event_type, "value") else str(log.event_type),
+                    "message": log.message,
+                    "level": log.level.value if hasattr(log.level, "value") else str(log.level),
+                    "details": json.loads(log.details_json) if log.details_json else None,
+                    "created_at": log.created_at.isoformat() if hasattr(log.created_at, "isoformat") else str(log.created_at),
+                }))
+            return new_payloads, current_status
+        finally:
+            local_db.close()
 
     async def event_generator():
-        log_service = DeploymentLogService(db)
-        seen_ids: set[str] = set()
+        from fastapi.concurrency import run_in_threadpool
 
-        # Seed seen_ids from since_id position
-        if since_id:
-            all_logs = log_service.get_deployment_logs(deployment_id)
-            for log in all_logs:
-                if str(log.id) == since_id:
-                    break
-                seen_ids.add(str(log.id))
+        seen_ids: set[str] = set()
+        seconds_since_heartbeat = 0
+        first = True
 
         try:
             while True:
-                # Refresh deployment status
-                db.expire(deployment)
-                current = deployment_repo.get_by_id(deployment_id)
-                current_status = (current.status.value if hasattr(current.status, "value") else str(current.status)).upper()
+                payloads, current_status = await run_in_threadpool(
+                    _fetch_state, seen_ids, since_id if first else None
+                )
+                first = False
 
-                # Fetch all logs and emit unseen ones
-                logs = log_service.get_deployment_logs(deployment_id)
-                new_logs = [log for log in logs if str(log.id) not in seen_ids]
-                for log in new_logs:
-                    seen_ids.add(str(log.id))
-                    payload = json.dumps({
-                        "id": str(log.id),
-                        "deployment_id": str(log.deployment_id),
-                        "event_type": log.event_type.value if hasattr(log.event_type, "value") else str(log.event_type),
-                        "message": log.message,
-                        "level": log.level.value if hasattr(log.level, "value") else str(log.level),
-                        "details": json.loads(log.details_json) if log.details_json else None,
-                        "created_at": log.created_at.isoformat() if hasattr(log.created_at, "isoformat") else str(log.created_at),
-                    })
+                for payload in payloads:
                     yield f"data: {payload}\n\n"
+                    seconds_since_heartbeat = 0
 
                 if current_status in TERMINAL_STATUSES:
                     yield "event: done\ndata: {}\n\n"
                     break
 
-                await asyncio.sleep(1)
+                if seconds_since_heartbeat >= HEARTBEAT_EVERY_SECONDS:
+                    # SSE comment line — clients ignore it, proxies keep the socket alive.
+                    yield ": ping\n\n"
+                    seconds_since_heartbeat = 0
+
+                await asyncio.sleep(POLL_INTERVAL_SECONDS)
+                seconds_since_heartbeat += POLL_INTERVAL_SECONDS
         except asyncio.CancelledError:
             pass
 
@@ -530,6 +587,7 @@ async def stream_deployment_logs(
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
         },
     )
 
@@ -570,11 +628,18 @@ async def get_deployment_credentials(
             openstack_stack_id=instance.openstack_server_id,
             accesses=[
                 DeploymentCredentialEntry(
+                    id=access.id,
                     access_type=access.access_type.value,
                     username=access.username,
                     password=access.password,
+                    ssh_private_key=access.ssh_private_key,
                     connection_url=access.connection_url,
                     port=access.port,
+                    group_id=access.group_id,
+                    # Frontend renders Dozent/Gruppen tabs from group_id + group_name.
+                    # group_id=NULL → admin/lecturer row → "Dozent" tab.
+                    # group_id=set → student group row → "Gruppen" tab, accordion by group_name.
+                    group_name=access.group.name if access.group else None,
                 )
                 for access in instance.access_methods
             ],
@@ -591,6 +656,57 @@ async def get_deployment_credentials(
         data=payload.model_dump(),
         message=f"Retrieved credentials for {len(instance_payloads)} instance(s)",
         request_id=request_id,
+    )
+
+
+@router.get(
+    "/{deployment_id}/credentials/access/{access_id}/ssh-key",
+    response_class=PlainTextResponse,
+)
+async def download_ssh_private_key(
+    deployment_id: str,
+    access_id: str,
+    db: DBSession,
+    user: CurrentUser,
+    openstack_project_id: UUID | None = Query(
+        None,
+        description="OpenStack project (local DB id) the deployment must belong to. Required for non-admin users.",
+    ),
+):
+    """Download an SSH private key as a downloadable file.
+
+    Returned as ``application/x-pem-file`` with a ``Content-Disposition``
+    attachment header so the browser saves it as ``id_ed25519`` rather than
+    rendering the PEM in-line. Accessible to the deployment owner (lecturer)
+    or any admin.
+    """
+    deployment_repo = DeploymentRepository(db)
+    deployment = deployment_repo.get_by_id(deployment_id)
+    if not deployment:
+        raise NotFoundException(f"Deployment with ID {deployment_id} not found")
+
+    authorize_deployment_access(deployment, user, openstack_project_id, db)
+
+    access = (
+        db.query(DeploymentInstanceAccess)
+        .join(DeploymentInstance, DeploymentInstance.id == DeploymentInstanceAccess.deployment_instance_id)
+        .filter(
+            DeploymentInstanceAccess.id == access_id,
+            DeploymentInstance.deployment_id == deployment_id,
+        )
+        .first()
+    )
+    if not access:
+        raise NotFoundException(f"Access entry {access_id} not found for deployment {deployment_id}")
+    if not access.ssh_private_key:
+        raise HTTPException(status_code=404, detail="No SSH private key available for this access entry")
+
+    # OpenSSH PEM contents — decrypted automatically by EncryptedString on read
+    filename = f"id_ed25519_{(access.username or 'user')}"
+    return PlainTextResponse(
+        content=access.ssh_private_key,
+        media_type="application/x-pem-file",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -763,6 +879,229 @@ async def restart_deployment(
     )
 
 
+@router.post(
+    "/{deployment_id}/redeploy",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Redeploy every VM in a deployment",
+    responses={
+        202: {"description": "Redeploy requested; operation in progress"},
+        400: {"description": "Deployment is in an invalid state or has no instances"},
+        403: {"description": "Forbidden - not owner or insufficient role"},
+        404: {"description": "Deployment not found"},
+        500: {"description": "Failed to enqueue redeploy task"},
+    },
+)
+async def redeploy_deployment_endpoint(
+    deployment_id: str,
+    db: DBSession,
+    request_id: RequestID,
+    user: CurrentUser,
+    payload: DeploymentRedeployRequest | None = None,
+    openstack_project_id: UUID | None = Query(
+        None,
+        description="OpenStack project (local DB id) the deployment must belong to. Required for non-admin users.",
+    ),
+):
+    """Destroy-and-recreate every VM (``DeploymentInstance``) in this
+    deployment, one after another, optionally with overridden parameters.
+
+    Unlike :func:`restart_deployment` (which only triggers a Heat
+    ``update_stack`` on the existing stack), this rebuilds each VM from
+    scratch: Heat stack deleted → Heat stack recreated → Ansible re-run →
+    credentials regenerated (unless ``preserve_credentials=true``). Use it
+    when a config / template parameter changed and you want the change to
+    actually take effect.
+
+    Sequential by design — running them in parallel risks tripping the
+    OpenStack project quota mid-class. The parent deployment stays in
+    ``RUNNING`` between instances so the UI can show per-VM progress and
+    siblings stay reachable.
+
+    **Authorization:** Owner (lecturer) or Admin only.
+    """
+    deployment_repo = DeploymentRepository(db)
+    deployment = deployment_repo.get_by_id(deployment_id)
+    if not deployment:
+        raise NotFoundException(f"Deployment with ID {deployment_id} not found")
+
+    authorize_deployment_access(deployment, user, openstack_project_id, db)
+
+    transitional_states = [
+        DeploymentStatus.CREATING,
+        DeploymentStatus.DELETING,
+        DeploymentStatus.RESTARTING,
+    ]
+    if deployment.status in transitional_states:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Cannot redeploy deployment in {deployment.status.value} state. "
+                f"Please wait for the current operation to complete."
+            ),
+        )
+
+    # If any instance is already mid-redeploy, refuse — two redeploy tasks racing
+    # the same Heat stack would corrupt deployment.openstack_stack_id and leak
+    # stacks. We only need to find ONE such instance to reject.
+    in_flight = (
+        db.query(DeploymentInstance.id)
+        .filter(
+            DeploymentInstance.deployment_id == deployment_id,
+            DeploymentInstance.status == DeploymentInstanceStatus.REDEPLOYING,
+        )
+        .first()
+    )
+    if in_flight is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "A redeploy is already in progress for at least one instance "
+                "in this deployment; wait for it to finish before queuing another."
+            ),
+        )
+
+    instance_count = (
+        db.query(DeploymentInstance)
+        .filter(DeploymentInstance.deployment_id == deployment_id)
+        .count()
+    )
+    if instance_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deployment has no instances to redeploy",
+        )
+
+    body = payload or DeploymentRedeployRequest()
+    # We deliberately don't wrap .delay() in a broad except: a broker outage or
+    # a non-serialisable override value should surface as the underlying error
+    # (Celery's own message) so the caller can diagnose it, instead of being
+    # masked behind a generic "Failed to enqueue redeploy task".
+    redeploy_deployment_task.delay(
+        deployment_id,
+        deployment_parameter_overrides=body.deployment_parameter_overrides,
+        instance_parameter_overrides=body.instance_parameter_overrides,
+        preserve_credentials=body.preserve_credentials,
+    )
+
+    return ResponseBuilder.success(
+        data={
+            "deployment_id": deployment_id,
+            "instance_count": instance_count,
+            "status": "redeploy_queued",
+            "preserve_credentials": body.preserve_credentials,
+        },
+        message=f"Redeploy requested for {instance_count} instance(s); operation in progress",
+        request_id=request_id,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+
+
+@router.post(
+    "/{deployment_id}/instances/{instance_id}/redeploy",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Redeploy a single VM (DeploymentInstance)",
+    responses={
+        202: {"description": "Redeploy requested; operation in progress"},
+        400: {"description": "Deployment or instance is in an invalid state"},
+        403: {"description": "Forbidden - not owner or insufficient role"},
+        404: {"description": "Deployment or instance not found"},
+        500: {"description": "Failed to enqueue redeploy task"},
+    },
+)
+async def redeploy_instance_endpoint(
+    deployment_id: str,
+    instance_id: str,
+    db: DBSession,
+    request_id: RequestID,
+    user: CurrentUser,
+    payload: DeploymentRedeployRequest | None = None,
+    openstack_project_id: UUID | None = Query(
+        None,
+        description="OpenStack project (local DB id) the deployment must belong to. Required for non-admin users.",
+    ),
+):
+    """Destroy-and-recreate exactly one VM inside an existing deployment.
+
+    Use this when one VM is wedged, or to apply a config change to a
+    single group without touching its siblings. The parent deployment
+    stays in ``RUNNING`` for the duration — only the target instance
+    flips to ``REDEPLOYING``.
+
+    Body parameters mirror the deployment-wide endpoint, with one
+    semantic shift: ``deployment_parameter_overrides`` is treated as the
+    full override for this one VM (since there's only one in scope).
+    ``instance_parameter_overrides`` is ignored here — pass per-VM
+    parameters directly in ``deployment_parameter_overrides``.
+
+    **Authorization:** Owner (lecturer) or Admin only.
+    """
+    deployment_repo = DeploymentRepository(db)
+    deployment = deployment_repo.get_by_id(deployment_id)
+    if not deployment:
+        raise NotFoundException(f"Deployment with ID {deployment_id} not found")
+
+    authorize_deployment_access(deployment, user, openstack_project_id, db)
+
+    transitional_states = [
+        DeploymentStatus.CREATING,
+        DeploymentStatus.DELETING,
+        DeploymentStatus.RESTARTING,
+    ]
+    if deployment.status in transitional_states:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Cannot redeploy instance while deployment is in {deployment.status.value} state."
+            ),
+        )
+
+    instance = (
+        db.query(DeploymentInstance)
+        .filter(
+            DeploymentInstance.id == instance_id,
+            DeploymentInstance.deployment_id == deployment_id,
+        )
+        .first()
+    )
+    if not instance:
+        raise NotFoundException(
+            f"Instance {instance_id} not found in deployment {deployment_id}"
+        )
+
+    # Refuse if this instance is already mid-redeploy — a second task racing the
+    # first one would delete a stack the first already removed (raises and flips
+    # status to FAILED) and the survivors would corrupt deployment.openstack_stack_id.
+    if instance.status == DeploymentInstanceStatus.REDEPLOYING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Instance {instance_id} is already being redeployed; "
+                "wait for the current operation to finish."
+            ),
+        )
+
+    body = payload or DeploymentRedeployRequest()
+    # No broad except around .delay() — see redeploy_deployment_endpoint above.
+    redeploy_instance_task.delay(
+        deployment_id,
+        instance_id,
+        deployment_parameter_overrides=body.deployment_parameter_overrides,
+        preserve_credentials=body.preserve_credentials,
+    )
+
+    return ResponseBuilder.success(
+        data={
+            "deployment_id": deployment_id,
+            "instance_id": instance_id,
+            "status": "redeploy_queued",
+            "preserve_credentials": body.preserve_credentials,
+        },
+        message="Redeploy requested for instance; operation in progress",
+        request_id=request_id,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+
+
 @router.patch(
     "/{deployment_id}/extend",
     summary="Extend a deployment's lifetime",
@@ -843,9 +1182,12 @@ async def delete_deployment(
 ):
     """Request deletion of a deployment.
 
-    Sets deployment status to DELETING, logs the request and enqueues the
-    `delete_deployment` Celery task which performs the actual OpenStack
-    deletion and cleans up the database.
+    Flips the deployment's status to ``DELETING`` *immediately* — this acts
+    as the cooperative-cancel flag that any in-flight ``deploy_stack`` task
+    polls between phases. The task then bails out cleanly, persisting every
+    Heat stack it managed to create before. After flipping, the
+    ``delete_deployment`` Celery task is enqueued; it picks up those stack
+    ids from ``openstack_stack_id`` and tears them down.
     """
     # Verify deployment exists
     deployment_repo = DeploymentRepository(db)
@@ -855,6 +1197,12 @@ async def delete_deployment(
         raise NotFoundException(f"Deployment with ID {deployment_id} not found")
 
     authorize_deployment_access(deployment, user, openstack_project_id, db)
+
+    # Set DELETING up front so the deploy task's status-polling checkpoints
+    # see it before we enqueue the actual cleanup task. Skipping the update
+    # if we're already DELETING/DELETED keeps the call idempotent.
+    if deployment.status not in (DeploymentStatus.DELETING, DeploymentStatus.DELETED):
+        deployment_repo.update_status(deployment_id, DeploymentStatus.DELETING)
 
     # Enqueue Celery task to perform deletion asynchronously
     try:
@@ -866,6 +1214,6 @@ async def delete_deployment(
         )
 
     return ResponseBuilder.no_content(
-        message="Deletion requested; operation is in progress",
+        message="Deletion requested; cancel-and-cleanup is in progress",
         request_id=request_id,
     )

@@ -110,20 +110,35 @@ class HeatStackService:
             
             logger.info(f"Creating Heat stack: {stack_name}")
             logger.debug(f"Stack parameters: {parameters}")
-            
+
             # Create stack
             stack = conn.orchestration.create_stack(preview=False, **stack_params)
             logger.info(f"Heat stack created successfully: {stack.id}")
 
-            # Wait until CREATE_COMPLETE — SDK polls every 5s, timeout 30min
-            logger.info(f"Waiting for stack {stack.id} to reach CREATE_COMPLETE...")
-            stack = conn.orchestration.wait_for_status(
-                stack,
-                status="CREATE_COMPLETE",
-                failures=["CREATE_FAILED"],
-                interval=5,
-                wait=1800,
-            )
+            # Wait until CREATE_COMPLETE — SDK polls every 5s, timeout 30min.
+            # If Heat reports CREATE_FAILED the SDK raises ResourceFailure, and
+            # if the wait times out it raises ResourceTimeout. In BOTH cases
+            # the stack already exists in OpenStack and must be cleaned up,
+            # otherwise it becomes orphaned — the caller has no other way to
+            # learn its id once the exception escapes. Stamp the id onto the
+            # exception so deploy_tasks can record it and the delete path can
+            # tear it down.
+            try:
+                stack = conn.orchestration.wait_for_status(
+                    stack,
+                    status="CREATE_COMPLETE",
+                    failures=["CREATE_FAILED"],
+                    interval=5,
+                    wait=1800,
+                )
+            except Exception as wait_error:
+                logger.error(
+                    f"Heat stack {stack.id} did not reach CREATE_COMPLETE: {wait_error}"
+                )
+                # Attach the stack id so callers can still clean up.
+                wait_error.stack_id = stack.id  # type: ignore[attr-defined]
+                wait_error.stack_name = stack.name  # type: ignore[attr-defined]
+                raise
             logger.info(f"Stack {stack.id} reached status: {stack.status}")
 
             # Read outputs (floating_ip, server_id, etc.)

@@ -24,6 +24,17 @@ class GroupInfo(BaseModel):
     group_name: str = Field(..., description="Group name")
     group_index: int = Field(..., description="Group index/number")
     students: list[StudentInfo] = Field(..., description="Students in this group")
+    # Optional: when the frontend wizard knows the persisted ``course_groups.id``
+    # for this group, it should pass it here so the backend can stamp the FK
+    # onto every credential row generated for the group. The link enables
+    # student self-service (see GET /api/v1/student/...). Optional because
+    # old request payloads / lecturer flows without persisted CourseGroup
+    # rows must keep working — affected credential rows simply stay
+    # ``group_id IS NULL`` and are invisible to students.
+    course_group_id: Optional[str] = Field(
+        None,
+        description="course_groups.id this group corresponds to (enables student self-service).",
+    )
 
 
 class StackAssignment(BaseModel):
@@ -185,6 +196,84 @@ class DeploymentResponse(BaseModel):
     )
 
 
+class DeploymentRedeployRequest(BaseModel):
+    """Body for ``POST /deployments/{id}/redeploy`` and
+    ``POST /deployments/{id}/instances/{instance_id}/redeploy``.
+
+    Per the product spec, a "Config" in this codebase = the optional template
+    parameters surfaced by the underlying app (e.g. an on/off toggle "include
+    example notebooks"). A redeploy may **carry over** the deployment's existing
+    parameter map unchanged, or **override** it for the whole deployment
+    (``deployment_parameter_overrides``) and/or for individual VMs
+    (``instance_parameter_overrides``).
+
+    Merge order during the actual redeploy task::
+
+        template defaults  →  deployment.deployment_parameters
+                           →  deployment_parameter_overrides
+                           →  instance_parameter_overrides[<instance_id>]
+
+    ``preserve_credentials`` controls whether the existing
+    ``DeploymentInstanceAccess`` rows (passwords, SSH keys, activation links)
+    are kept and re-bound to the freshly-created instance, or wiped and
+    regenerated from scratch. Default ``False`` mirrors a clean
+    destroy-and-recreate; pass ``True`` to keep students' logins working
+    across the redeploy.
+    """
+
+    deployment_parameter_overrides: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Parameters to merge ON TOP of the deployment's stored "
+            "``deployment_parameters`` for every redeployed VM. Keys absent here "
+            "fall back to the deployment's stored value (then to template defaults). "
+            "Pass an empty dict to keep the deployment-level params unchanged."
+        ),
+    )
+    instance_parameter_overrides: Optional[dict[str, dict[str, Any]]] = Field(
+        default=None,
+        description=(
+            "Per-VM parameter overrides keyed by DeploymentInstance.id. "
+            "Each entry is merged ON TOP of the deployment-level overrides for "
+            "that one VM only. Keys not present in any layer fall back to "
+            "template defaults. Instance IDs not in this map use the "
+            "deployment-level overrides as-is. Ignored when redeploying a single "
+            "instance via the per-instance endpoint — pass the override under "
+            "``deployment_parameter_overrides`` there since there's only one VM "
+            "in scope."
+        ),
+    )
+    preserve_credentials: bool = Field(
+        default=False,
+        description=(
+            "When True, the existing per-VM credentials (DeploymentInstanceAccess "
+            "rows) are re-bound to the freshly-created instance instead of being "
+            "regenerated. Useful to avoid breaking student logins during a quick "
+            "config change. Default False = clean destroy-and-recreate, fresh "
+            "passwords/keys/activation links."
+        ),
+    )
+
+    # ``extra="forbid"`` mirrors the contract recently tightened in PR #178
+    # for course-filters: a typo in the request body (e.g. ``preserve_credential``)
+    # should surface as 422 instead of being silently dropped — silent drops on
+    # a destructive operation like redeploy are particularly easy to misdiagnose.
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "example": {
+                "deployment_parameter_overrides": {
+                    "include_example_notebooks": True,
+                },
+                "instance_parameter_overrides": {
+                    "instance-uuid-of-group-3": {"flavor": "gp1.medium"},
+                },
+                "preserve_credentials": False,
+            }
+        }
+    )
+
+
 class DeploymentExtend(BaseModel):
     """Body for ``PATCH /deployments/{id}/extend``.
 
@@ -246,11 +335,30 @@ class DeploymentLogResponse(BaseModel):
 
 class DeploymentCredentialEntry(BaseModel):
     """One credential entry for a deployment instance."""
+    id: str = Field(..., description="Access entry ID — pass to /credentials/access/{id}/ssh-key")
     access_type: str = Field(..., description="Access type, e.g. ssh or database")
     username: Optional[str] = Field(None, description="Account username")
     password: Optional[str] = Field(None, description="Plaintext password (decrypted on read)")
+    ssh_private_key: Optional[str] = Field(
+        None,
+        description="Plaintext SSH private key in OpenSSH PEM format (decrypted on read). "
+                    "Present for SSH access where a keypair was generated.",
+    )
     connection_url: Optional[str] = Field(None, description="Connection URL if applicable")
     port: Optional[int] = Field(None, description="Port number if applicable")
+    group_id: Optional[str] = Field(
+        None,
+        description=(
+            "course_groups.id this credential belongs to. NULL = lecturer/admin "
+            "credential (not tied to a student group). Drives the Dozent/Gruppen "
+            "split in the UI."
+        ),
+    )
+    group_name: Optional[str] = Field(
+        None,
+        description="Display name of the course group (joined from course_groups.name). "
+                    "NULL when group_id is NULL.",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

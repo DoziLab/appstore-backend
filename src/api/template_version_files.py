@@ -290,8 +290,14 @@ async def update_file(
         Updated file response
     """
     service = TemplateVersionFileService(db)
-    file = service.update_file(file_id, file_data)
-    
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
+    file = service.update_file(
+        file_id,
+        file_data,
+        user_id=current_user["user_id"],
+        is_admin=is_admin,
+    )
+
     return ResponseBuilder.success(
         data=TemplateVersionFileResponse.model_validate(file),
         message="File updated successfully",
@@ -310,7 +316,7 @@ async def delete_file(
     current_user: CurrentUser,
 ):
     """Delete a template version file.
-    
+
     Args:
         file_id: File ID
         db: Database session
@@ -318,7 +324,12 @@ async def delete_file(
         current_user: Current authenticated user
     """
     service = TemplateVersionFileService(db)
-    service.delete_file(file_id)
-    
+    is_admin = UserRole.ADMIN.value in current_user.get("roles", [])
+    service.delete_file(
+        file_id,
+        user_id=current_user["user_id"],
+        is_admin=is_admin,
+    )
+
     # Return None for 204 No Content
     return None

@@ -6,6 +6,8 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from src.models.template import Template, TemplateVisibility
+from src.models.template_version import TemplateVersion, TemplateVersionApprovalStatus
+from src.models.deployment import Deployment
 from src.repositories.template_repository import TemplateRepository
 from src.schemas.template import TemplateCreate, TemplateUpdate
 from src.core.exceptions import NotFoundException, ForbiddenException, BadRequestException
@@ -86,7 +88,6 @@ class TemplateService:
                 name=template_data.name,
                 description=template_data.description,
                 repo_url=template_data.repo_url,
-                icon_url=template_data.icon_url,
                 visibility=TemplateVisibility.PRIVATE,
                 owner_id=owner_id,
             )
@@ -183,25 +184,29 @@ class TemplateService:
         is_admin: bool = False
     ) -> Template:
         """Update a template.
-        
-        Only template owners or admins can update templates.
-        Only admins can change visibility.
-        
+
+        Only template owners or admins can update templates. The same audience
+        may change ``visibility``: switching ``private → public`` will reset
+        the approval state of all versions to ``PENDING`` (admin review
+        required before they become visible in the marketplace); switching
+        ``public → private`` clears the approval state to NULL because the
+        approval concept doesn't apply to private templates.
+
         Args:
             template_id: Template ID
             template_data: Template update data
             user_id: ID of user performing the update
             is_admin: Whether the user is an admin
-            
+
         Returns:
             Updated template
-            
+
         Raises:
             NotFoundException: If template not found
-            ForbiddenException: If user is not owner or admin, or non-admin tries to change visibility
+            ForbiddenException: If user is not owner or admin
         """
         template = self.get_template(template_id, user_id=user_id, is_admin=is_admin)
-        
+
         # Permission check: only owner or admin can update
         if template.owner_id != user_id and not is_admin:
             logger.warning(
@@ -222,17 +227,61 @@ class TemplateService:
             return template
         
         try:
-            # Check if visibility is being changed
+            # Visibility transition — owner-or-admin (already enforced above for
+            # the whole update payload). Das Modell ist „Veröffentlichungswunsch
+            # statt Direktflip":
+            #
+            #   private → public, keine APPROVED Version vorhanden:
+            #       wir lassen das Template als PRIVATE stehen und setzen
+            #       ``publish_requested = True``. Das Approval-Flow startet:
+            #       jede ``approval_status=None``-Version flippt auf PENDING
+            #       und landet damit in der Admin-Queue. Erst beim ersten
+            #       erfolgreichen approve_version() flippt der Template-State
+            #       atomar auf PUBLIC.
+            #
+            #   private → public, mindestens eine APPROVED Version:
+            #       der Approval-Umweg ist hier nicht nötig (der Inhalt ist
+            #       schon admin-freigegeben). Wir flippen direkt auf PUBLIC.
+            #
+            #   public → private:
+            #       jeder Versions-Approval-State wird gewischt (NULL +
+            #       Metadaten leer). ``publish_requested`` wird ebenfalls
+            #       zurückgesetzt — ein vorheriger Wunsch ist obsolet, weil
+            #       der Owner gerade explizit auf privat schaltet.
             if "visibility" in update_data:
-                if not is_admin:
-                    raise ForbiddenException("Only admins can change template visibility")
-                
-                # Validate visibility value
                 try:
-                    TemplateVisibility(update_data["visibility"])
+                    new_visibility = TemplateVisibility(update_data["visibility"])
                 except ValueError:
                     raise BadRequestException(f"Invalid visibility value: {update_data['visibility']}")
-            
+
+                if new_visibility != template.visibility:
+                    if new_visibility == TemplateVisibility.PUBLIC:
+                        has_approved_version = any(
+                            v.approval_status == TemplateVersionApprovalStatus.APPROVED
+                            for v in template.versions
+                        )
+                        if has_approved_version:
+                            # Direkter Flip; ``publish_requested`` ggf. mit zurücksetzen.
+                            update_data["publish_requested"] = False
+                        else:
+                            # Veröffentlichungswunsch statt Direktflip — wir
+                            # blocken die ``visibility``-Änderung im Update,
+                            # damit das Template PRIVATE bleibt, und setzen
+                            # stattdessen das Wunsch-Flag.
+                            del update_data["visibility"]
+                            update_data["publish_requested"] = True
+                            for v in template.versions:
+                                if v.approval_status is None:
+                                    v.approval_status = TemplateVersionApprovalStatus.PENDING
+                    else:
+                        # public → private: Approval-State wischen, Wunsch löschen.
+                        update_data["publish_requested"] = False
+                        for v in template.versions:
+                            v.approval_status = None
+                            v.approved_by_id = None
+                            v.approved_at = None
+                            v.rejection_reason = None
+
             uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
             updated_template = self.template_repo.update(uuid_id, **update_data)
             if not updated_template:
@@ -265,9 +314,12 @@ class TemplateService:
         user_id: str,
         is_admin: bool = False
     ) -> None:
-        """Delete a template.
+        """Delete a template and all its versions (cascades via FK).
 
-        Only template owners or admins can delete templates.
+        Only template owners or admins can delete templates. If any version of
+        the template still has deployments referencing it, deletion is rejected
+        with a 400 — otherwise the database FK constraint from `deployments`
+        would surface as an opaque 500.
 
         Args:
             template_id: Template ID
@@ -277,6 +329,7 @@ class TemplateService:
         Raises:
             NotFoundException: If template not found
             ForbiddenException: If user is not owner or admin
+            BadRequestException: If versions still have deployments
         """
         template = self.get_template(template_id, user_id=user_id, is_admin=is_admin)
 
@@ -293,27 +346,30 @@ class TemplateService:
             )
             raise ForbiddenException("You do not have permission to delete this template")
 
-        try:
-            uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
-            success = self.template_repo.delete(uuid_id)
-            if not success:
-                raise NotFoundException(f"Template with ID {template_id} not found")
+        # Pre-check: deployments would block the FK cascade with an opaque
+        # IntegrityError → surface a clear 400 instead.
+        deployment_count = (
+            self.db.query(Deployment)
+            .join(TemplateVersion, Deployment.template_version_id == TemplateVersion.id)
+            .filter(TemplateVersion.template_id == str(template_id))
+            .count()
+        )
+        if deployment_count > 0:
+            raise BadRequestException(
+                f"Cannot delete template: {deployment_count} deployment(s) still reference its versions. "
+                "Remove those deployments first."
+            )
 
-            logger.info(
-                "Template deleted",
-                extra={
-                    "template_id": str(template_id),
-                    "template_name": template.name,
-                    "deleted_by": user_id
-                }
-            )
-        except Exception as e:
-            logger.error(
-                f"Error deleting template: {e}",
-                extra={
-                    "template_id": str(template_id),
-                    "user_id": user_id
-                },
-                exc_info=True
-            )
-            raise
+        uuid_id = template_id if isinstance(template_id, UUID) else UUID(str(template_id))
+        success = self.template_repo.delete(uuid_id)
+        if not success:
+            raise NotFoundException(f"Template with ID {template_id} not found")
+
+        logger.info(
+            "Template deleted",
+            extra={
+                "template_id": str(template_id),
+                "template_name": template.name,
+                "deleted_by": user_id
+            }
+        )

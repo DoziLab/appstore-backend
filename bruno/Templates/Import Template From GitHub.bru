@@ -18,7 +18,6 @@ body:json {
   {
     "name": "Postgres Group DB",
     "description": "Provision a Postgres VM via the appstore",
-    "icon_url": "mdi:database",
     "github_url": "https://github.com/dozilab/templates",
     "app_yaml_path": "postgres/app.yaml"
   }
@@ -51,10 +50,12 @@ docs {
 
   - `name` (required, ≤ 255)
   - `description` (optional)
-  - `icon_url` (optional, ≤ 500)
   - `github_url` (required, ≤ 1000)
   - `app_yaml_path` (optional) — defaults to `app.yaml` (root) if not given
     and the URL is the repo/branch root.
+
+  Icons: das Feld `icon_url` gibt es nicht mehr. Nach dem Import kann
+  optional ein Icon-Bild via `POST /templates/{id}/icon` hochgeladen werden.
 
   ## Permissions
 

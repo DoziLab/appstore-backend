@@ -14,6 +14,7 @@ from src.models.template_version import TemplateVersion
 from src.models.openstack_project import OpenstackProject
 from src.core.exceptions import NotFoundException
 from src.core.exceptions import BadRequestException
+from src.core.exceptions import ForbiddenException
 from src.services.template_version_file_service import TemplateVersionFileService
 from src.tasks.deploy_tasks import deploy_stack
 from src.utils.deployment_expiry import compute_expiry, compute_extension, utcnow
@@ -29,7 +30,7 @@ class DeploymentService:
         self.openstack_repo = OpenstackProjectRepository(db)
         self.log_service = DeploymentLogService(db)
     
-    def create_deployment(self, deployment_data: DeploymentCreate, request_id: Union[str, None] = None) -> Deployment:
+    def create_deployment(self, deployment_data: DeploymentCreate, request_id: Union[str, None] = None, is_admin: bool = False) -> Deployment:
         """Create a new deployment and trigger async deployment task.
         
         Args:
@@ -47,12 +48,53 @@ class DeploymentService:
         template_version = self.db.query(TemplateVersion).filter(
             TemplateVersion.id == deployment_data.template_version_id
         ).first()
-        
+
         if not template_version:
             raise NotFoundException(
                 f"Template version with ID '{deployment_data.template_version_id}' not found"
             )
-        
+
+        # Fetch parent template up front so we can:
+        # (1) gate private templates to owner-only deploys,
+        # (2) reuse it later for template-specific user_json generation.
+        from src.models.template import Template, TemplateVisibility
+        template = self.db.query(Template).filter(
+            Template.id == template_version.template_id
+        ).first()
+        if not template:
+            raise NotFoundException(
+                f"Template not found for version {template_version.id}"
+            )
+
+        # Resolve caller's local user id from the Keycloak ID in the payload.
+        # This is needed for both the private-template owner check below AND
+        # the OpenStack-project ownership validation further down — so we do
+        # the lookup once here and reuse `teacher_user`.
+        from src.models.user import User as UserModel
+        teacher_user = self.db.query(UserModel).filter(
+            UserModel.external_id == deployment_data.teacher.id
+        ).first()
+        if not teacher_user:
+            raise NotFoundException(
+                f"Teacher user not found for Keycloak ID {deployment_data.teacher.id}"
+            )
+
+        # Gate: private templates can only be deployed by their owner OR by
+        # an admin. Other lecturers cannot run private templates even if they
+        # somehow obtained the template_version_id — that's the whole point of
+        # "private". Admins are the system-wide bypass for management actions
+        # (delete/edit) and we extend the same trust to running deploys. For
+        # public templates the visibility/approval system already controls
+        # who sees the template at all, no extra gate here.
+        if (
+            template.visibility != TemplateVisibility.PUBLIC
+            and template.owner_id != teacher_user.id
+            and not is_admin
+        ):
+            raise ForbiddenException(
+                "Only the template owner or an admin can deploy a private template version"
+            )
+
         # Validate template parameters required by the template version
         template_file_service = TemplateVersionFileService(self.db)
         try:
@@ -99,48 +141,61 @@ class DeploymentService:
         if type_errors:
             raise BadRequestException(f"Type validation errors: {'; '.join(type_errors)}")
 
-        # Get template name for template-specific user_json generation
-        from src.models.template import Template
-        template = self.db.query(Template).filter(
-            Template.id == template_version.template_id
-        ).first()
-        
-        if not template:
-            raise NotFoundException(
-                f"Template not found for version {template_version.id}"
-            )
-        
         # Get or create Course entry based on keycloak_course_id
         # The course_id from frontend is the Keycloak group ID
         from src.models.course import Course
+        from src.models.course_group import CourseGroup
         keycloak_course_id = deployment_data.course_id
-        
+
         course = self.db.query(Course).filter(
             Course.keycloak_course_id == keycloak_course_id
         ).first()
-        
+
         if not course:
-            # Auto-create course entry with deployment name as course name
             course = Course(
                 name=deployment_data.name,
                 keycloak_course_id=keycloak_course_id
             )
             self.db.add(course)
-            self.db.flush()  # Get the ID without committing
-        
-        # Resolve and validate the target OpenStack project: must belong to the
-        # teacher submitting this request. Persisting the local FK here makes the
-        # deployment-to-project relationship explicit instead of re-deriving it
-        # from teacher.id at every read site (deploy/restart/delete tasks).
-        from src.models.user import User as UserModel
-        teacher_user = self.db.query(UserModel).filter(
-            UserModel.external_id == deployment_data.teacher.id
-        ).first()
-        if not teacher_user:
-            raise NotFoundException(
-                f"Teacher user not found for Keycloak ID {deployment_data.teacher.id}"
-            )
+            self.db.flush()
 
+        # Get or create CourseGroup rows for every group in the stack assignments.
+        # This ensures group_id is always stamped onto credential rows so students
+        # can see their credentials via /api/v1/student/, regardless of whether the
+        # wizard already passed course_group_id (first deployment = no pre-existing rows).
+        group_name_to_id: dict[str, str] = {
+            g.name: g.id
+            for g in self.db.query(CourseGroup).filter(
+                CourseGroup.course_id == str(course.id)
+            ).all()
+        }
+        for sa in deployment_data.stack_assignments:
+            for group in sa.groups:
+                if group.group_name not in group_name_to_id:
+                    new_group = CourseGroup(
+                        course_id=str(course.id),
+                        name=group.group_name,
+                    )
+                    self.db.add(new_group)
+                    self.db.flush()
+                    group_name_to_id[group.group_name] = new_group.id
+                # Backfill course_group_id so deploy_tasks stamps the FK onto
+                # DeploymentInstanceAccess rows — even on the first deployment.
+                if not group.course_group_id:
+                    group.course_group_id = group_name_to_id[group.group_name]
+
+        # Sync the students named in the wizard payload into the membership
+        # tables. See _sync_student_memberships for the rationale.
+        self._sync_student_memberships(
+            course_id=str(course.id),
+            stack_assignments=deployment_data.stack_assignments,
+            group_name_to_id=group_name_to_id,
+        )
+
+        # Validate the target OpenStack project: must belong to the teacher
+        # submitting this request. ``teacher_user`` was already resolved
+        # earlier (private-template gate); re-using it here avoids a second
+        # round-trip to the users table.
         openstack_project = self.openstack_repo.get_by_id(
             deployment_data.openstack_project_id
         )
@@ -202,6 +257,81 @@ class DeploymentService:
         deploy_stack.delay(str(deployment.id))
 
         return deployment
+
+    def _sync_student_memberships(
+        self,
+        *,
+        course_id: str,
+        stack_assignments,
+        group_name_to_id: dict,
+    ) -> None:
+        """Make every student named in the wizard payload visible to the
+        student self-service endpoint.
+
+        The /api/v1/student/ list endpoint joins through
+        ``users → course_members → group_members → course_groups →
+        deployment_instance_access``. Stamping ``group_id`` onto the access
+        rows is necessary but not sufficient: without matching membership
+        rows the INNER JOINs return empty and the student sees nothing,
+        even though credentials with their group_id exist. This method
+        creates the missing rows up-front.
+
+        Idempotent: a re-deploy or a second deploy with the same students
+        re-uses the existing rows.
+
+        A student who has never logged in yet has no users row. We create
+        a minimal one from the StudentInfo claims; the next real login
+        flows through UserSyncService.sync_user_from_token, which is keyed
+        on external_id and finds + refreshes this row rather than
+        duplicating it.
+        """
+        from src.models.course_member import CourseMember
+        from src.models.group_member import GroupMember
+        from src.models.user import User
+
+        for sa in stack_assignments:
+            for group in sa.groups:
+                group_id = group_name_to_id[group.group_name]
+                for student in group.students:
+                    user = self.db.query(User).filter(
+                        User.external_id == student.id
+                    ).first()
+                    if not user:
+                        user = User(
+                            external_id=student.id,
+                            display_name=(
+                                f"{student.first_name} {student.last_name}".strip()
+                                or student.username
+                            ),
+                            email=student.email,
+                            username=student.username,
+                        )
+                        self.db.add(user)
+                        self.db.flush()
+
+                    course_member = self.db.query(CourseMember).filter(
+                        CourseMember.user_id == user.id,
+                        CourseMember.course_id == course_id,
+                        CourseMember.left_at.is_(None),
+                    ).first()
+                    if not course_member:
+                        course_member = CourseMember(
+                            user_id=user.id,
+                            course_id=course_id,
+                        )
+                        self.db.add(course_member)
+                        self.db.flush()
+
+                    group_member = self.db.query(GroupMember).filter(
+                        GroupMember.group_id == group_id,
+                        GroupMember.course_member_id == course_member.id,
+                    ).first()
+                    if not group_member:
+                        self.db.add(GroupMember(
+                            group_id=group_id,
+                            course_member_id=course_member.id,
+                        ))
+        self.db.flush()
 
     def extend_deployment(self, deployment_id: str, runtime_months: int) -> Deployment:
         """Push ``expires_at`` out by ``runtime_months`` months.

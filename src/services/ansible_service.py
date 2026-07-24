@@ -6,8 +6,9 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Generator
+from typing import Callable, Generator, Optional
 
+from src.utils.cancellation import CancelledException
 from src.utils.log_sanitizer import sanitize_message
 
 from sqlalchemy.orm import Session
@@ -39,6 +40,7 @@ class AnsibleService:
         floating_ip: str,
         ssh_private_key: str,
         ssh_user: str = "ubuntu",
+        cancel_check: Optional[Callable[[], bool]] = None,
     ):
         self.db = db
         self.deployment_id = deployment_id
@@ -46,6 +48,11 @@ class AnsibleService:
         self.ssh_private_key = ssh_private_key
         self.ssh_user = ssh_user
         self.log_service = DeploymentLogService(db)
+        # Cooperative cancellation predicate. Caller passes a closure that
+        # reads the deployment's current status; the service polls it inside
+        # long-running loops (SSH wait, playbook subprocess) and raises
+        # CancelledException as soon as it returns True. Default: no-op.
+        self._cancel_check = cancel_check or (lambda: False)
 
     # ------------------------------------------------------------------
     # Public API
@@ -63,6 +70,11 @@ class AnsibleService:
         )
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            # Cancel check before each poll — exits within one SSH_RETRY_INTERVAL.
+            if self._cancel_check():
+                raise CancelledException(
+                    f"SSH wait cancelled for {self.floating_ip}"
+                )
             try:
                 with socket.create_connection((self.floating_ip, 22), timeout=5):
                     self._log(
@@ -203,6 +215,108 @@ class AnsibleService:
                     details={"playbook": playbook_name},
                 )
 
+    def fetch_remote_file(self, remote_path: str) -> str | None:
+        """SCP-style fetch of a remote file via `ssh sudo cat`.
+
+        Used to read root-owned post-deployment artifacts the playbook writes
+        to /opt/dozilab/ (e.g. activation-link JSON). Direct ssh+sudo cat
+        beats scp here because target files are mode 0600 root:root and the
+        Ansible-managed login user is unprivileged.
+
+        Returns the file content as UTF-8 text on success, None on any
+        failure (missing file, unreachable host, timeout, permission denied,
+        non-UTF8 bytes). Never raises — callers should treat absence as a
+        no-op so unrelated apps that never write such files keep working.
+        """
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".pem", delete=False, prefix="dozilab_ssh_"
+        ) as key_file:
+            key_file.write(self.ssh_private_key)
+            key_path = key_file.name
+
+        try:
+            Path(key_path).chmod(0o600)
+
+            cmd = [
+                "ssh",
+                "-i", key_path,
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "ConnectTimeout=10",
+                "-o", "BatchMode=yes",
+                f"{self.ssh_user}@{self.floating_ip}",
+                "--",
+                "sudo", "cat", remote_path,
+            ]
+
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+            except subprocess.TimeoutExpired:
+                self._log(
+                    DeploymentLogEventType.ANSIBLE_TASK,
+                    f"Remote fetch timed out: {remote_path}",
+                    level=DeploymentLogLevel.WARNING,
+                )
+                return None
+
+            if result.returncode != 0:
+                stderr = (result.stderr or "").strip()
+                # File-absent is the expected path for apps that don't write
+                # such artifacts — log as INFO, not WARNING.
+                if "No such file" in stderr or "cannot open" in stderr.lower():
+                    self._log(
+                        DeploymentLogEventType.ANSIBLE_TASK,
+                        f"Remote file not present, skipping: {remote_path}",
+                        level=DeploymentLogLevel.INFO,
+                    )
+                else:
+                    self._log(
+                        DeploymentLogEventType.ANSIBLE_TASK,
+                        f"Remote fetch failed ({result.returncode}) for {remote_path}: {sanitize_message(stderr)[:200]}",
+                        level=DeploymentLogLevel.WARNING,
+                    )
+                return None
+
+            content = result.stdout
+            self._log(
+                DeploymentLogEventType.ANSIBLE_TASK,
+                f"Fetched {len(content)} bytes from {remote_path}",
+            )
+            return content
+        finally:
+            Path(key_path).unlink(missing_ok=True)
+
+    def fetch_remote_json(self, remote_path: str) -> dict | None:
+        """Thin wrapper over fetch_remote_file that parses JSON.
+
+        Returns None for missing files, unreachable hosts, and malformed
+        JSON. Malformed JSON is logged at WARNING level; absence is silent.
+        """
+        content = self.fetch_remote_file(remote_path)
+        if content is None:
+            return None
+        try:
+            data = json.loads(content)
+        except (ValueError, json.JSONDecodeError) as err:
+            self._log(
+                DeploymentLogEventType.ANSIBLE_TASK,
+                f"Remote file {remote_path} is not valid JSON: {err}",
+                level=DeploymentLogLevel.WARNING,
+            )
+            return None
+        if not isinstance(data, dict):
+            self._log(
+                DeploymentLogEventType.ANSIBLE_TASK,
+                f"Remote file {remote_path} JSON root is not an object",
+                level=DeploymentLogLevel.WARNING,
+            )
+            return None
+        return data
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -249,6 +363,23 @@ class AnsibleService:
 
             assert process.stdout is not None
             for raw_line in process.stdout:
+                # Cancel check on every yielded line. Granularity = whatever
+                # ansible-playbook prints; typically sub-second. On cancel we
+                # SIGTERM the subprocess, give it 2s to clean up, then SIGKILL.
+                if self._cancel_check():
+                    self._log(
+                        DeploymentLogEventType.ANSIBLE_FAILED,
+                        "Ansible execution cancelled — terminating subprocess",
+                        level=DeploymentLogLevel.WARNING,
+                    )
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=2)
+                    raise CancelledException("Ansible execution cancelled")
+
                 line = sanitize_message(raw_line.rstrip())
                 if not line:
                     continue

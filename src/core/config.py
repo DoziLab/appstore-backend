@@ -59,6 +59,16 @@ class Settings(BaseSettings):
     github_app_state_secret: str | None = None
     frontend_base_url: str = "http://localhost:5173"
 
+    # Template icon uploads. Grenzwerte werden im Service gegen die
+    # hochgeladene Datei geprüft — 5 MB und PNG/JPEG/WebP sind das
+    # abgestimmte Default.
+    max_icon_size_bytes: int = 5 * 1024 * 1024
+    allowed_icon_content_types: tuple[str, ...] = (
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+    )
+
 
     @property
     def database_url(self) -> str:
